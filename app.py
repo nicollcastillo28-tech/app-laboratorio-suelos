@@ -20,7 +20,7 @@ from openpyxl import load_workbook
 # ════════════════════════════════════════════════════════════════════
 st.set_page_config(page_title="Geodelta Lab", page_icon="🧪", layout="wide", initial_sidebar_state="expanded")
 
-APP_VERSION = "v4.1.0"
+APP_VERSION = "v4.2.0"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_GRANULOMETRIA = os.path.join(BASE_DIR, "templates", "CLASIFICACION_DE_SUELOS.xlsm")
 
@@ -157,12 +157,12 @@ def init_state():
     st.session_state.perforaciones = {codigo_demo: [{"tipo": "Sondeo", "consecutivo": 1, "codigo": "S1"}]}
     st.session_state.muestras = {
         f"{codigo_demo}::S1": [{
-            "numero": "1", "id_unico": f"{codigo_demo}_S1_M1", "profundidad_de": 0.0, "profundidad_hasta": 1.5,
+            "numero": "1", "id_unico": f"{codigo_demo}-S1-M1", "profundidad_de": 0.0, "profundidad_hasta": 1.5,
             "tipo_muestra": "Shelby", "ensayos": {"Granulometría": True, "Humedad": True},
         }]
     }
     st.session_state.assays = [{
-        "id": "a001", "muestra_id": f"{codigo_demo}_S1_M1", "tipo": "granulometria", "status": "en-proceso",
+        "id": "a001", "muestra_id": f"{codigo_demo}-S1-M1", "tipo": "granulometria", "status": "en-proceso",
         "data": {}, "observations": "", "laboratorist": "",
         "codigo_interno": codigo_demo, "perforacion_codigo": "S1", "muestra_numero": "1",
         "lastModified": datetime.now().isoformat(), "createdAt": datetime.now().isoformat(),
@@ -593,6 +593,13 @@ def render_bitacora():
 
             df_source = st.session_state.bitacora_draft[key]
 
+            if es_jefe:
+                if st.button("➕ Agregar muestra", key=f"add_row_{key}"):
+                    nueva_fila = pd.DataFrame([_bitacora_row_defaults()])
+                    st.session_state.bitacora_draft[key] = pd.concat([df_source, nueva_fila], ignore_index=True)
+                    st.rerun()
+                df_source = st.session_state.bitacora_draft[key]
+
             column_config = {
                 "Número": st.column_config.TextColumn(default=""),
                 "Prof. De": st.column_config.NumberColumn(format="%.2f", default=0.0),
@@ -603,12 +610,12 @@ def render_bitacora():
                 column_config[e] = st.column_config.CheckboxColumn(e, default=False)
 
             if es_jefe:
+                st.caption("Usa el botón de arriba para agregar una muestra nueva. Para eliminar una, selecciona el cuadro a la izquierda de su fila y usa el ícono de basura que aparece sobre la tabla.")
                 edited = st.data_editor(
                     df_source, num_rows="dynamic", use_container_width=True,
                     column_config=column_config, key=f"editor_{key}",
                 )
                 st.session_state.bitacora_draft[key] = edited
-                st.caption("💡 Para eliminar una muestra: selecciona el cuadro a la izquierda de la fila y usa el ícono de basura que aparece arriba de la tabla.")
                 if confirm_delete(f"perf_{key}", f"la perforación {perf['codigo']} y todas sus muestras"):
                     st.session_state.perforaciones[codigo] = [p for p in st.session_state.perforaciones[codigo] if p["codigo"] != perf["codigo"]]
                     st.session_state.muestras.pop(key, None)
@@ -632,7 +639,7 @@ def render_bitacora():
                     numero = str(row.get("Número", "")).strip()
                     if not numero or numero.lower() == "none" or numero == "nan":
                         continue
-                    id_unico = f"{codigo}_{perf['codigo']}_M{numero}"
+                    id_unico = f"{codigo}-{perf['codigo']}-M{numero}"
                     nuevas.append({
                         "numero": numero, "id_unico": id_unico,
                         "profundidad_de": row.get("Prof. De") or 0.0, "profundidad_hasta": row.get("Prof. A") or 0.0,
@@ -915,53 +922,80 @@ def render_continue():
 def render_search():
     st.button("← Atrás", on_click=lambda: navigate("home"))
     st.markdown("## Buscar ensayos")
+
+    codes = [p["codigo_interno"] for p in st.session_state.projects]
+    if not codes:
+        st.info("Todavía no hay proyectos.")
+        return
+
     c1, c2, c3 = st.columns(3)
     with c1:
-        f_project = st.text_input("Proyecto")
+        default_idx = codes.index(st.session_state.selected_codigo) if st.session_state.selected_codigo in codes else 0
+        codigo = st.selectbox("Proyecto", codes, index=default_idx)
+    perforaciones = st.session_state.perforaciones.get(codigo, [])
     with c2:
-        f_muestra = st.text_input("Muestra")
+        perf_options = ["(todas)"] + [p["codigo"] for p in perforaciones]
+        perf_choice = st.selectbox("Perforación", perf_options)
     with c3:
         f_type = st.selectbox("Tipo de ensayo", ["(todos)"] + list(ASSAY_LABELS.values()))
 
-    results = st.session_state.assays
-    if f_project:
-        results = [a for a in results if f_project.lower() in a["codigo_interno"].lower()]
-    if f_muestra:
-        results = [a for a in results if f_muestra.lower() in str(a["muestra_numero"]).lower() or f_muestra.lower() in a["muestra_id"].lower()]
-    if f_type != "(todos)":
-        results = [a for a in results if ASSAY_LABELS[a["tipo"]] == f_type]
-
-    if not results:
-        st.info("No se encontraron ensayos con esos filtros.")
+    if not perforaciones:
+        st.info("Este proyecto todavía no tiene perforaciones. Ve a la Bitácora para agregarlas.")
         return
 
-    for a in results:
-        with st.container(border=True):
-            cols = st.columns([2.5, 1.6, 1.3, 1.3, 1.3])
-            with cols[0]:
-                st.markdown(f"**{a['muestra_id']}**")
-                st.caption(f"{a['codigo_interno']} · {a['perforacion_codigo']} · Muestra {a['muestra_numero']}")
-            with cols[1]:
-                st.markdown(ASSAY_LABELS[a["tipo"]])
-                st.caption(format_dt(a["lastModified"]))
-            with cols[2]:
-                st.markdown(f'<span class="badge {STATUS_BADGE[a["status"]]}">{STATUS_LABELS[a["status"]]}</span>', unsafe_allow_html=True)
-            with cols[3]:
-                if st.button("Abrir ensayo", key=f"search_open_{a['id']}", use_container_width=True):
-                    st.session_state.selected_codigo = a["codigo_interno"]
-                    st.session_state.selected_perforacion = a["perforacion_codigo"]
-                    st.session_state.selected_muestra_id = a["muestra_id"]
-                    st.session_state.selected_assay_id = a["id"]
-                    navigate("assay-form")
-            with cols[4]:
-                if st.session_state.role == "jefe" and a["tipo"] == "granulometria":
-                    muestra = get_muestra(a["codigo_interno"], a["perforacion_codigo"], a["muestra_id"])
-                    project = get_project(a["codigo_interno"])
-                    if muestra and project:
-                        excel_bytes = generar_excel_granulometria(a["codigo_interno"], a["perforacion_codigo"], muestra, project, a.get("data", {}))
-                        st.download_button("📥 Excel", data=excel_bytes, file_name=f"Granulometria_{a['muestra_id']}.xlsm",
-                                            mime="application/vnd.ms-excel.sheet.macroEnabled.12",
-                                            key=f"search_dl_{a['id']}", use_container_width=True)
+    perfs_to_show = perforaciones if perf_choice == "(todas)" else [p for p in perforaciones if p["codigo"] == perf_choice]
+
+    project = get_project(codigo)
+    any_shown = False
+    for perf in perfs_to_show:
+        muestras = st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", [])
+        for m in muestras:
+            solicitados = [e for e, v in m["ensayos"].items() if v]
+            if f_type != "(todos)":
+                solicitados = [e for e in solicitados if ASSAY_LABELS.get(SUPPORTED_ASSAY_MAP.get(e), None) == f_type]
+            if not solicitados:
+                continue
+            any_shown = True
+            with st.container(border=True):
+                st.markdown(f"**{m['id_unico']}**  ·  Prof. {m['profundidad_de']}–{m['profundidad_hasta']} m  ·  {m['tipo_muestra']}")
+                for ensayo_label in solicitados:
+                    cols = st.columns([2.2, 1.4, 1.3, 1.3])
+                    cols[0].markdown(ensayo_label)
+                    tipo_interno = SUPPORTED_ASSAY_MAP.get(ensayo_label)
+                    if tipo_interno:
+                        existing = get_assay(m["id_unico"], tipo_interno)
+                        status = existing["status"] if existing else "sin-iniciar"
+                        cols[1].markdown(f'<span class="badge {STATUS_BADGE[status]}">{STATUS_LABELS[status]}</span>', unsafe_allow_html=True)
+                        cols[1].caption(format_dt(existing["lastModified"]) if existing else "—")
+                        with cols[2]:
+                            if st.button("Abrir", key=f"search_open_{m['id_unico']}_{tipo_interno}", use_container_width=True):
+                                if existing:
+                                    st.session_state.selected_assay_id = existing["id"]
+                                else:
+                                    new_id = f"a-{uuid.uuid4().hex[:8]}"
+                                    st.session_state.assays.append({
+                                        "id": new_id, "muestra_id": m["id_unico"], "tipo": tipo_interno, "status": "sin-iniciar",
+                                        "data": {}, "observations": "", "laboratorist": "",
+                                        "codigo_interno": codigo, "perforacion_codigo": perf["codigo"], "muestra_numero": m["numero"],
+                                        "lastModified": now_iso(), "createdAt": now_iso(),
+                                    })
+                                    st.session_state.selected_assay_id = new_id
+                                st.session_state.selected_codigo = codigo
+                                st.session_state.selected_perforacion = perf["codigo"]
+                                st.session_state.selected_muestra_id = m["id_unico"]
+                                st.session_state.selected_assay_type = tipo_interno
+                                navigate("assay-form")
+                        with cols[3]:
+                            if st.session_state.role == "jefe" and tipo_interno == "granulometria" and project:
+                                excel_bytes = generar_excel_granulometria(codigo, perf["codigo"], m, project, existing.get("data", {}) if existing else {})
+                                st.download_button("📥 Excel", data=excel_bytes, file_name=f"Granulometria_{m['id_unico']}.xlsm",
+                                                    mime="application/vnd.ms-excel.sheet.macroEnabled.12",
+                                                    key=f"search_dl_{m['id_unico']}", use_container_width=True)
+                    else:
+                        cols[1].markdown('<span class="badge badge-muted">Sin formulario aún</span>', unsafe_allow_html=True)
+
+    if not any_shown:
+        st.info("No se encontraron ensayos con esos filtros.")
 
 
 # ════════════════════════════════════════════════════════════════════
