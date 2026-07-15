@@ -20,7 +20,7 @@ from openpyxl import load_workbook
 # ════════════════════════════════════════════════════════════════════
 st.set_page_config(page_title="Geodelta Lab", page_icon="🧪", layout="wide", initial_sidebar_state="expanded")
 
-APP_VERSION = "v4.0.0"
+APP_VERSION = "v4.1.0"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_GRANULOMETRIA = os.path.join(BASE_DIR, "templates", "CLASIFICACION_DE_SUELOS.xlsm")
 
@@ -70,6 +70,20 @@ st.markdown(f"""
     div.stButton > button[kind="primary"] {{ background-color: {SUCCESS}; border: none; }}
     h1, h2, h3 {{ color: {TEXT}; letter-spacing: -0.02em; }}
 
+    /* Campos digitables con fondo distinto al de la página, para que se note qué se puede editar */
+    .stTextInput input, .stTextArea textarea, .stNumberInput input,
+    .stDateInput input, .stSelectbox > div > div, .stMultiSelect > div > div {{
+        background-color: {SURFACE} !important;
+        border: 1px solid {BORDER} !important;
+        border-radius: 8px !important;
+    }}
+    .stTextInput input:focus, .stTextArea textarea:focus, .stNumberInput input:focus {{
+        border-color: {PRIMARY} !important; box-shadow: 0 0 0 1px {PRIMARY} !important;
+    }}
+    [data-testid="stDataFrameResizable"], [data-testid="stDataEditorGrid"] {{
+        background-color: {SURFACE} !important; border: 1px solid {BORDER} !important; border-radius: 8px;
+    }}
+
     .login-icon {{
         width: 72px; height: 72px; border-radius: 999px; background: {SURFACE};
         border: 1px solid {BORDER}; display: flex; align-items: center; justify-content: center;
@@ -105,6 +119,14 @@ STATUS_ICON = {"sin-iniciar": "⚪", "en-proceso": "🟡", "finalizado": "✅"}
 TIPO_PERFORACION_PREFIX = {"Sondeo": "S", "Apique": "AP", "Fuente/Cantera": "F"}
 TIPO_MUESTRA_OPTIONS = ["Shelby", "NQ", "SS", "N/A"]
 NORMA_PROYECTO_OPTIONS = ["NTC", "IDU", "RAS", "GDA", "Otro"]
+
+# Lista de equipos del laboratorio. Por ahora sin código — agrega o edita los que tengas aquí.
+EQUIPO_LIST = [
+    "Balanza digital 0.01g", "Balanza digital 0.1g", "Horno de secado", "Tamices serie gruesa",
+    "Tamices serie fina", "Tamizadora mecánica", "Cazuela de Casagrande", "Ranurador", "Copa de Casagrande",
+    "Molde Proctor estándar", "Molde Proctor modificado", "Prensa CBR", "Balanza hidrostática",
+    "Horno de parafinado", "Cronómetro", "Termómetro", "Extractor de muestras", "Otro",
+]
 
 BITACORA_ENSAYOS = [
     "Granulometría", "Pasa 200", "Humedad", "Límites de Atterberg", "Límite de contracción",
@@ -559,14 +581,17 @@ def render_bitacora():
         muestras = st.session_state.muestras.setdefault(key, [])
 
         with st.expander(f"**{perf['codigo']}** — {perf['tipo']}  ·  {len(muestras)} muestra(s)", expanded=True):
+            # OJO: el DataFrame se crea UNA sola vez y se reutiliza el mismo objeto en cada rerun.
+            # Reconstruirlo desde cero (dict -> DataFrame) en cada actualización es lo que causaba
+            # que la primera edición se perdiera y tocara escribir dos veces.
             if key not in st.session_state.bitacora_draft:
-                st.session_state.bitacora_draft[key] = _muestras_to_rows(muestras)
+                df_init = pd.DataFrame(_muestras_to_rows(muestras))
+                for col in BITACORA_BASE_COLS:
+                    if col not in df_init.columns:
+                        df_init[col] = _bitacora_row_defaults()[col]
+                st.session_state.bitacora_draft[key] = df_init[BITACORA_BASE_COLS]
 
-            df_source = pd.DataFrame(st.session_state.bitacora_draft[key])
-            for col in BITACORA_BASE_COLS:
-                if col not in df_source.columns:
-                    df_source[col] = _bitacora_row_defaults()[col]
-            df_source = df_source[BITACORA_BASE_COLS]
+            df_source = st.session_state.bitacora_draft[key]
 
             column_config = {
                 "Número": st.column_config.TextColumn(default=""),
@@ -582,7 +607,7 @@ def render_bitacora():
                     df_source, num_rows="dynamic", use_container_width=True,
                     column_config=column_config, key=f"editor_{key}",
                 )
-                st.session_state.bitacora_draft[key] = edited.to_dict("records")
+                st.session_state.bitacora_draft[key] = edited
                 st.caption("💡 Para eliminar una muestra: selecciona el cuadro a la izquierda de la fila y usa el ícono de basura que aparece arriba de la tabla.")
                 if confirm_delete(f"perf_{key}", f"la perforación {perf['codigo']} y todas sus muestras"):
                     st.session_state.perforaciones[codigo] = [p for p in st.session_state.perforaciones[codigo] if p["codigo"] != perf["codigo"]]
@@ -593,12 +618,15 @@ def render_bitacora():
             else:
                 st.dataframe(df_source, use_container_width=True, hide_index=True)
 
+
+
     if es_jefe:
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("💾  Guardar bitácora", type="primary", use_container_width=True):
             for perf in perforaciones:
                 key = f"{codigo}::{perf['codigo']}"
-                rows = st.session_state.bitacora_draft.get(key, [])
+                df_rows = st.session_state.bitacora_draft.get(key)
+                rows = df_rows.to_dict("records") if df_rows is not None else []
                 nuevas = []
                 for row in rows:
                     numero = str(row.get("Número", "")).strip()
@@ -727,11 +755,12 @@ def generar_excel_granulometria(codigo, perf_codigo, muestra, project, data):
 # ════════════════════════════════════════════════════════════════════
 def render_equipo(data, prefix):
     st.markdown('<div class="section-title">Equipo utilizado</div>', unsafe_allow_html=True)
-    cols = st.columns(3)
-    for i, col in enumerate(cols, start=1):
-        with col:
-            data[f"{prefix}_equipo{i}_nombre"] = st.text_input(f"Equipo {i}", value=data.get(f"{prefix}_equipo{i}_nombre", ""), placeholder=f"Nombre del equipo {i}", key=f"{prefix}_eq{i}n")
-            data[f"{prefix}_equipo{i}_serie"] = st.text_input(f"N° serie {i}", value=data.get(f"{prefix}_equipo{i}_serie", ""), placeholder="N° de serie", key=f"{prefix}_eq{i}s", label_visibility="collapsed")
+    seleccionados = data.get(f"{prefix}_equipos", [])
+    seleccionados = [e for e in seleccionados if e in EQUIPO_LIST]  # por si cambia la lista
+    data[f"{prefix}_equipos"] = st.multiselect(
+        "Marca todo el equipo utilizado en este ensayo", EQUIPO_LIST, default=seleccionados,
+        key=f"{prefix}_equipos_ms", placeholder="Selecciona uno o varios equipos…",
+    )
 
 
 def render_norma_selector(assay_type, data, key_prefix):
@@ -898,17 +927,41 @@ def render_search():
     if f_project:
         results = [a for a in results if f_project.lower() in a["codigo_interno"].lower()]
     if f_muestra:
-        results = [a for a in results if f_muestra.lower() in str(a["muestra_numero"]).lower()]
+        results = [a for a in results if f_muestra.lower() in str(a["muestra_numero"]).lower() or f_muestra.lower() in a["muestra_id"].lower()]
     if f_type != "(todos)":
         results = [a for a in results if ASSAY_LABELS[a["tipo"]] == f_type]
 
-    if results:
-        df = pd.DataFrame([{"Proyecto": a["codigo_interno"], "Perforación": a["perforacion_codigo"], "Muestra": a["muestra_numero"],
-                             "Ensayo": ASSAY_LABELS[a["tipo"]], "Estado": STATUS_LABELS[a["status"]],
-                             "Última actualización": format_dt(a["lastModified"])} for a in results])
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
+    if not results:
         st.info("No se encontraron ensayos con esos filtros.")
+        return
+
+    for a in results:
+        with st.container(border=True):
+            cols = st.columns([2.5, 1.6, 1.3, 1.3, 1.3])
+            with cols[0]:
+                st.markdown(f"**{a['muestra_id']}**")
+                st.caption(f"{a['codigo_interno']} · {a['perforacion_codigo']} · Muestra {a['muestra_numero']}")
+            with cols[1]:
+                st.markdown(ASSAY_LABELS[a["tipo"]])
+                st.caption(format_dt(a["lastModified"]))
+            with cols[2]:
+                st.markdown(f'<span class="badge {STATUS_BADGE[a["status"]]}">{STATUS_LABELS[a["status"]]}</span>', unsafe_allow_html=True)
+            with cols[3]:
+                if st.button("Abrir ensayo", key=f"search_open_{a['id']}", use_container_width=True):
+                    st.session_state.selected_codigo = a["codigo_interno"]
+                    st.session_state.selected_perforacion = a["perforacion_codigo"]
+                    st.session_state.selected_muestra_id = a["muestra_id"]
+                    st.session_state.selected_assay_id = a["id"]
+                    navigate("assay-form")
+            with cols[4]:
+                if st.session_state.role == "jefe" and a["tipo"] == "granulometria":
+                    muestra = get_muestra(a["codigo_interno"], a["perforacion_codigo"], a["muestra_id"])
+                    project = get_project(a["codigo_interno"])
+                    if muestra and project:
+                        excel_bytes = generar_excel_granulometria(a["codigo_interno"], a["perforacion_codigo"], muestra, project, a.get("data", {}))
+                        st.download_button("📥 Excel", data=excel_bytes, file_name=f"Granulometria_{a['muestra_id']}.xlsm",
+                                            mime="application/vnd.ms-excel.sheet.macroEnabled.12",
+                                            key=f"search_dl_{a['id']}", use_container_width=True)
 
 
 # ════════════════════════════════════════════════════════════════════
