@@ -1,6 +1,6 @@
 # Geodelta Lab
 
-App para digitar ensayos de laboratorio de suelos (Granulometría, Humedad, Masa unitaria parafinada), construida en Python + Streamlit, basada en el diseño de Figma.
+App para digitar ensayos de laboratorio de suelos, con estructura Proyecto → Perforación → Muestra → Ensayo.
 
 ## Cómo correrla en tu computador
 
@@ -9,16 +9,29 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Se abrirá sola en el navegador en `http://localhost:8501`.
+## Claves de acceso (cámbialas en app.py, variable PASSWORDS)
+
+- Jefe: geodelta2024
+- Auxiliar: aux2024
+
+## Cómo funciona la estructura
+
+1. El **Jefe** crea el **Proyecto** (código interno GDA-NNN-AA, nombre, localización, norma, fechas).
+2. El Jefe entra a la **Bitácora** del proyecto y agrega **Perforaciones** (Sondeo, Apique o Fuente/Cantera) —
+   cada una recibe un código automático (S1, S2, AP1…).
+3. Dentro de cada perforación, el Jefe agrega **Muestras** en una tabla (número que él mismo asigna,
+   profundidad de/hasta, tipo de muestra, y qué ensayos aplican mediante checklist). La app arma el
+   ID único de cada muestra como `GDA-NNN-AA_S1_M17`, por ejemplo.
+4. Los **Auxiliares** abren el proyecto → la perforación → la muestra, y solo ven los ensayos que el
+   Jefe marcó en la bitácora. Ahí digitan los datos y cambian el estado de la muestra.
+5. El Jefe descarga el Excel de Granulometría ya lleno con la plantilla oficial (fórmulas incluidas).
 
 ## Estado actual
 
-- ✅ Navegación completa entre pantallas (proyectos, muestras, encabezado, ensayos)
-- ✅ Formularios de los 3 tipos de ensayo con los cálculos automáticos
-- ✅ Firma digital (si `streamlit-drawable-canvas` está instalado)
-- ⏳ Generación de Excel y PDF (próxima fase)
-- ⏳ Guardado permanente compartido entre todos los usuarios (próxima fase, hoy los datos viven mientras la app está abierta)
-
-## Publicar para que la usen otros
-
-Ver instrucciones detalladas en la conversación con Claude, o en `https://docs.streamlit.io/deploy/streamlit-community-cloud`.
+- ✅ Login con roles Jefe / Auxiliar
+- ✅ Estructura Proyecto → Perforación → Muestra con códigos únicos automáticos
+- ✅ Bitácora real que genera la estructura (no solo una tabla de referencia)
+- ✅ Formularios de ensayo sin cálculos (los cálculos viven en el Excel)
+- ✅ Descarga de Excel real de Granulometría usando la plantilla oficial
+- ⏳ Excel para Humedad y Peso unitario (falta que compartas esas plantillas)
+- ⏳ Guardado permanente y compartido entre todos los usuarios (próxima fase con Google Sheets)

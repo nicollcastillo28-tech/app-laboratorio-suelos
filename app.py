@@ -1,6 +1,6 @@
 """
 GEODELTA LAB - App para digitar ensayos de laboratorio de suelos
-Roles: Jefe (control total, genera bitácora, descarga Excel) y Auxiliar (digita resultados).
+Estructura: Proyecto -> Perforación (Sondeo/Apique/Fuente-Cantera) -> Muestra -> Ensayos
 
 Cómo correrla en tu computador:
     streamlit run app.py
@@ -8,7 +8,7 @@ Cómo correrla en tu computador:
 
 import os
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from io import BytesIO
 
 import pandas as pd
@@ -20,20 +20,17 @@ from openpyxl import load_workbook
 # ════════════════════════════════════════════════════════════════════
 st.set_page_config(page_title="Geodelta Lab", page_icon="🧪", layout="wide", initial_sidebar_state="expanded")
 
-APP_VERSION = "v2.0.0"
+APP_VERSION = "v3.0.0"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_GRANULOMETRIA = os.path.join(BASE_DIR, "templates", "CLASIFICACION_DE_SUELOS.xlsm")
 
 # Claves de acceso. CÁMBIALAS aquí por las que tú quieras usar en tu laboratorio.
-PASSWORDS = {
-    "jefe": "geodelta2024",
-    "auxiliar": "aux2024",
-}
+PASSWORDS = {"jefe": "geodelta2024", "auxiliar": "aux2024"}
 
 # ════════════════════════════════════════════════════════════════════
 # ESTILOS
 # ════════════════════════════════════════════════════════════════════
-NAVY, NAVY_HOVER = "#1B2E4B", "#243D62"
+NAVY, NAVY_HOVER, PRIMARY = "#1B2E4B", "#243D62", "#002046"
 SUCCESS, SUCCESS_LIGHT = "#16A34A", "#DCFCE7"
 WARNING, WARNING_LIGHT = "#D97706", "#FEF3C7"
 SURFACE, BG, BORDER, TEXT, MUTED = "#FFFFFF", "#F2F4F7", "#E2E6ED", "#1A2332", "#6B7A8D"
@@ -69,11 +66,30 @@ st.markdown(f"""
     }}
     div.stButton > button[kind="primary"] {{ background-color: {SUCCESS}; border: none; }}
     h1, h2, h3 {{ color: {TEXT}; letter-spacing: -0.02em; }}
+
+    /* ---- LOGIN ---- */
+    .login-wrap {{ max-width: 420px; margin: 40px auto 0 auto; }}
+    .login-icon {{
+        width: 72px; height: 72px; border-radius: 999px; background: {SURFACE};
+        border: 1px solid {BORDER}; display: flex; align-items: center; justify-content: center;
+        font-size: 32px; margin: 0 auto 14px auto; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }}
+    .login-title {{ text-align: center; color: {PRIMARY}; font-weight: 800; font-size: 26px; letter-spacing: -0.02em; margin-bottom: 28px; }}
+    .login-card [data-testid="stVerticalBlockBorderWrapper"] {{
+        border-radius: 16px !important; border: 1px solid {BORDER} !important;
+        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03) !important;
+    }}
+    .login-card div[role="radiogroup"] {{ gap: 10px; }}
+    .login-card div[role="radiogroup"] label {{
+        border: 1px solid {BORDER}; border-radius: 10px; padding: 10px 14px; flex: 1;
+    }}
+    .login-footer {{ text-align: center; color: {MUTED}; font-size: 12px; text-transform: uppercase;
+        letter-spacing: 0.06em; margin-top: 22px; }}
 </style>
 """, unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════════════
-# TAMICES — MISMOS EXACTOS DE LA PLANTILLA DE EXCEL (hoja MUESTRA, col. E20:E34)
+# CONSTANTES DEL DOMINIO
 # ════════════════════════════════════════════════════════════════════
 SIEVES = [
     ("s_3", '3"', "76.2", "E20"), ("s_2p5", '2 1/2"', "63.5", "E21"), ("s_2", '2"', "50.8", "E22"),
@@ -83,8 +99,8 @@ SIEVES = [
     ("s_60", "No. 60", "0.25", "E32"), ("s_100", "No. 100", "0.149", "E33"), ("s_200", "No. 200", "0.075", "E34"),
 ]
 
-ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Masa unitaria parafinada"}
-NORMAS = {
+ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario"}
+NORMAS_ENSAYO = {
     "granulometria": ["INV E-213", "INV E-214", "ASTM D422", "ASTM D7928"],
     "humedad": ["INV E-122", "ASTM D2216"],
     "masa-unitaria": ["INV E-202", "ASTM D1188"],
@@ -92,11 +108,18 @@ NORMAS = {
 STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado"}
 STATUS_BADGE = {"sin-iniciar": "badge-muted", "en-proceso": "badge-warning", "finalizado": "badge-success"}
 
+TIPO_PERFORACION_PREFIX = {"Sondeo": "S", "Apique": "AP", "Fuente/Cantera": "F"}
+TIPO_MUESTRA_OPTIONS = ["Shelby", "NQ", "SS", "N/A"]
+NORMA_PROYECTO_OPTIONS = ["NTC", "IDU", "RAS", "GDA", "Otro"]
+
 BITACORA_ENSAYOS = [
     "Granulometría", "Pasa 200", "Humedad", "Límites de Atterberg", "Límite de contracción",
     "Materia orgánica", "Proctor", "CBR", "Compresión inconfinada", "Compresión en roca",
     "Peso unitario", "Gravedad específica", "Consolidación", "Corte CD", "Corte CU", "Corte UU", "Otro",
 ]
+# Ensayos de la lista de arriba que ya tienen formulario propio en la app
+SUPPORTED_ASSAY_MAP = {"Granulometría": "granulometria", "Humedad": "humedad", "Peso unitario": "masa-unitaria"}
+
 
 # ════════════════════════════════════════════════════════════════════
 # ESTADO INICIAL
@@ -107,27 +130,33 @@ def init_state():
     st.session_state.initialized = True
     st.session_state.role = None
     st.session_state.screen = "home"
-    st.session_state.projects = [
-        {"code": "GEO-2024-001", "name": "Estudio de suelos vía Bogotá-Medellín Km 14"},
-    ]
-    st.session_state.headers = {
-        "GEO-2024-001::M1": {
-            "project": "GEO-2024-001", "sample": "M1", "date": "2024-11-15", "apique": "AP-01",
-            "location": "Sector Norte, Km 14+200", "depthStart": "0.00", "depthEnd": "1.50",
-            "visualDescription": "Suelo arcilloso de color café oscuro, consistencia media.",
-        },
+
+    codigo_demo = "GDA-001-24"
+    st.session_state.projects = [{
+        "codigo_interno": codigo_demo, "numero": "001", "anio": "24",
+        "nombre": "Estudio de suelos vía Bogotá-Medellín Km 14", "localizacion": "Sector Norte, Km 14+200",
+        "fecha_bitacora": "2024-11-15", "fecha_ingreso_muestra": "2024-11-15", "norma": "GDA",
+    }]
+    st.session_state.perforaciones = {codigo_demo: [{"tipo": "Sondeo", "consecutivo": 1, "codigo": "S1"}]}
+    st.session_state.muestras = {
+        f"{codigo_demo}::S1": [{
+            "numero": "1", "id_unico": f"{codigo_demo}_S1_M1", "profundidad_de": 0.0, "profundidad_hasta": 1.5,
+            "tipo_muestra": "Shelby", "ensayos": {"Granulometría": True, "Humedad": True},
+            "estado": "en-proceso",
+        }]
     }
-    st.session_state.sample_status = {"GEO-2024-001::M1": "en-proceso"}
-    st.session_state.assays = [
-        {"id": "a001", "project": "GEO-2024-001", "sample": "M1", "type": "granulometria",
-         "status": "en-proceso", "data": {}, "observations": "", "laboratorist": "",
-         "lastModified": datetime.now().isoformat(), "createdAt": datetime.now().isoformat()},
-    ]
-    st.session_state.selected_project_code = ""
-    st.session_state.selected_sample = ""
-    st.session_state.selected_assay_type = None
+    st.session_state.assays = [{
+        "id": "a001", "muestra_id": f"{codigo_demo}_S1_M1", "tipo": "granulometria", "status": "en-proceso",
+        "data": {}, "observations": "", "laboratorist": "",
+        "codigo_interno": codigo_demo, "perforacion_codigo": "S1", "muestra_numero": "1",
+        "lastModified": datetime.now().isoformat(), "createdAt": datetime.now().isoformat(),
+    }]
+
+    st.session_state.selected_codigo = ""
+    st.session_state.selected_perforacion = ""
+    st.session_state.selected_muestra_id = ""
     st.session_state.selected_assay_id = None
-    st.session_state.bitacoras = {}  # code -> {"meta": {...}, "rows": [...]}
+    st.session_state.selected_assay_type = None
 
 
 init_state()
@@ -157,24 +186,46 @@ def require_role(*allowed):
         st.stop()
 
 
+def get_project(codigo):
+    return next((p for p in st.session_state.projects if p["codigo_interno"] == codigo), None)
+
+
+def get_muestra(codigo, perforacion_codigo, muestra_id):
+    for m in st.session_state.muestras.get(f"{codigo}::{perforacion_codigo}", []):
+        if m["id_unico"] == muestra_id:
+            return m
+    return None
+
+
 # ════════════════════════════════════════════════════════════════════
-# LOGIN
+# LOGIN (estilo tarjeta centrada, inspirado en el mockup compartido)
 # ════════════════════════════════════════════════════════════════════
 def render_login():
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    col = st.columns([1, 1.4, 1])[1]
+    st.markdown("<br>", unsafe_allow_html=True)
+    col = st.columns([1, 1.3, 1])[1]
     with col:
-        st.markdown("## 🧪 GEODELTA LAB")
-        st.caption("Ingresa tu clave de acceso")
-        role_choice = st.radio("Tipo de usuario", ["Auxiliar", "Jefe"], horizontal=True)
-        password = st.text_input("Clave de acceso", type="password")
-        if st.button("Ingresar", type="primary", use_container_width=True):
-            role_key = "jefe" if role_choice == "Jefe" else "auxiliar"
-            if password == PASSWORDS[role_key]:
-                st.session_state.role = role_key
-                navigate("home")
-            else:
-                st.error("Clave incorrecta.")
+        st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
+        st.markdown('<div class="login-icon">🧪</div>', unsafe_allow_html=True)
+        st.markdown('<div class="login-title">GEODELTA LAB</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="login-card">', unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown("#### Bienvenido de nuevo")
+            st.caption("Ingresa tus credenciales para acceder al sistema.")
+            role_choice = st.radio("Tipo de usuario", ["Auxiliar", "Jefe"], horizontal=True, label_visibility="visible")
+            password = st.text_input("Clave de acceso", type="password", placeholder="••••••••")
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("INGRESAR", type="primary", use_container_width=True):
+                role_key = "jefe" if role_choice == "Jefe" else "auxiliar"
+                if password == PASSWORDS[role_key]:
+                    st.session_state.role = role_key
+                    navigate("home")
+                else:
+                    st.error("Clave incorrecta.")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="login-footer">🛠️ Geodelta Lab Engineering</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -189,16 +240,16 @@ def render_sidebar():
         if st.button("🏠  Inicio", use_container_width=True):
             navigate("home")
         if st.session_state.role == "jefe":
-            if st.button("📋  Generar bitácora", use_container_width=True):
+            if st.button("📋  Bitácora de proyecto", use_container_width=True):
                 navigate("bitacora")
         if st.button("📂  Continuar ensayo", use_container_width=True):
             navigate("continue")
         if st.button("🔎  Buscar ensayos", use_container_width=True):
             navigate("search")
         st.markdown("---")
-        if st.session_state.selected_project_code:
+        if st.session_state.selected_codigo:
             st.caption("Proyecto activo")
-            st.markdown(f"**{st.session_state.selected_project_code}**")
+            st.markdown(f"**{st.session_state.selected_codigo}**")
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("🚪  Cerrar sesión", use_container_width=True):
             st.session_state.role = None
@@ -225,7 +276,7 @@ def render_home():
             if st.button("🔎  Buscar ensayos", use_container_width=True):
                 navigate("search")
     else:
-        st.info("Como auxiliar puedes abrir los proyectos existentes, digitar resultados de ensayos y actualizar el estado de las muestras.")
+        st.info("Como auxiliar puedes abrir proyectos existentes, digitar resultados de ensayos y actualizar el estado de las muestras.")
 
     st.markdown("### Proyectos")
     if not st.session_state.projects:
@@ -234,11 +285,11 @@ def render_home():
         st.markdown('<div class="card">', unsafe_allow_html=True)
         cols = st.columns([4, 1])
         with cols[0]:
-            st.markdown(f"**{p['code']}**")
-            st.caption(p["name"])
+            st.markdown(f"**{p['codigo_interno']}**")
+            st.caption(p["nombre"])
         with cols[1]:
-            if st.button("Abrir", key=f"open_{p['code']}", use_container_width=True):
-                st.session_state.selected_project_code = p["code"]
+            if st.button("Abrir", key=f"open_{p['codigo_interno']}", use_container_width=True):
+                st.session_state.selected_codigo = p["codigo_interno"]
                 navigate("project-detail")
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -251,231 +302,319 @@ def render_new_project():
     st.button("← Atrás", on_click=lambda: navigate("home"))
     st.markdown("## Nuevo proyecto")
 
-    existing_codes = [p["code"] for p in st.session_state.projects]
-    code = st.text_input("Código del proyecto", placeholder="GEO-2024-001")
-    name = st.text_input("Nombre del proyecto", placeholder="Estudio de suelos vía Bogotá-Medellín")
+    st.markdown('<div class="section-title">Código interno</div>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([1, 1, 1])
+    with c1:
+        st.text_input("Prefijo", value="GDA", disabled=True)
+    with c2:
+        numero = st.text_input("Número", placeholder="001")
+    with c3:
+        anio = st.text_input("Año", placeholder="24")
 
-    if code:
-        st.error("Ese código ya existe.") if code in existing_codes else st.success("Código disponible.")
+    codigo_interno = f"GDA-{numero}-{anio}" if numero and anio else ""
+    existing_codes = [p["codigo_interno"] for p in st.session_state.projects]
+    if codigo_interno:
+        if codigo_interno in existing_codes:
+            st.error(f"El código **{codigo_interno}** ya existe.")
+        else:
+            st.success(f"Código interno: **{codigo_interno}**")
+
+    st.markdown('<div class="section-title">Información del proyecto</div>', unsafe_allow_html=True)
+    nombre = st.text_input("Nombre del proyecto", placeholder="Estudio de suelos vía Bogotá-Medellín")
+    localizacion = st.text_input("Localización", placeholder="Km 14+200")
+    norma = st.selectbox("Norma", NORMA_PROYECTO_OPTIONS)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        fecha_bitacora = st.date_input("Fecha de bitácora", value=date.today())
+    with c2:
+        fecha_ingreso = st.date_input("Fecha de ingreso de muestra", value=date.today())
 
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Cancelar", use_container_width=True):
             navigate("home")
     with col2:
-        disabled = not code or not name or code in existing_codes
-        if st.button("Continuar →", type="primary", use_container_width=True, disabled=disabled):
-            st.session_state.projects.append({"code": code, "name": name})
-            st.session_state.selected_project_code = code
-            navigate("project-detail")
+        disabled = not codigo_interno or not nombre or codigo_interno in existing_codes
+        if st.button("Crear proyecto →", type="primary", use_container_width=True, disabled=disabled):
+            st.session_state.projects.append({
+                "codigo_interno": codigo_interno, "numero": numero, "anio": anio, "nombre": nombre,
+                "localizacion": localizacion, "norma": norma,
+                "fecha_bitacora": str(fecha_bitacora), "fecha_ingreso_muestra": str(fecha_ingreso),
+            })
+            st.session_state.perforaciones[codigo_interno] = []
+            st.session_state.selected_codigo = codigo_interno
+            navigate("bitacora")
 
 
 # ════════════════════════════════════════════════════════════════════
-# DETALLE DE PROYECTO
+# DETALLE DE PROYECTO → LISTA DE PERFORACIONES
 # ════════════════════════════════════════════════════════════════════
 def render_project_detail():
-    code = st.session_state.selected_project_code
-    project = next((p for p in st.session_state.projects if p["code"] == code), None)
+    codigo = st.session_state.selected_codigo
+    project = get_project(codigo)
     if not project:
         navigate("home")
         return
 
     st.button("← Atrás", on_click=lambda: navigate("home"))
-    st.markdown(f"## {project['code']}")
-    st.caption(project["name"])
-
-    samples = sorted({k.split("::")[1] for k in st.session_state.headers if k.startswith(code + "::")})
-
-    if st.session_state.role == "jefe":
-        if st.button("➕ Nueva muestra", type="primary"):
-            navigate("new-sample")
-
-    st.markdown("### Muestras")
-    if not samples:
-        st.info("Este proyecto todavía no tiene muestras.")
-    for s in samples:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        cols = st.columns([3, 1.4, 1])
-        with cols[0]:
-            st.markdown(f"**Muestra {s}**")
-            header = st.session_state.headers.get(f"{code}::{s}", {})
-            st.caption(f"Apique {header.get('apique', '—')} · Profundidad {header.get('depthStart','—')}-{header.get('depthEnd','—')} m")
-        with cols[1]:
-            status = st.session_state.sample_status.get(f"{code}::{s}", "sin-iniciar")
-            st.markdown(f'<span class="badge {STATUS_BADGE[status]}">{STATUS_LABELS[status]}</span>', unsafe_allow_html=True)
-        with cols[2]:
-            if st.button("Abrir", key=f"open_sample_{s}", use_container_width=True):
-                st.session_state.selected_sample = s
-                navigate("sample-summary")
-        st.markdown('</div>', unsafe_allow_html=True)
-
-
-# ════════════════════════════════════════════════════════════════════
-# NUEVA MUESTRA (solo Jefe)
-# ════════════════════════════════════════════════════════════════════
-def render_new_sample():
-    require_role("jefe")
-    code = st.session_state.selected_project_code
-    st.button("← Atrás", on_click=lambda: navigate("project-detail"))
-    st.markdown(f"## Nueva muestra · {code}")
-
-    existing = {k.split("::")[1] for k in st.session_state.headers if k.startswith(code + "::")}
-    sample = st.text_input("Nombre de la muestra", placeholder="M1, M3, M12…").strip().upper()
-
-    if sample and sample in existing:
-        st.warning(f"La muestra **{sample}** ya existe. Se abrirá su información.")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Cancelar", use_container_width=True):
-            navigate("project-detail")
-    with col2:
-        if st.button("Continuar →", type="primary", use_container_width=True, disabled=not sample):
-            st.session_state.selected_sample = sample
-            navigate("sample-summary" if sample in existing else "header-form")
-
-
-# ════════════════════════════════════════════════════════════════════
-# ENCABEZADO (solo Jefe)
-# ════════════════════════════════════════════════════════════════════
-def render_header_form():
-    require_role("jefe")
-    code = st.session_state.selected_project_code
-    sample = st.session_state.selected_sample
-    st.button("← Atrás", on_click=lambda: navigate("new-sample"))
-    st.markdown(f"## Encabezado · {code} · Muestra {sample}")
-
-    st.markdown('<div class="section-title">Información general</div>', unsafe_allow_html=True)
-    c1, c2 = st.columns(2)
-    with c1:
-        date = st.text_input("Fecha de ejecución", placeholder="2024-11-15")
-        apique = st.text_input("Apique / Sondeo", placeholder="AP-01")
-        depth_start = st.text_input("Profundidad inicial (m)", placeholder="0.00")
-    with c2:
-        location = st.text_input("Localización", placeholder="Sector Norte, Km 14+200")
-        depth_end = st.text_input("Profundidad final (m)", placeholder="1.50")
-
-    visual_desc = st.text_area("Descripción visual", placeholder="Suelo arcilloso de color café oscuro…", height=100)
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Cancelar", use_container_width=True):
-            navigate("new-sample")
-    with col2:
-        if st.button("Guardar encabezado →", type="primary", use_container_width=True):
-            key = f"{code}::{sample}"
-            st.session_state.headers[key] = {
-                "project": code, "sample": sample, "date": date, "apique": apique,
-                "location": location, "depthStart": depth_start, "depthEnd": depth_end,
-                "visualDescription": visual_desc,
-            }
-            st.session_state.sample_status[key] = "sin-iniciar"
-            navigate("sample-summary")
-
-
-# ════════════════════════════════════════════════════════════════════
-# RESUMEN DE LA MUESTRA
-# ════════════════════════════════════════════════════════════════════
-def render_sample_summary():
-    code = st.session_state.selected_project_code
-    sample = st.session_state.selected_sample
-    key = f"{code}::{sample}"
-    header = st.session_state.headers.get(key)
-
-    st.button("← Atrás", on_click=lambda: navigate("project-detail"))
-    st.markdown(f"## Muestra {sample}")
+    st.markdown(f"## {project['codigo_interno']}")
+    st.caption(project["nombre"])
 
     st.markdown('<div class="card">', unsafe_allow_html=True)
     cols = st.columns(4)
-    cols[0].metric("Proyecto", code)
-    cols[1].metric("Muestra", sample)
-    if header:
-        cols[2].metric("Profundidad", f"{header['depthStart']}–{header['depthEnd']} m")
-        cols[3].metric("Apique", header["apique"])
+    cols[0].metric("Localización", project.get("localizacion") or "—")
+    cols[1].metric("Norma", project.get("norma") or "—")
+    cols[2].metric("Fecha bitácora", project.get("fecha_bitacora") or "—")
+    cols[3].metric("Fecha ingreso muestra", project.get("fecha_ingreso_muestra") or "—")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="section-title">Estado de la muestra</div>', unsafe_allow_html=True)
-    current_status = st.session_state.sample_status.get(key, "sin-iniciar")
-    options = list(STATUS_LABELS.keys())
-    new_status = st.selectbox("Estado", options, index=options.index(current_status),
-                               format_func=lambda k: STATUS_LABELS[k])
-    if new_status != current_status:
-        st.session_state.sample_status[key] = new_status
-        st.rerun()
-
     if st.session_state.role == "jefe":
-        if st.button("➕ Nuevo ensayo", type="primary"):
-            navigate("select-assay-type")
+        if st.button("📋  Ir a la bitácora (agregar perforaciones y muestras)", type="primary"):
+            navigate("bitacora")
 
-    st.markdown("### Ensayos")
-    sample_assays = [a for a in st.session_state.assays if a["project"] == code and a["sample"] == sample]
-    if not sample_assays:
-        st.info("Esta muestra todavía no tiene ensayos.")
-    for a in sample_assays:
+    st.markdown("### Perforaciones")
+    perforaciones = st.session_state.perforaciones.get(codigo, [])
+    if not perforaciones:
+        st.info("Este proyecto todavía no tiene perforaciones. Usa la Bitácora para agregarlas.")
+    for perf in perforaciones:
+        muestras = st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", [])
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        cols = st.columns([3, 1.4, 1])
-        cols[0].markdown(f"**{ASSAY_LABELS[a['type']]}**")
-        cols[1].markdown(f'<span class="badge {STATUS_BADGE[a["status"]]}">{STATUS_LABELS[a["status"]]}</span>', unsafe_allow_html=True)
+        cols = st.columns([3, 2, 1])
+        with cols[0]:
+            st.markdown(f"**{perf['codigo']}** — {perf['tipo']}")
+        with cols[1]:
+            st.caption(f"{len(muestras)} muestra(s)")
         with cols[2]:
-            if st.button("Abrir ensayo", key=f"open_assay_{a['id']}", use_container_width=True):
-                st.session_state.selected_assay_id = a["id"]
-                st.session_state.selected_assay_type = a["type"]
-                navigate("assay-form")
+            if st.button("Abrir", key=f"open_perf_{perf['codigo']}", use_container_width=True):
+                st.session_state.selected_perforacion = perf["codigo"]
+                navigate("perforacion-detail")
         st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════════════════════════
-# SELECCIONAR TIPO DE ENSAYO (solo Jefe crea ensayos nuevos)
+# DETALLE DE PERFORACIÓN → LISTA DE MUESTRAS
 # ════════════════════════════════════════════════════════════════════
-def render_select_assay_type():
-    require_role("jefe")
-    st.button("← Atrás", on_click=lambda: navigate("sample-summary"))
-    st.markdown("## Selecciona el tipo de ensayo")
+def render_perforacion_detail():
+    codigo = st.session_state.selected_codigo
+    perf_codigo = st.session_state.selected_perforacion
+    project = get_project(codigo)
+    if not project:
+        navigate("home")
+        return
 
-    cols = st.columns(3)
-    icons = {"granulometria": "📊", "humedad": "💧", "masa-unitaria": "⚖️"}
-    for col, (t, label) in zip(cols, ASSAY_LABELS.items()):
-        with col:
-            st.markdown('<div class="card" style="text-align:center; height:150px;">', unsafe_allow_html=True)
-            st.markdown(f"<div style='font-size:34px;'>{icons[t]}</div>", unsafe_allow_html=True)
-            st.markdown(f"**{label}**")
-            if st.button("Seleccionar", key=f"select_{t}", use_container_width=True):
-                code = st.session_state.selected_project_code
-                sample = st.session_state.selected_sample
-                existing = next((a for a in st.session_state.assays
-                                  if a["project"] == code and a["sample"] == sample and a["type"] == t), None)
-                if existing:
-                    st.session_state.selected_assay_id = existing["id"]
-                else:
-                    new_id = f"a-{uuid.uuid4().hex[:8]}"
-                    st.session_state.assays.append({
-                        "id": new_id, "project": code, "sample": sample, "type": t,
-                        "status": "sin-iniciar", "data": {}, "observations": "", "laboratorist": "",
-                        "lastModified": now_iso(), "createdAt": now_iso(),
-                    })
-                    st.session_state.selected_assay_id = new_id
-                st.session_state.selected_assay_type = t
-                navigate("assay-form")
-            st.markdown('</div>', unsafe_allow_html=True)
+    st.button("← Atrás", on_click=lambda: navigate("project-detail"))
+    st.markdown(f"## Perforación {perf_codigo}")
+    st.caption(f"{project['codigo_interno']} · {project['nombre']}")
+
+    muestras = st.session_state.muestras.get(f"{codigo}::{perf_codigo}", [])
+    if not muestras:
+        st.info("Esta perforación todavía no tiene muestras. Agrégalas desde la Bitácora.")
+    for m in muestras:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        cols = st.columns([2.5, 2, 1.3, 1])
+        with cols[0]:
+            st.markdown(f"**Muestra {m['numero']}**")
+            st.caption(m["id_unico"])
+        with cols[1]:
+            st.caption(f"Prof. {m['profundidad_de']}–{m['profundidad_hasta']} m · {m['tipo_muestra']}")
+        with cols[2]:
+            st.markdown(f'<span class="badge {STATUS_BADGE[m["estado"]]}">{STATUS_LABELS[m["estado"]]}</span>', unsafe_allow_html=True)
+        with cols[3]:
+            if st.button("Abrir", key=f"open_muestra_{m['id_unico']}", use_container_width=True):
+                st.session_state.selected_muestra_id = m["id_unico"]
+                navigate("muestra-detail")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ════════════════════════════════════════════════════════════════════
+# BITÁCORA — crea perforaciones y muestras (solo Jefe)
+# ════════════════════════════════════════════════════════════════════
+def render_bitacora():
+    require_role("jefe")
+    st.button("← Atrás", on_click=lambda: navigate("home"))
+    st.markdown("## 📋 Bitácora orden para ensayos de laboratorio")
+
+    codes = [p["codigo_interno"] for p in st.session_state.projects]
+    if not codes:
+        st.info("Primero crea un proyecto.")
+        return
+    default_idx = codes.index(st.session_state.selected_codigo) if st.session_state.selected_codigo in codes else 0
+    codigo = st.selectbox("Proyecto", codes, index=default_idx)
+    st.session_state.selected_codigo = codigo
+    project = get_project(codigo)
+
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown(f"**{project['nombre']}** · {project.get('localizacion','—')} · Norma {project.get('norma','—')}")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    perforaciones = st.session_state.perforaciones.setdefault(codigo, [])
+
+    st.markdown('<div class="section-title">Agregar perforación</div>', unsafe_allow_html=True)
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        tipo = st.selectbox("Tipo de perforación", list(TIPO_PERFORACION_PREFIX.keys()))
+    with c2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("➕ Agregar perforación", use_container_width=True):
+            prefix = TIPO_PERFORACION_PREFIX[tipo]
+            consecutivo = len([p for p in perforaciones if p["tipo"] == tipo]) + 1
+            codigo_perf = f"{prefix}{consecutivo}"
+            perforaciones.append({"tipo": tipo, "consecutivo": consecutivo, "codigo": codigo_perf})
+            st.session_state.muestras[f"{codigo}::{codigo_perf}"] = []
+            st.rerun()
+
+    st.markdown('<div class="section-title">Perforaciones y muestras</div>', unsafe_allow_html=True)
+    if not perforaciones:
+        st.info("Todavía no hay perforaciones en este proyecto. Agrega la primera arriba.")
+
+    for perf in perforaciones:
+        with st.expander(f"**{perf['codigo']}** — {perf['tipo']}", expanded=True):
+            key = f"{codigo}::{perf['codigo']}"
+            muestras = st.session_state.muestras.setdefault(key, [])
+
+            base_cols = {"Número": "", "Prof. De": 0.0, "Prof. A": 0.0, "Tipo de muestra": "Shelby"}
+            for e in BITACORA_ENSAYOS:
+                base_cols[e] = False
+
+            if muestras:
+                rows = []
+                for m in muestras:
+                    row = {"Número": m["numero"], "Prof. De": m["profundidad_de"], "Prof. A": m["profundidad_hasta"], "Tipo de muestra": m["tipo_muestra"]}
+                    for e in BITACORA_ENSAYOS:
+                        row[e] = m["ensayos"].get(e, False)
+                    rows.append(row)
+                df = pd.DataFrame(rows)
+            else:
+                df = pd.DataFrame([base_cols])
+
+            column_config = {
+                "Tipo de muestra": st.column_config.SelectboxColumn(options=TIPO_MUESTRA_OPTIONS),
+                "Prof. De": st.column_config.NumberColumn(format="%.2f"),
+                "Prof. A": st.column_config.NumberColumn(format="%.2f"),
+            }
+            for e in BITACORA_ENSAYOS:
+                column_config[e] = st.column_config.CheckboxColumn(e)
+
+            edited = st.data_editor(
+                df, num_rows="dynamic", use_container_width=True,
+                column_config=column_config, key=f"editor_{key}",
+            )
+
+            nuevas_muestras = []
+            for _, row in edited.iterrows():
+                numero = str(row["Número"]).strip()
+                if not numero or numero == "nan":
+                    continue
+                id_unico = f"{codigo}_{perf['codigo']}_M{numero}"
+                existente = next((m for m in muestras if m["id_unico"] == id_unico), None)
+                nuevas_muestras.append({
+                    "numero": numero, "id_unico": id_unico,
+                    "profundidad_de": row["Prof. De"], "profundidad_hasta": row["Prof. A"],
+                    "tipo_muestra": row["Tipo de muestra"],
+                    "ensayos": {e: bool(row[e]) for e in BITACORA_ENSAYOS},
+                    "estado": existente["estado"] if existente else "sin-iniciar",
+                })
+            st.session_state.muestras[key] = nuevas_muestras
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    bio = BytesIO()
+    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
+        pd.DataFrame([project]).to_excel(writer, index=False, sheet_name="Proyecto")
+        all_rows = []
+        for perf in perforaciones:
+            for m in st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", []):
+                r = {"Perforación": perf["codigo"], "Tipo": perf["tipo"], "N° Muestra": m["numero"],
+                     "ID único": m["id_unico"], "Prof. De": m["profundidad_de"], "Prof. A": m["profundidad_hasta"],
+                     "Tipo de muestra": m["tipo_muestra"], "Estado": STATUS_LABELS[m["estado"]]}
+                r.update(m["ensayos"])
+                all_rows.append(r)
+        pd.DataFrame(all_rows).to_excel(writer, index=False, sheet_name="Muestras")
+    st.download_button("📥  Descargar bitácora (Excel)", data=bio.getvalue(),
+                        file_name=f"Bitacora_{codigo}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True)
+
+
+# ════════════════════════════════════════════════════════════════════
+# DETALLE DE MUESTRA → LISTA DE ENSAYOS SOLICITADOS
+# ════════════════════════════════════════════════════════════════════
+def render_muestra_detail():
+    codigo = st.session_state.selected_codigo
+    perf_codigo = st.session_state.selected_perforacion
+    muestra_id = st.session_state.selected_muestra_id
+    muestra = get_muestra(codigo, perf_codigo, muestra_id)
+    if not muestra:
+        navigate("home")
+        return
+
+    st.button("← Atrás", on_click=lambda: navigate("perforacion-detail"))
+    st.markdown(f"## Muestra {muestra['numero']}")
+    st.caption(muestra["id_unico"])
+
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    cols = st.columns(4)
+    cols[0].metric("Perforación", perf_codigo)
+    cols[1].metric("Profundidad", f"{muestra['profundidad_de']}–{muestra['profundidad_hasta']} m")
+    cols[2].metric("Tipo de muestra", muestra["tipo_muestra"])
+    cols[3].metric("Proyecto", codigo)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="section-title">Estado de la muestra</div>', unsafe_allow_html=True)
+    options = list(STATUS_LABELS.keys())
+    new_status = st.selectbox("Estado", options, index=options.index(muestra["estado"]), format_func=lambda k: STATUS_LABELS[k])
+    if new_status != muestra["estado"]:
+        muestra["estado"] = new_status
+        st.rerun()
+
+    st.markdown("### Ensayos solicitados")
+    solicitados = [e for e, v in muestra["ensayos"].items() if v]
+    if not solicitados:
+        st.info("Esta muestra no tiene ensayos marcados en la bitácora.")
+    for ensayo_label in solicitados:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        cols = st.columns([3, 1.4, 1])
+        cols[0].markdown(f"**{ensayo_label}**")
+        tipo_interno = SUPPORTED_ASSAY_MAP.get(ensayo_label)
+        if tipo_interno:
+            existing = next((a for a in st.session_state.assays if a["muestra_id"] == muestra_id and a["tipo"] == tipo_interno), None)
+            status = existing["status"] if existing else "sin-iniciar"
+            cols[1].markdown(f'<span class="badge {STATUS_BADGE[status]}">{STATUS_LABELS[status]}</span>', unsafe_allow_html=True)
+            with cols[2]:
+                if st.button("Abrir", key=f"open_ensayo_{ensayo_label}", use_container_width=True):
+                    if existing:
+                        st.session_state.selected_assay_id = existing["id"]
+                    else:
+                        new_id = f"a-{uuid.uuid4().hex[:8]}"
+                        st.session_state.assays.append({
+                            "id": new_id, "muestra_id": muestra_id, "tipo": tipo_interno, "status": "sin-iniciar",
+                            "data": {}, "observations": "", "laboratorist": "",
+                            "codigo_interno": codigo, "perforacion_codigo": perf_codigo, "muestra_numero": muestra["numero"],
+                            "lastModified": now_iso(), "createdAt": now_iso(),
+                        })
+                        st.session_state.selected_assay_id = new_id
+                    st.session_state.selected_assay_type = tipo_interno
+                    navigate("assay-form")
+        else:
+            cols[1].markdown('<span class="badge badge-muted">Sin formulario aún</span>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════════════════════════
 # GENERAR EXCEL DE GRANULOMETRÍA (plantilla real del laboratorio)
 # ════════════════════════════════════════════════════════════════════
-def generar_excel_granulometria(code, sample, header, data):
+def generar_excel_granulometria(codigo, perf_codigo, muestra, project, data):
     wb = load_workbook(TEMPLATE_GRANULOMETRIA, keep_vba=True)
     ws = wb["MUESTRA"]
 
-    project = next((p for p in st.session_state.projects if p["code"] == code), None)
-    ws["D7"] = project["name"] if project else code
-    if header:
-        ws["D9"] = header.get("location", "")
-        ws["K7"] = header.get("date", "")
-        ws["D12"] = header.get("apique", "")
-        ws["K12"] = to_float(header.get("depthStart"))
-        ws["M12"] = to_float(header.get("depthEnd"))
-        ws["D13"] = header.get("visualDescription", "")
-    ws["H12"] = sample
+    ws["D7"] = project["nombre"] if project else codigo
+    ws["D9"] = project.get("localizacion", "") if project else ""
+    ws["K7"] = project.get("fecha_ingreso_muestra", "") if project else ""
+    ws["D12"] = perf_codigo
+    ws["H12"] = muestra["numero"]
+    ws["K12"] = to_float(muestra.get("profundidad_de"))
+    ws["M12"] = to_float(muestra.get("profundidad_hasta"))
+    ws["D13"] = f"Tipo de muestra: {muestra.get('tipo_muestra','')}"
     ws["D17"] = to_float(data.get("masa_inicial_seca"))
 
     for key, _label, _apert, cell in SIEVES:
@@ -501,11 +640,11 @@ def render_equipo(data, prefix):
 
 def render_norma_selector(assay_type, data, key_prefix):
     st.markdown('<div class="section-title">Norma aplicada</div>', unsafe_allow_html=True)
-    options = NORMAS[assay_type]
+    options = NORMAS_ENSAYO[assay_type]
     current = data.get(f"{key_prefix}_norma", "")
-    idx = options.index(current) + 1 if current in options else 0
-    choice = st.radio("Norma", ["(ninguna)"] + options, index=idx, horizontal=True, key=f"norma_{key_prefix}", label_visibility="collapsed")
-    data[f"{key_prefix}_norma"] = "" if choice == "(ninguna)" else choice
+    idx = options.index(current) if current in options else 0
+    choice = st.radio("Norma", options, index=idx, horizontal=True, key=f"norma_{key_prefix}", label_visibility="collapsed")
+    data[f"{key_prefix}_norma"] = choice
 
 
 def render_granulometria_form(data):
@@ -530,10 +669,9 @@ def render_granulometria_form(data):
 
 def render_humedad_form(data):
     st.info("Estos datos se guardan tal cual, sin calcular el % de humedad dentro de la app.")
-    metodo = data.get("hum_metodo", "")
-    idx = ["(ninguno)", "Método A", "Método B"].index(metodo) if metodo in ["Método A", "Método B"] else 0
-    choice = st.radio("Método de ensayo", ["(ninguno)", "Método A", "Método B"], index=idx, horizontal=True, key="hum_metodo_radio")
-    data["hum_metodo"] = "" if choice == "(ninguno)" else choice
+    metodo = data.get("hum_metodo", "Método A")
+    choice = st.radio("Método de ensayo", ["Método A", "Método B"], index=["Método A", "Método B"].index(metodo) if metodo in ["Método A", "Método B"] else 0, horizontal=True, key="hum_metodo_radio")
+    data["hum_metodo"] = choice
 
     st.markdown('<div class="section-title">Determinación de humedad natural</div>', unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
@@ -567,33 +705,33 @@ def render_masa_unitaria_form(data):
 
 
 def render_assay_form():
-    code = st.session_state.selected_project_code
-    sample = st.session_state.selected_sample
     assay_id = st.session_state.selected_assay_id
     assay = next((a for a in st.session_state.assays if a["id"] == assay_id), None)
-    header = st.session_state.headers.get(f"{code}::{sample}")
-
     if not assay:
-        navigate("sample-summary")
+        navigate("muestra-detail")
         return
 
-    st.button("← Atrás", on_click=lambda: navigate("sample-summary"))
+    codigo, perf_codigo, muestra_id = assay["codigo_interno"], assay["perforacion_codigo"], assay["muestra_id"]
+    project = get_project(codigo)
+    muestra = get_muestra(codigo, perf_codigo, muestra_id)
+
+    st.button("← Atrás", on_click=lambda: navigate("muestra-detail"))
 
     bar_cols = st.columns(5)
-    bar_cols[0].markdown(f"**Proyecto**<br>{code}", unsafe_allow_html=True)
-    bar_cols[1].markdown(f"**Muestra**<br>{sample}", unsafe_allow_html=True)
-    bar_cols[2].markdown(f"**Ensayo**<br>{ASSAY_LABELS[assay['type']]}", unsafe_allow_html=True)
-    bar_cols[3].markdown(f"**Apique**<br>{header['apique'] if header else '—'}", unsafe_allow_html=True)
+    bar_cols[0].markdown(f"**Proyecto**<br>{codigo}", unsafe_allow_html=True)
+    bar_cols[1].markdown(f"**Muestra**<br>{muestra['numero'] if muestra else '—'}", unsafe_allow_html=True)
+    bar_cols[2].markdown(f"**Ensayo**<br>{ASSAY_LABELS[assay['tipo']]}", unsafe_allow_html=True)
+    bar_cols[3].markdown(f"**Perforación**<br>{perf_codigo}", unsafe_allow_html=True)
     bar_cols[4].markdown(f"**Estado**<br><span class='badge {STATUS_BADGE[assay['status']]}'>{STATUS_LABELS[assay['status']]}</span>", unsafe_allow_html=True)
 
-    st.markdown(f"## {ASSAY_LABELS[assay['type']]}")
+    st.markdown(f"## {ASSAY_LABELS[assay['tipo']]}")
     data = dict(assay.get("data", {}))
 
-    if assay["type"] == "granulometria":
+    if assay["tipo"] == "granulometria":
         render_granulometria_form(data)
-    elif assay["type"] == "humedad":
+    elif assay["tipo"] == "humedad":
         render_humedad_form(data)
-    elif assay["type"] == "masa-unitaria":
+    elif assay["tipo"] == "masa-unitaria":
         render_masa_unitaria_form(data)
 
     st.markdown('<div class="section-title">Observaciones</div>', unsafe_allow_html=True)
@@ -607,22 +745,20 @@ def render_assay_form():
     with col1:
         if st.button("💾  Guardar borrador", use_container_width=True):
             assay.update(data=data, observations=observations, laboratorist=laboratorist, status="en-proceso", lastModified=now_iso())
-            navigate("sample-summary")
+            navigate("muestra-detail")
     with col2:
         if st.button("✅  Finalizar ensayo", type="primary", use_container_width=True):
             assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado", lastModified=now_iso())
-            navigate("sample-summary")
+            navigate("muestra-detail")
 
-    if st.session_state.role == "jefe" and assay["type"] == "granulometria":
+    if st.session_state.role == "jefe" and assay["tipo"] == "granulometria" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
-        excel_bytes = generar_excel_granulometria(code, sample, header, data)
+        excel_bytes = generar_excel_granulometria(codigo, perf_codigo, muestra, project, data)
         st.download_button(
             "📥  Descargar Excel (plantilla oficial de Granulometría)",
-            data=excel_bytes,
-            file_name=f"Granulometria_{code}_{sample}.xlsm",
-            mime="application/vnd.ms-excel.sheet.macroEnabled.12",
-            use_container_width=True,
+            data=excel_bytes, file_name=f"Granulometria_{muestra['id_unico']}.xlsm",
+            mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
 
@@ -638,14 +774,14 @@ def render_continue():
     for a in in_progress:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         cols = st.columns([3, 2, 2, 1])
-        cols[0].markdown(f"**{a['project']}**")
-        cols[1].markdown(f"Muestra {a['sample']}")
-        cols[2].markdown(ASSAY_LABELS[a["type"]])
+        cols[0].markdown(f"**{a['codigo_interno']}**")
+        cols[1].markdown(f"{a['perforacion_codigo']} · Muestra {a['muestra_numero']}")
+        cols[2].markdown(ASSAY_LABELS[a["tipo"]])
         with cols[3]:
             if st.button("Continuar", key=f"cont_{a['id']}", use_container_width=True):
-                st.session_state.selected_project_code = a["project"]
-                st.session_state.selected_sample = a["sample"]
-                st.session_state.selected_assay_type = a["type"]
+                st.session_state.selected_codigo = a["codigo_interno"]
+                st.session_state.selected_perforacion = a["perforacion_codigo"]
+                st.session_state.selected_muestra_id = a["muestra_id"]
                 st.session_state.selected_assay_id = a["id"]
                 navigate("assay-form")
         st.markdown('</div>', unsafe_allow_html=True)
@@ -658,78 +794,25 @@ def render_search():
     with c1:
         f_project = st.text_input("Proyecto")
     with c2:
-        f_sample = st.text_input("Muestra")
+        f_muestra = st.text_input("Muestra")
     with c3:
         f_type = st.selectbox("Tipo de ensayo", ["(todos)"] + list(ASSAY_LABELS.values()))
 
     results = st.session_state.assays
     if f_project:
-        results = [a for a in results if f_project.lower() in a["project"].lower()]
-    if f_sample:
-        results = [a for a in results if f_sample.lower() in a["sample"].lower()]
+        results = [a for a in results if f_project.lower() in a["codigo_interno"].lower()]
+    if f_muestra:
+        results = [a for a in results if f_muestra.lower() in str(a["muestra_numero"]).lower()]
     if f_type != "(todos)":
-        results = [a for a in results if ASSAY_LABELS[a["type"]] == f_type]
+        results = [a for a in results if ASSAY_LABELS[a["tipo"]] == f_type]
 
     if results:
-        df = pd.DataFrame([{"Proyecto": a["project"], "Muestra": a["sample"], "Ensayo": ASSAY_LABELS[a["type"]],
-                             "Estado": STATUS_LABELS[a["status"]], "Última modificación": a["lastModified"]} for a in results])
+        df = pd.DataFrame([{"Proyecto": a["codigo_interno"], "Perforación": a["perforacion_codigo"], "Muestra": a["muestra_numero"],
+                             "Ensayo": ASSAY_LABELS[a["tipo"]], "Estado": STATUS_LABELS[a["status"]],
+                             "Última modificación": a["lastModified"]} for a in results])
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
         st.info("No se encontraron ensayos con esos filtros.")
-
-
-# ════════════════════════════════════════════════════════════════════
-# BITÁCORA DE ORDEN (solo Jefe)
-# ════════════════════════════════════════════════════════════════════
-def render_bitacora():
-    require_role("jefe")
-    st.button("← Atrás", on_click=lambda: navigate("home"))
-    st.markdown("## 📋 Bitácora orden para ensayos de laboratorio")
-
-    codes = [p["code"] for p in st.session_state.projects] or ["(sin proyectos)"]
-    project_code = st.selectbox("Proyecto", codes)
-    bitacora = st.session_state.bitacoras.setdefault(project_code, {"meta": {}, "rows": []})
-
-    st.markdown('<div class="section-title">Datos generales</div>', unsafe_allow_html=True)
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        bitacora["meta"]["fecha"] = st.text_input("Fecha", value=bitacora["meta"].get("fecha", ""))
-        bitacora["meta"]["localizacion"] = st.text_input("Localización", value=bitacora["meta"].get("localizacion", ""))
-    with c2:
-        bitacora["meta"]["fuente_cantera"] = st.text_input("Fuente / Cantera", value=bitacora["meta"].get("fuente_cantera", ""))
-        bitacora["meta"]["orden_asignada"] = st.text_input("Orden asignada a", value=bitacora["meta"].get("orden_asignada", ""))
-    with c3:
-        bitacora["meta"]["norma"] = st.text_input("Norma (NTC / IDU / RAS / GDA / Otro)", value=bitacora["meta"].get("norma", ""))
-        bitacora["meta"]["revisada_por"] = st.text_input("Orden revisada por", value=bitacora["meta"].get("revisada_por", ""))
-
-    st.markdown('<div class="section-title">Muestras y ensayos solicitados</div>', unsafe_allow_html=True)
-    base_cols = {"N° Perforación": "", "N° Muestra": "", "Tipo de muestra": "", "Prof. De": None, "Prof. A": None}
-    for e in BITACORA_ENSAYOS:
-        base_cols[e] = False
-    base_cols["Observaciones"] = ""
-
-    if bitacora["rows"]:
-        df = pd.DataFrame(bitacora["rows"])
-        for col in base_cols:
-            if col not in df.columns:
-                df[col] = base_cols[col]
-        df = df[list(base_cols.keys())]
-    else:
-        df = pd.DataFrame([base_cols])
-
-    column_config = {e: st.column_config.CheckboxColumn(e) for e in BITACORA_ENSAYOS}
-    edited = st.data_editor(df, num_rows="dynamic", use_container_width=True, column_config=column_config, key="bitacora_editor")
-    bitacora["rows"] = edited.to_dict("records")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    bio = BytesIO()
-    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
-        pd.DataFrame([bitacora["meta"]]).to_excel(writer, index=False, sheet_name="Datos generales")
-        edited.to_excel(writer, index=False, sheet_name="Muestras")
-    st.download_button("📥  Descargar bitácora (Excel)", data=bio.getvalue(),
-                        file_name=f"Bitacora_{project_code}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -741,8 +824,8 @@ else:
     render_sidebar()
     SCREENS = {
         "home": render_home, "new-project": render_new_project, "project-detail": render_project_detail,
-        "new-sample": render_new_sample, "header-form": render_header_form, "sample-summary": render_sample_summary,
-        "select-assay-type": render_select_assay_type, "assay-form": render_assay_form,
-        "continue": render_continue, "search": render_search, "bitacora": render_bitacora,
+        "perforacion-detail": render_perforacion_detail, "muestra-detail": render_muestra_detail,
+        "bitacora": render_bitacora, "assay-form": render_assay_form,
+        "continue": render_continue, "search": render_search,
     }
     SCREENS.get(st.session_state.screen, render_home)()
