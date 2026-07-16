@@ -20,7 +20,7 @@ from openpyxl import load_workbook
 # ════════════════════════════════════════════════════════════════════
 st.set_page_config(page_title="Geodelta Lab", page_icon="🧪", layout="wide", initial_sidebar_state="expanded")
 
-APP_VERSION = "v4.2.0"
+APP_VERSION = "v5.0.0"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_GRANULOMETRIA = os.path.join(BASE_DIR, "templates", "CLASIFICACION_DE_SUELOS.xlsm")
 
@@ -30,6 +30,7 @@ PASSWORDS = {"jefe": "geodelta2024", "auxiliar": "aux2024"}
 # ESTILOS
 # ════════════════════════════════════════════════════════════════════
 NAVY, NAVY_HOVER, PRIMARY = "#1B2E4B", "#243D62", "#002046"
+PRIMARY_CONTAINER, SECONDARY_CONTAINER, SURFACE_LOW, SURFACE_HIGH = "#1B365D", "#C9E2FD", "#EFF4FF", "#DCE9FF"
 SUCCESS, SUCCESS_LIGHT = "#16A34A", "#DCFCE7"
 WARNING, WARNING_LIGHT = "#D97706", "#FEF3C7"
 SURFACE, BG, BORDER, TEXT, MUTED = "#FFFFFF", "#F2F4F7", "#E2E6ED", "#1A2332", "#6B7A8D"
@@ -92,6 +93,42 @@ st.markdown(f"""
     .login-title {{ text-align: center; color: {PRIMARY}; font-weight: 800; font-size: 26px; letter-spacing: -0.02em; margin-bottom: 28px; }}
     .login-footer {{ text-align: center; color: {MUTED}; font-size: 12px; text-transform: uppercase;
         letter-spacing: 0.06em; margin-top: 22px; }}
+
+    /* ---- BENTO CARDS (inspirado en el diseño de Stitch) ---- */
+    .bento-primary {{
+        background: linear-gradient(135deg, {PRIMARY_CONTAINER} 0%, {NAVY_HOVER} 100%);
+        color: #FFFFFF; border-radius: 16px; padding: 26px 28px; min-height: 168px;
+        display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 16px;
+    }}
+    .bento-primary .bento-icon {{
+        background: rgba(255,255,255,0.14); width: 44px; height: 44px; border-radius: 10px;
+        display: flex; align-items: center; justify-content: center; font-size: 22px; margin-bottom: 14px;
+    }}
+    .bento-primary .bento-eyebrow {{ font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.65; }}
+    .bento-primary h3 {{ color: #FFFFFF; margin: 4px 0 6px 0; }}
+    .bento-primary p {{ opacity: 0.75; font-size: 13px; margin: 0; }}
+
+    .bento-light {{
+        background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 16px; padding: 24px 26px;
+        min-height: 168px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 16px;
+    }}
+    .bento-light .bento-icon {{
+        background: {SECONDARY_CONTAINER}; color: {PRIMARY}; width: 44px; height: 44px; border-radius: 10px;
+        display: flex; align-items: center; justify-content: center; font-size: 20px; margin-bottom: 14px;
+    }}
+    .bento-light h3 {{ color: {PRIMARY}; margin: 4px 0 6px 0; font-size: 18px; }}
+    .bento-light p {{ color: {MUTED}; font-size: 13px; margin: 0; }}
+
+    .stat-chip {{
+        background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 12px; padding: 14px 16px;
+        display: flex; align-items: center; gap: 12px; margin-bottom: 12px;
+    }}
+    .stat-chip .stat-icon {{
+        width: 40px; height: 40px; border-radius: 999px; background: {SURFACE_LOW};
+        display: flex; align-items: center; justify-content: center; font-size: 18px;
+    }}
+    .stat-chip .stat-label {{ font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: {MUTED}; }}
+    .stat-chip .stat-value {{ font-size: 20px; font-weight: 800; color: {TEXT}; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -174,6 +211,7 @@ def init_state():
     st.session_state.selected_muestra_id = ""
     st.session_state.selected_assay_id = None
     st.session_state.selected_assay_type = None
+    st.session_state.read_only_view = False
 
 
 init_state()
@@ -251,6 +289,15 @@ def project_progress(codigo):
         for m in st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", []):
             counts[compute_muestra_estado(m)] += 1
     return counts
+
+
+def project_status(codigo):
+    """'ejecutado' solo si el proyecto tiene al menos una muestra y TODAS están finalizadas."""
+    counts = project_progress(codigo)
+    total = sum(counts.values())
+    if total > 0 and counts["finalizado"] == total:
+        return "ejecutado"
+    return "ejecucion"
 
 
 def confirm_delete(action_key, label):
@@ -331,38 +378,87 @@ def render_sidebar():
 # INICIO
 # ════════════════════════════════════════════════════════════════════
 def render_home():
-    st.title("GEODELTA LAB")
-    st.caption("Selecciona un proyecto o inicia una acción")
+    es_jefe = st.session_state.role == "jefe"
+    if es_jefe:
+        st.markdown("## Bienvenido, Jefe de Laboratorio")
+        st.caption("Resumen de operaciones y control de calidad geotécnica para hoy.")
+    else:
+        st.markdown("## Panel de Auxiliar")
+        st.caption("Gestiona tus proyectos asignados y registra los resultados de los ensayos de suelo.")
 
-    if st.session_state.role == "jefe":
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    if es_jefe:
         c1, c2, c3 = st.columns(3)
         with c1:
-            if st.button("🧪  Nuevo proyecto", use_container_width=True):
+            st.markdown('<div class="bento-primary"><div class="bento-icon">➕</div>'
+                         '<div><h3>Crear nuevo proyecto</h3><p>Registrar nuevo cliente y parámetros de sitio.</p></div></div>',
+                         unsafe_allow_html=True)
+            if st.button("Crear proyecto →", key="cta_new_project", use_container_width=True):
                 navigate("new-project")
         with c2:
-            if st.button("📂  Continuar ensayo", use_container_width=True):
-                navigate("continue")
+            st.markdown('<div class="bento-light"><div class="bento-icon">🔄</div>'
+                         f'<div><h3>Proyectos en ejecución</h3><p>{sum(1 for p in st.session_state.projects if project_status(p["codigo_interno"])=="ejecucion")} proyecto(s) activos en laboratorio.</p></div></div>',
+                         unsafe_allow_html=True)
+            if st.button("Ver proyectos →", key="cta_active", use_container_width=True):
+                navigate("projects-active")
         with c3:
-            if st.button("🔎  Buscar ensayos", use_container_width=True):
-                navigate("search")
+            st.markdown('<div class="bento-light"><div class="bento-icon">🗄️</div>'
+                         '<div><h3>Proyectos ejecutados</h3><p>Revisar reportes finales y resultados certificados.</p></div></div>',
+                         unsafe_allow_html=True)
+            if st.button("Explorar archivo →", key="cta_done", use_container_width=True):
+                navigate("projects-done")
     else:
-        st.info("Como auxiliar puedes abrir proyectos existentes, digitar resultados de ensayos y ver la bitácora de orden.")
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            activos = sum(1 for p in st.session_state.projects if project_status(p["codigo_interno"]) == "ejecucion")
+            st.markdown('<div class="bento-primary"><div><span class="bento-eyebrow">📋 Tareas prioritarias</span>'
+                         f'<h3>Proyectos en ejecución</h3><p>Accede a los proyectos activos para registrar granulometría, humedad y peso unitario.</p></div></div>',
+                         unsafe_allow_html=True)
+            if st.button(f"Ver proyectos → ({activos} activos)", key="cta_active_aux", use_container_width=True):
+                navigate("projects-active")
+        with c2:
+            st.markdown('<div class="bento-light"><div class="bento-icon">🗄️</div>'
+                         '<div><h3>Proyectos ejecutados</h3><p>Consulta el historial. Solo lectura.</p></div></div>',
+                         unsafe_allow_html=True)
+            if st.button("Explorar archivo →", key="cta_done_aux", use_container_width=True):
+                navigate("projects-done")
 
-    st.markdown("### Proyectos")
-    if not st.session_state.projects:
-        st.info("Todavía no hay proyectos.")
-    for p in st.session_state.projects:
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("### 🕓 Actividad reciente")
+    recientes = sorted(st.session_state.assays, key=lambda a: a["lastModified"], reverse=True)[:5]
+    if not recientes:
+        st.info("Todavía no hay actividad registrada.")
+    for a in recientes:
         with st.container(border=True):
-            cols = st.columns([3, 1, 1] if st.session_state.role == "jefe" else [4, 1])
+            cols = st.columns([2.2, 2, 1.6, 1.3])
+            cols[0].markdown(f"**{a['codigo_interno']}**")
+            cols[1].markdown(f"{a['perforacion_codigo']} · Muestra {a['muestra_numero']} · {ASSAY_LABELS[a['tipo']]}")
+            cols[2].markdown(f'<span class="badge {STATUS_BADGE[a["status"]]}">{STATUS_LABELS[a["status"]]}</span>', unsafe_allow_html=True)
+            cols[3].caption(format_dt(a["lastModified"]))
+
+
+def _render_project_list(codes, empty_msg, allow_delete, mark_read_only=False):
+    if not codes:
+        st.info(empty_msg)
+        return
+    for p in st.session_state.projects:
+        if p["codigo_interno"] not in codes:
+            continue
+        counts = project_progress(p["codigo_interno"])
+        with st.container(border=True):
+            cols = st.columns([3, 2, 1, 1] if allow_delete else [3, 2, 1])
             with cols[0]:
                 st.markdown(f"**{p['codigo_interno']}**")
                 st.caption(p["nombre"])
             with cols[1]:
-                if st.button("Abrir", key=f"open_{p['codigo_interno']}", use_container_width=True):
+                st.caption(f"{STATUS_ICON['sin-iniciar']} {counts['sin-iniciar']}  ·  {STATUS_ICON['en-proceso']} {counts['en-proceso']}  ·  {STATUS_ICON['finalizado']} {counts['finalizado']}")
+            with cols[2]:
+                if st.button("Abrir", key=f"openlist_{p['codigo_interno']}", use_container_width=True):
                     st.session_state.selected_codigo = p["codigo_interno"]
                     navigate("project-detail")
-            if st.session_state.role == "jefe":
-                with cols[2]:
+            if allow_delete:
+                with cols[3]:
                     if confirm_delete(f"project_{p['codigo_interno']}", f"el proyecto {p['codigo_interno']}"):
                         codigo = p["codigo_interno"]
                         st.session_state.projects = [x for x in st.session_state.projects if x["codigo_interno"] != codigo]
@@ -371,6 +467,24 @@ def render_home():
                         st.session_state.assays = [a for a in st.session_state.assays if a["codigo_interno"] != codigo]
                         st.session_state.bitacora_draft = {k: v for k, v in st.session_state.bitacora_draft.items() if not k.startswith(codigo + "::")}
                         st.rerun()
+
+
+def render_projects_active():
+    st.button("← Atrás", on_click=lambda: navigate("home"))
+    st.markdown("## 🔄 Proyectos en ejecución")
+    codes = [p["codigo_interno"] for p in st.session_state.projects if project_status(p["codigo_interno"]) == "ejecucion"]
+    _render_project_list(codes, "No hay proyectos en ejecución en este momento.",
+                          allow_delete=(st.session_state.role == "jefe"), mark_read_only=False)
+
+
+def render_projects_done():
+    st.button("← Atrás", on_click=lambda: navigate("home"))
+    st.markdown("## 🗄️ Proyectos ejecutados")
+    if st.session_state.role == "auxiliar":
+        st.info("🔒 Modo consulta: puedes ver los resultados, pero no editarlos.")
+    codes = [p["codigo_interno"] for p in st.session_state.projects if project_status(p["codigo_interno"]) == "ejecutado"]
+    _render_project_list(codes, "Todavía no hay proyectos completamente finalizados.",
+                          allow_delete=(st.session_state.role == "jefe"), mark_read_only=True)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -836,6 +950,29 @@ def render_masa_unitaria_form(data):
     render_norma_selector("masa-unitaria", data, "mu")
 
 
+def render_read_only_summary(tipo, data):
+    if tipo == "granulometria":
+        st.markdown(f"**Masa inicial seca (g):** {data.get('masa_inicial_seca') or '—'}")
+        rows = [{"Tamiz": label, "Retenido (g)": data.get(key, "—")} for key, label, _apert, _cell in SIEVES]
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        equipos, norma = data.get("gran_equipos", []), data.get("gran_norma", "—")
+    elif tipo == "humedad":
+        campos = [("hum_metodo", "Método"), ("hum_recipiente", "Recipiente No."), ("hum_tara", "Masa recipiente (g)"),
+                  ("hum_suelo_humedo_tara", "M. suelo húmedo + recipiente (g)"), ("hum_suelo_seco_tara", "M. suelo seco + recipiente 74h (g)")]
+        for key, label in campos:
+            st.markdown(f"**{label}:** {data.get(key) or '—'}")
+        equipos, norma = data.get("hum_equipos", []), data.get("hum_norma", "—")
+    else:
+        campos = [("mu_peso_aire", "Masa en el aire (g)"), ("mu_peso_aire_par", "Masa en el aire parafinado (g)"),
+                  ("mu_peso_agua_par", "Masa en el agua parafinado (g)"), ("mu_temp_agua", "Temperatura del agua (°C)"),
+                  ("mu_peso_parafina", "Masa de la parafina (g)"), ("mu_dens_parafina", "Densidad de la parafina (g/cm³)")]
+        for key, label in campos:
+            st.markdown(f"**{label}:** {data.get(key) or '—'}")
+        equipos, norma = data.get("mu_equipos", []), data.get("mu_norma", "—")
+    st.markdown(f"**Equipo utilizado:** {', '.join(equipos) if equipos else '—'}")
+    st.markdown(f"**Norma aplicada:** {norma or '—'}")
+
+
 def render_assay_form():
     assay_id = st.session_state.selected_assay_id
     assay = next((a for a in st.session_state.assays if a["id"] == assay_id), None)
@@ -846,6 +983,7 @@ def render_assay_form():
     codigo, perf_codigo, muestra_id = assay["codigo_interno"], assay["perforacion_codigo"], assay["muestra_id"]
     project = get_project(codigo)
     muestra = get_muestra(codigo, perf_codigo, muestra_id)
+    read_only = st.session_state.role == "auxiliar" and project_status(codigo) == "ejecutado"
 
     st.button("← Atrás", on_click=lambda: navigate("muestra-detail"))
 
@@ -859,6 +997,15 @@ def render_assay_form():
 
     st.markdown(f"## {ASSAY_LABELS[assay['tipo']]}")
     data = dict(assay.get("data", {}))
+
+    if read_only:
+        st.info("🔒 Este proyecto ya fue ejecutado. Estás en modo consulta — no puedes editar estos datos.")
+        render_read_only_summary(assay["tipo"], data)
+        st.markdown('<div class="section-title">Observaciones</div>', unsafe_allow_html=True)
+        st.write(assay.get("observations") or "—")
+        st.markdown('<div class="section-title">Laboratorista</div>', unsafe_allow_html=True)
+        st.write(assay.get("laboratorist") or "—")
+        return
 
     if assay["tipo"] == "granulometria":
         render_granulometria_form(data)
@@ -916,6 +1063,7 @@ def render_continue():
                     st.session_state.selected_perforacion = a["perforacion_codigo"]
                     st.session_state.selected_muestra_id = a["muestra_id"]
                     st.session_state.selected_assay_id = a["id"]
+                    st.session_state.read_only_view = False
                     navigate("assay-form")
 
 
@@ -1010,5 +1158,6 @@ else:
         "perforacion-detail": render_perforacion_detail, "muestra-detail": render_muestra_detail,
         "bitacora": render_bitacora, "assay-form": render_assay_form,
         "continue": render_continue, "search": render_search,
+        "projects-active": render_projects_active, "projects-done": render_projects_done,
     }
     SCREENS.get(st.session_state.screen, render_home)()
