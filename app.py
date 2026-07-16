@@ -169,6 +169,20 @@ st.markdown(f"""
         display: flex; align-items: center; justify-content: center; font-size: 20px; margin-bottom: 14px;
     }}
     .bento-light h3 {{ color: {PRIMARY}; margin: 4px 0 6px 0; font-size: 18px; }}
+
+    /* Tarjetas de la fila de acciones de Inicio, todas del mismo alto y alineadas */
+    .st-key-home-actions [data-testid="stHorizontalBlock"] {{ align-items: stretch; }}
+    .st-key-home-actions [data-testid="stElementContainer"]:has(.bento-primary),
+    .st-key-home-actions [data-testid="stElementContainer"]:has(.bento-light) {{ flex: 1 1 auto; }}
+    .st-key-home-actions [data-testid="stElementContainer"]:has(.bento-primary) .stMarkdown,
+    .st-key-home-actions [data-testid="stElementContainer"]:has(.bento-light) .stMarkdown,
+    .st-key-home-actions [data-testid="stElementContainer"]:has(.bento-primary) .stMarkdown > div,
+    .st-key-home-actions [data-testid="stElementContainer"]:has(.bento-light) .stMarkdown > div,
+    .st-key-home-actions [data-testid="stElementContainer"]:has(.bento-primary) [data-testid="stMarkdownContainer"],
+    .st-key-home-actions [data-testid="stElementContainer"]:has(.bento-light) [data-testid="stMarkdownContainer"] {{
+        height: 100%;
+    }}
+    .st-key-home-actions .bento-primary, .st-key-home-actions .bento-light {{ height: 100%; }}
     .bento-light p {{ color: {MUTED}; font-size: 13px; margin: 0; }}
 
     .stat-chip {{
@@ -481,41 +495,43 @@ def render_home():
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    if es_jefe:
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.markdown('<div class="bento-primary"><div class="bento-icon">➕</div>'
-                         '<div><h3>Crear nuevo proyecto</h3><p>Registrar nuevo cliente y parámetros de sitio.</p></div></div>',
-                         unsafe_allow_html=True)
-            if st.button("Crear proyecto →", key="cta_new_project", use_container_width=True):
-                navigate("new-project")
-        with c2:
-            st.markdown('<div class="bento-light"><div class="bento-icon">🔄</div>'
-                         f'<div><h3>Proyectos en ejecución</h3><p>{sum(1 for p in st.session_state.projects if project_status(p["codigo_interno"])=="ejecucion")} proyecto(s) activos en laboratorio.</p></div></div>',
-                         unsafe_allow_html=True)
-            if st.button("Ver proyectos →", key="cta_active", use_container_width=True):
-                navigate("projects-active")
-        with c3:
-            st.markdown('<div class="bento-light"><div class="bento-icon">🗄️</div>'
-                         '<div><h3>Proyectos ejecutados</h3><p>Revisar reportes finales y resultados certificados.</p></div></div>',
-                         unsafe_allow_html=True)
-            if st.button("Explorar archivo →", key="cta_done", use_container_width=True):
-                navigate("projects-done")
-    else:
-        c1, c2 = st.columns([2, 1])
-        with c1:
-            activos = sum(1 for p in st.session_state.projects if project_status(p["codigo_interno"]) == "ejecucion")
-            st.markdown('<div class="bento-primary"><div><span class="bento-eyebrow">📋 Tareas prioritarias</span>'
-                         f'<h3>Proyectos en ejecución</h3><p>Accede a los proyectos activos para registrar granulometría, humedad y peso unitario.</p></div></div>',
-                         unsafe_allow_html=True)
-            if st.button(f"Ver proyectos → ({activos} activos)", key="cta_active_aux", use_container_width=True):
-                navigate("projects-active")
-        with c2:
-            st.markdown('<div class="bento-light"><div class="bento-icon">🗄️</div>'
-                         '<div><h3>Proyectos ejecutados</h3><p>Consulta el historial. Solo lectura.</p></div></div>',
-                         unsafe_allow_html=True)
-            if st.button("Explorar archivo →", key="cta_done_aux", use_container_width=True):
-                navigate("projects-done")
+    with st.container(key="home-actions"):
+        if es_jefe:
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.markdown('<div class="bento-primary"><div class="bento-icon">➕</div>'
+                             '<div><h3>Crear nuevo proyecto</h3><p>Registrar nuevo cliente y parámetros de sitio.</p></div></div>',
+                             unsafe_allow_html=True)
+                if st.button("Crear proyecto →", key="cta_new_project", use_container_width=True):
+                    navigate("new-project")
+            with c2:
+                st.markdown('<div class="bento-light"><div class="bento-icon">🔄</div>'
+                             f'<div><h3>Proyectos en ejecución</h3><p>{sum(1 for p in st.session_state.projects if project_status(p["codigo_interno"])=="ejecucion")} proyecto(s) activos en laboratorio.</p></div></div>',
+                             unsafe_allow_html=True)
+                if st.button("Ver proyectos →", key="cta_active", use_container_width=True):
+                    navigate("projects-active")
+            with c3:
+                st.markdown('<div class="bento-light"><div class="bento-icon">🗄️</div>'
+                             '<div><h3>Proyectos ejecutados</h3><p>Revisar reportes finales y resultados certificados.</p></div></div>',
+                             unsafe_allow_html=True)
+                if st.button("Explorar archivo →", key="cta_done", use_container_width=True):
+                    navigate("projects-done")
+        else:
+            c1, c2 = st.columns([2, 1])
+            with c1:
+                activos = sum(1 for p in st.session_state.projects if project_status(p["codigo_interno"]) == "ejecucion")
+                st.markdown('<div class="bento-primary"><div class="bento-icon">📋</div>'
+                             f'<div><span class="bento-eyebrow">Tareas prioritarias</span>'
+                             f'<h3>Proyectos en ejecución</h3><p>Accede a los proyectos activos para registrar granulometría, humedad y peso unitario.</p></div></div>',
+                             unsafe_allow_html=True)
+                if st.button(f"Ver proyectos → ({activos} activos)", key="cta_active_aux", use_container_width=True):
+                    navigate("projects-active")
+            with c2:
+                st.markdown('<div class="bento-light"><div class="bento-icon">🗄️</div>'
+                             '<div><h3>Proyectos ejecutados</h3><p>Consulta el historial. Solo lectura.</p></div></div>',
+                             unsafe_allow_html=True)
+                if st.button("Explorar archivo →", key="cta_done_aux", use_container_width=True):
+                    navigate("projects-done")
 
     st.markdown("<br>", unsafe_allow_html=True)
     todos_los_ensayos = sorted(st.session_state.assays, key=lambda a: a["lastModified"], reverse=True)
