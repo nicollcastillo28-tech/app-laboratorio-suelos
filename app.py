@@ -6,6 +6,7 @@ Cómo correrla en tu computador:
     streamlit run app.py
 """
 
+import html
 import os
 import uuid
 from datetime import date, datetime
@@ -51,35 +52,47 @@ st.markdown(f"""
     section[data-testid="stSidebar"] {{ display: none; }}
     .font-mono {{ font-family: 'JetBrains Mono', monospace; }}
 
-    /* ---- TOP APP BAR ---- */
+    /* ---- TOP APP BAR (desktop / tablet ancho) ---- */
     .st-key-topbar {{
         position: sticky; top: 0; z-index: 999; background: {SURFACE};
         border-bottom: 1px solid {BORDER}; padding: 10px 4px 6px 4px; margin-bottom: 8px;
     }}
     .st-key-topbar .stButton button {{
-        font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700;
-        letter-spacing: 0.05em; text-transform: uppercase;
+        font-family: 'JetBrains Mono', monospace; font-weight: 700;
+        letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap;
+        font-size: clamp(10px, 1.1vw, 12px); padding-left: 8px; padding-right: 8px;
     }}
     .topbar-brand {{ display: flex; align-items: center; gap: 10px; height: 38px; }}
-    .topbar-brand .brand-title {{ font-size: 20px; font-weight: 700; color: {PRIMARY}; letter-spacing: -0.02em; }}
+    .topbar-brand .brand-title {{
+        font-size: clamp(15px, 2vw, 20px); font-weight: 700; color: {PRIMARY}; letter-spacing: -0.02em; white-space: nowrap;
+    }}
     .topbar-avatar {{
         width: 36px; height: 36px; border-radius: 999px; background: {PRIMARY_CONTAINER}; color: #FFFFFF;
         display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px;
-        border: 1px solid {BORDER}; margin-left: auto;
+        border: 1px solid {BORDER}; margin-left: auto; flex-shrink: 0;
     }}
 
-    /* ---- BOTTOM NAV (mobile) ---- */
+    /* ---- BOTTOM NAV (celular y tablet en vertical) ---- */
     .st-key-bottomnav {{ display: none; }}
-    @media (max-width: 768px) {{
+    @media (max-width: 900px) {{
         .st-key-topbar-nav {{ display: none; }}
+        div[data-testid="stColumn"]:has(.st-key-topbar-nav) {{ display: none; }}
         .st-key-bottomnav {{
             display: block; position: fixed; bottom: 0; left: 0; width: 100%; z-index: 999;
-            background: {SURFACE}; border-top: 1px solid {BORDER}; padding: 6px 8px; box-shadow: 0 -2px 8px rgba(0,0,0,0.04);
+            background: {SURFACE}; border-top: 1px solid {BORDER}; padding: 6px 8px 8px 8px; box-shadow: 0 -2px 8px rgba(0,0,0,0.04);
         }}
         .st-key-bottomnav .stButton button {{
-            font-family: 'JetBrains Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+            font-family: 'JetBrains Mono', monospace; font-size: clamp(8px, 2.6vw, 10px); text-transform: uppercase;
+            letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            padding-top: 10px; padding-bottom: 10px; padding-left: 2px; padding-right: 2px;
         }}
-        .main .block-container {{ padding-bottom: 72px; }}
+        .st-key-bottomnav [data-testid="stHorizontalBlock"] {{ flex-direction: row !important; flex-wrap: nowrap !important; gap: 6px !important; }}
+        .st-key-bottomnav [data-testid="stColumn"] {{ width: auto !important; flex: 1 1 0 !important; min-width: 0 !important; }}
+        .main .block-container {{ padding-bottom: 76px; }}
+    }}
+    @media (max-width: 420px) {{
+        .topbar-brand .brand-title {{ display: none; }}
+        .st-key-bottomnav .stButton button {{ font-size: 9px; }}
     }}
 
     /* Contenedores con borde nativos de Streamlit = nuestras "tarjetas" (sin bugs de HTML suelto) */
@@ -168,6 +181,28 @@ st.markdown(f"""
     }}
     .stat-chip .stat-label {{ font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: {MUTED}; }}
     .stat-chip .stat-value {{ font-size: 20px; font-weight: 800; color: {TEXT}; }}
+
+    /* ---- ACTIVITY TABLE (inspirado en el diseño de Stitch) ---- */
+    .activity-table-wrap {{ overflow-x: auto; }}
+    .activity-table {{ width: 100%; border-collapse: collapse; font-family: 'IBM Plex Sans', sans-serif; }}
+    .activity-table thead th {{
+        background: {SECONDARY_CONTAINER}; color: {PRIMARY}; font-family: 'JetBrains Mono', monospace;
+        font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+        padding: 10px 14px; text-align: left; white-space: nowrap; border-bottom: 1px solid {BORDER};
+    }}
+    .activity-table tbody td {{
+        padding: 12px 14px; border-bottom: 1px solid {BORDER}; font-size: 14px; color: {TEXT}; vertical-align: middle;
+    }}
+    .activity-table tbody tr:last-child td {{ border-bottom: none; }}
+    .activity-table tbody tr:hover {{ background: {BG}; }}
+    .activity-table .cell-id {{ font-family: 'JetBrains Mono', monospace; color: {PRIMARY}; font-weight: 600; }}
+    .activity-table .cell-title {{ font-weight: 600; color: {TEXT}; }}
+    .activity-table .cell-sub {{ font-size: 12px; color: {NEUTRAL}; margin-top: 1px; }}
+    .activity-table .cell-muted {{ color: {NEUTRAL}; font-size: 13px; }}
+    .activity-footer {{
+        display: flex; justify-content: space-between; align-items: center; padding: 10px 14px;
+        color: {NEUTRAL}; font-size: 13px;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -483,17 +518,47 @@ def render_home():
                 navigate("projects-done")
 
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("### 🕓 Actividad reciente")
-    recientes = sorted(st.session_state.assays, key=lambda a: a["lastModified"], reverse=True)[:5]
-    if not recientes:
-        st.info("Todavía no hay actividad registrada.")
-    for a in recientes:
-        with st.container(border=True):
-            cols = st.columns([2.2, 2, 1.6, 1.3])
-            cols[0].markdown(f"**{a['codigo_interno']}**")
-            cols[1].markdown(f"{a['perforacion_codigo']} · Muestra {a['muestra_numero']} · {ASSAY_LABELS[a['tipo']]}")
-            cols[2].markdown(f'<span class="badge {STATUS_BADGE[a["status"]]}">{STATUS_LABELS[a["status"]]}</span>', unsafe_allow_html=True)
-            cols[3].caption(format_dt(a["lastModified"]))
+    todos_los_ensayos = sorted(st.session_state.assays, key=lambda a: a["lastModified"], reverse=True)
+    recientes = todos_los_ensayos[:5]
+
+    with st.container(border=True):
+        h1, h2 = st.columns([4, 1])
+        with h1:
+            st.markdown('<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">'
+                        '🕓 Actividad reciente</div>', unsafe_allow_html=True)
+        with h2:
+            if st.button("Ver todo →", key="cta_ver_todo_actividad", use_container_width=True):
+                navigate("search")
+
+        if not recientes:
+            st.info("Todavía no hay actividad registrada.")
+        else:
+            rows_html = []
+            for a in recientes:
+                proyecto = get_project(a["codigo_interno"])
+                titulo = html.escape(proyecto["nombre"] if proyecto else a["codigo_interno"])
+                subtitulo = html.escape(f'{a["perforacion_codigo"]} · Muestra {a["muestra_numero"]} · {ASSAY_LABELS[a["tipo"]]}')
+                actualizacion = format_dt(a["lastModified"])
+                if a.get("laboratorist"):
+                    actualizacion += f' · {html.escape(a["laboratorist"])}'
+                rows_html.append(f"""
+                    <tr>
+                        <td class="cell-id">{html.escape(a['codigo_interno'])}</td>
+                        <td><div class="cell-title">{titulo}</div><div class="cell-sub">{subtitulo}</div></td>
+                        <td class="cell-muted">{html.escape(actualizacion)}</td>
+                        <td><span class="badge {STATUS_BADGE[a['status']]}">{STATUS_LABELS[a['status']]}</span></td>
+                    </tr>""")
+            st.markdown(f"""
+                <div class="activity-table-wrap">
+                <table class="activity-table">
+                    <thead><tr>
+                        <th>ID proyecto</th><th>Cliente / Ubicación</th><th>Última actualización</th><th>Estado</th>
+                    </tr></thead>
+                    <tbody>{''.join(rows_html)}</tbody>
+                </table>
+                </div>
+                <div class="activity-footer">Mostrando {len(recientes)} de {len(todos_los_ensayos)} ensayo(s)</div>
+            """, unsafe_allow_html=True)
 
 
 def _render_project_list(codes, empty_msg, allow_delete, mark_read_only=False):
