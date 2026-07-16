@@ -138,13 +138,29 @@ st.markdown(f"""
     }}
 
     .login-icon {{
-        width: 72px; height: 72px; border-radius: 999px; background: {SURFACE};
-        border: 1px solid {BORDER}; display: flex; align-items: center; justify-content: center;
-        font-size: 32px; margin: 0 auto 14px auto; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        width: 56px; height: 56px; border-radius: 16px; background: {SECONDARY_CONTAINER};
+        display: flex; align-items: center; justify-content: center; color: {PRIMARY};
+        font-size: 26px; margin: 0 auto 10px auto;
     }}
-    .login-title {{ text-align: center; color: {PRIMARY}; font-weight: 800; font-size: 26px; letter-spacing: -0.02em; margin-bottom: 28px; }}
-    .login-footer {{ text-align: center; color: {MUTED}; font-size: 12px; text-transform: uppercase;
-        letter-spacing: 0.06em; margin-top: 22px; }}
+    .login-title {{ text-align: center; color: {TEXT}; font-weight: 600; font-size: 16px; letter-spacing: -0.01em; margin-bottom: 20px; }}
+    .login-footer {{ text-align: center; color: {NEUTRAL}; font-size: 12px; margin-top: 18px; }}
+
+    /* Selector de rol en el login, como tarjetas seleccionables */
+    .st-key-login-card [data-testid="stRadio"] > div[role="radiogroup"] {{ display: flex; gap: 10px; }}
+    .st-key-login-card [data-testid="stRadio"] label {{
+        flex: 1 1 0; border: 1px solid {BORDER}; border-radius: 10px; padding: 8px 12px !important;
+        margin: 0 !important; background: {SURFACE};
+    }}
+    .st-key-login-card [data-testid="stRadio"] label:has(input:checked) {{
+        border-color: {PRIMARY}; background: {SECONDARY_CONTAINER};
+    }}
+    .st-key-login-card [data-testid="stWidgetLabel"] p {{
+        font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.05em; color: {NEUTRAL};
+    }}
+    .st-key-login-card .stButton:has(button[kind="secondary"]) button {{
+        color: {NEUTRAL}; border: none; background: transparent;
+    }}
 
     /* ---- BENTO CARDS (inspirado en el diseño de Stitch) ---- */
     .bento-primary {{
@@ -216,6 +232,17 @@ st.markdown(f"""
     .activity-footer {{
         display: flex; justify-content: space-between; align-items: center; padding: 10px 14px;
         color: {NEUTRAL}; font-size: 13px;
+    }}
+
+    /* ---- ENSAYOS ASIGNADOS (panel de Auxiliar) ---- */
+    .assigned-th {{
+        background: {SECONDARY_CONTAINER}; color: {PRIMARY}; font-family: 'JetBrains Mono', monospace;
+        font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+        padding: 8px 10px; border-radius: 6px; margin-bottom: 4px;
+    }}
+    .assigned-chip {{
+        background: {BG}; border: 1px solid {BORDER}; color: {PRIMARY}; font-size: 12px; font-weight: 700;
+        padding: 3px 10px; border-radius: 6px; display: inline-block;
     }}
 </style>
 """, unsafe_allow_html=True)
@@ -417,8 +444,8 @@ def render_login():
     col = st.columns([1, 1.3, 1])[1]
     with col:
         st.markdown('<div class="login-icon">🧪</div>', unsafe_allow_html=True)
-        st.markdown('<div class="login-title">GEODELTA LAB</div>', unsafe_allow_html=True)
-        with st.container(border=True):
+        st.markdown('<div class="login-title">Geodelta Lab</div>', unsafe_allow_html=True)
+        with st.container(border=True, key="login-card"):
             st.markdown("#### Bienvenido de nuevo")
             st.caption("Ingresa tus credenciales para acceder al sistema.")
             role_choice = st.radio("Tipo de usuario", ["Auxiliar", "Jefe"], horizontal=True)
@@ -431,6 +458,9 @@ def render_login():
                     navigate("home")
                 else:
                     st.error("Clave incorrecta.")
+            st.markdown('<hr style="margin:16px 0 4px 0;">', unsafe_allow_html=True)
+            if st.button("¿Olvidaste tu clave?", key="forgot_pwd", type="secondary", use_container_width=True):
+                st.info("Contacta al Jefe de laboratorio para restablecer tu clave de acceso.")
         st.markdown('<div class="login-footer">🛠️ Geodelta Lab Engineering</div>', unsafe_allow_html=True)
 
 
@@ -535,46 +565,87 @@ def render_home():
 
     st.markdown("<br>", unsafe_allow_html=True)
     todos_los_ensayos = sorted(st.session_state.assays, key=lambda a: a["lastModified"], reverse=True)
-    recientes = todos_los_ensayos[:5]
 
-    with st.container(border=True):
-        h1, h2 = st.columns([4, 1])
-        with h1:
-            st.markdown('<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">'
-                        '🕓 Actividad reciente</div>', unsafe_allow_html=True)
-        with h2:
-            if st.button("Ver todo →", key="cta_ver_todo_actividad", use_container_width=True):
-                navigate("search")
+    if es_jefe:
+        recientes = todos_los_ensayos[:5]
+        with st.container(border=True):
+            h1, h2 = st.columns([4, 1])
+            with h1:
+                st.markdown('<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">'
+                            '🕓 Actividad reciente</div>', unsafe_allow_html=True)
+            with h2:
+                if st.button("Ver todo →", key="cta_ver_todo_actividad", use_container_width=True):
+                    navigate("search")
 
-        if not recientes:
-            st.info("Todavía no hay actividad registrada.")
-        else:
-            rows_html = []
-            for a in recientes:
-                proyecto = get_project(a["codigo_interno"])
-                titulo = html.escape(proyecto["nombre"] if proyecto else a["codigo_interno"])
-                subtitulo = html.escape(f'{a["perforacion_codigo"]} · Muestra {a["muestra_numero"]} · {ASSAY_LABELS[a["tipo"]]}')
-                actualizacion = format_dt(a["lastModified"])
-                if a.get("laboratorist"):
-                    actualizacion += f' · {html.escape(a["laboratorist"])}'
-                rows_html.append(f"""
-                    <tr>
-                        <td class="cell-id">{html.escape(a['codigo_interno'])}</td>
-                        <td><div class="cell-title">{titulo}</div><div class="cell-sub">{subtitulo}</div></td>
-                        <td class="cell-muted">{html.escape(actualizacion)}</td>
-                        <td><span class="badge {STATUS_BADGE[a['status']]}">{STATUS_LABELS[a['status']]}</span></td>
-                    </tr>""")
-            st.markdown(f"""
-                <div class="activity-table-wrap">
-                <table class="activity-table">
-                    <thead><tr>
-                        <th>ID proyecto</th><th>Cliente / Ubicación</th><th>Última actualización</th><th>Estado</th>
-                    </tr></thead>
-                    <tbody>{''.join(rows_html)}</tbody>
-                </table>
-                </div>
-                <div class="activity-footer">Mostrando {len(recientes)} de {len(todos_los_ensayos)} ensayo(s)</div>
-            """, unsafe_allow_html=True)
+            if not recientes:
+                st.info("Todavía no hay actividad registrada.")
+            else:
+                rows_html = []
+                for a in recientes:
+                    proyecto = get_project(a["codigo_interno"])
+                    titulo = html.escape(proyecto["nombre"] if proyecto else a["codigo_interno"])
+                    subtitulo = html.escape(f'{a["perforacion_codigo"]} · Muestra {a["muestra_numero"]} · {ASSAY_LABELS[a["tipo"]]}')
+                    actualizacion = format_dt(a["lastModified"])
+                    if a.get("laboratorist"):
+                        actualizacion += f' · {html.escape(a["laboratorist"])}'
+                    rows_html.append(f"""
+                        <tr>
+                            <td class="cell-id">{html.escape(a['codigo_interno'])}</td>
+                            <td><div class="cell-title">{titulo}</div><div class="cell-sub">{subtitulo}</div></td>
+                            <td class="cell-muted">{html.escape(actualizacion)}</td>
+                            <td><span class="badge {STATUS_BADGE[a['status']]}">{STATUS_LABELS[a['status']]}</span></td>
+                        </tr>""")
+                st.markdown(f"""
+                    <div class="activity-table-wrap">
+                    <table class="activity-table">
+                        <thead><tr>
+                            <th>ID proyecto</th><th>Cliente / Ubicación</th><th>Última actualización</th><th>Estado</th>
+                        </tr></thead>
+                        <tbody>{''.join(rows_html)}</tbody>
+                    </table>
+                    </div>
+                    <div class="activity-footer">Mostrando {len(recientes)} de {len(todos_los_ensayos)} ensayo(s)</div>
+                """, unsafe_allow_html=True)
+    else:
+        pendientes = [a for a in todos_los_ensayos if a["status"] != "finalizado"]
+        with st.container(border=True):
+            h1, h2 = st.columns([4, 1])
+            with h1:
+                st.markdown('<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">'
+                            '📋 Ensayos asignados</div>', unsafe_allow_html=True)
+            with h2:
+                st.markdown(f'<div style="text-align:right;"><span class="badge badge-muted">Total: {len(pendientes)}</span></div>',
+                            unsafe_allow_html=True)
+
+            if not pendientes:
+                st.info("No tienes ensayos pendientes por ahora.")
+            else:
+                col_ratios = [1.5, 2.6, 1.6, 1.8, 1.2, 0.9]
+                headers = st.columns(col_ratios)
+                for col, label in zip(headers, ["ID ensayo", "Proyecto", "Tipo de ensayo", "Última actualización", "Estado", "Acción"]):
+                    col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
+                for a in pendientes:
+                    proyecto = get_project(a["codigo_interno"])
+                    cols = st.columns(col_ratios, vertical_alignment="center")
+                    ensayo_id = f'{a["codigo_interno"]}-{a["perforacion_codigo"]}-M{a["muestra_numero"]}'
+                    cols[0].markdown(f'<span class="cell-id">{html.escape(ensayo_id)}</span>', unsafe_allow_html=True)
+                    titulo = html.escape(proyecto["nombre"] if proyecto else a["codigo_interno"])
+                    subtitulo = html.escape(proyecto.get("localizacion", "")) if proyecto else ""
+                    cols[1].markdown(f'<div class="cell-title">{titulo}</div><div class="cell-sub">{subtitulo}</div>',
+                                      unsafe_allow_html=True)
+                    cols[2].markdown(f'<span class="assigned-chip">{ASSAY_LABELS[a["tipo"]]}</span>', unsafe_allow_html=True)
+                    cols[3].markdown(f'<span class="cell-muted">{html.escape(format_dt(a["lastModified"]))}</span>',
+                                      unsafe_allow_html=True)
+                    cols[4].markdown(f'<span class="badge {STATUS_BADGE[a["status"]]}">{STATUS_LABELS[a["status"]]}</span>',
+                                      unsafe_allow_html=True)
+                    with cols[5]:
+                        if st.button("Abrir", key=f"open_assigned_{a['id']}", use_container_width=True):
+                            st.session_state.selected_assay_id = a["id"]
+                            st.session_state.selected_codigo = a["codigo_interno"]
+                            st.session_state.selected_perforacion = a["perforacion_codigo"]
+                            st.session_state.selected_muestra_id = a["muestra_id"]
+                            st.session_state.selected_assay_type = a["tipo"]
+                            navigate("assay-form")
 
 
 def _render_project_list(codes, empty_msg, allow_delete, mark_read_only=False):
