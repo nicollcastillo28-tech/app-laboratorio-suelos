@@ -147,13 +147,15 @@ st.markdown(f"""
 
     /* Selector de rol en el login, como tarjetas seleccionables */
     .st-key-login-card [data-testid="stRadio"] > div[role="radiogroup"] {{ display: flex; gap: 10px; }}
-    .st-key-login-card [data-testid="stRadio"] label {{
+    .st-key-login-card [data-testid="stRadio"] [role="radiogroup"] label {{
         flex: 1 1 0; border: 1px solid {BORDER}; border-radius: 10px; padding: 8px 12px !important;
-        margin: 0 !important; background: {SURFACE};
+        margin: 0 !important; background: {SURFACE}; white-space: nowrap;
     }}
-    .st-key-login-card [data-testid="stRadio"] label:has(input:checked) {{
+    .st-key-login-card [data-testid="stRadio"] [role="radiogroup"] label p {{ white-space: nowrap; }}
+    .st-key-login-card [data-testid="stRadio"] [role="radiogroup"] label:has(input:checked) {{
         border-color: {PRIMARY}; background: {SECONDARY_CONTAINER};
     }}
+    .st-key-login-card [data-testid="stRadio"] input[type="radio"] {{ accent-color: {PRIMARY}; }}
     .st-key-login-card [data-testid="stWidgetLabel"] p {{
         font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700;
         text-transform: uppercase; letter-spacing: 0.05em; color: {NEUTRAL};
