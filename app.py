@@ -323,6 +323,7 @@ def init_state():
     }]
 
     st.session_state.bitacora_draft = {}
+    st.session_state.sieve_draft = {}
     st.session_state.selected_codigo = ""
     st.session_state.selected_perforacion = ""
     st.session_state.selected_muestra_id = ""
@@ -902,6 +903,7 @@ def render_bitacora():
     if not perforaciones:
         st.info("Todavía no hay perforaciones en este proyecto.")
 
+    edited_frames = {}
     for perf in perforaciones:
         key = f"{codigo}::{perf['codigo']}"
         muestras = st.session_state.muestras.setdefault(key, [])
@@ -928,8 +930,11 @@ def render_bitacora():
 
             column_config = {
                 "Número": st.column_config.TextColumn(default=""),
-                "Prof. De": st.column_config.NumberColumn(format="%.2f", default=0.0),
-                "Prof. A": st.column_config.NumberColumn(format="%.2f", default=0.0),
+                # Sin `format`: con NumberColumn + format printf-style, Streamlit reformatea el valor
+                # mostrado a mitad de la edición y descarta la primera pulsación, obligando a digitar
+                # dos veces. Sin `format` el editor no interfiere y el valor se guarda a la primera.
+                "Prof. De": st.column_config.NumberColumn(default=0.0, step=0.01),
+                "Prof. A": st.column_config.NumberColumn(default=0.0, step=0.01),
                 "Tipo de muestra": st.column_config.SelectboxColumn(options=TIPO_MUESTRA_OPTIONS, default=TIPO_MUESTRA_OPTIONS[0]),
             }
             for e in BITACORA_ENSAYOS:
@@ -937,11 +942,16 @@ def render_bitacora():
 
             if es_jefe:
                 st.caption("Usa el botón de arriba para agregar una muestra nueva. Para eliminar una, selecciona el cuadro a la izquierda de su fila y usa el ícono de basura que aparece sobre la tabla.")
+                # OJO: `data` que se le pasa a st.data_editor debe permanecer estable entre reruns
+                # (bitacora_draft[key] solo cambia por acciones explícitas nuestras, como "Agregar
+                # muestra"). El resultado editado NO se vuelve a guardar ahí — hacerlo generaba el
+                # bug de tener que digitar dos veces, porque el editor detectaba la fuente como
+                # "cambiada" y descartaba la edición recién hecha.
                 edited = st.data_editor(
                     df_source, num_rows="dynamic", use_container_width=True,
                     column_config=column_config, key=f"editor_{key}",
                 )
-                st.session_state.bitacora_draft[key] = edited
+                edited_frames[key] = edited
                 if confirm_delete(f"perf_{key}", f"la perforación {perf['codigo']} y todas sus muestras"):
                     st.session_state.perforaciones[codigo] = [p for p in st.session_state.perforaciones[codigo] if p["codigo"] != perf["codigo"]]
                     st.session_state.muestras.pop(key, None)
@@ -958,7 +968,7 @@ def render_bitacora():
         if st.button("💾  Guardar bitácora", type="primary", use_container_width=True):
             for perf in perforaciones:
                 key = f"{codigo}::{perf['codigo']}"
-                df_rows = st.session_state.bitacora_draft.get(key)
+                df_rows = edited_frames.get(key)
                 rows = df_rows.to_dict("records") if df_rows is not None else []
                 nuevas = []
                 for row in rows:
@@ -1105,18 +1115,24 @@ def render_norma_selector(assay_type, data, key_prefix):
     data[f"{key_prefix}_norma"] = choice
 
 
-def render_granulometria_form(data):
+def render_granulometria_form(data, assay_id):
     st.info("Estos datos se guardan tal cual y se llevan a la plantilla oficial de Excel — los cálculos y la clasificación USCS los hace el Excel, no la app.")
     st.markdown('<div class="section-title">Datos generales</div>', unsafe_allow_html=True)
     data["masa_inicial_seca"] = st.text_input("Masa inicial seca (g)", value=data.get("masa_inicial_seca", ""), placeholder="350.5")
 
     st.markdown('<div class="section-title">Pesos retenidos por tamiz (g)</div>', unsafe_allow_html=True)
-    rows = [{"Tamiz": label, "Abertura (mm)": apert, "Retenido (g)": to_float(data.get(key), 0.0)} for key, label, apert, _cell in SIEVES]
-    df = pd.DataFrame(rows)
+    # Igual que en la Bitácora: la fuente que se le pasa a st.data_editor debe permanecer estable
+    # entre reruns (si no, el editor descarta la primera edición y toca digitar dos veces). Por eso
+    # se arma una sola vez por ensayo y se cachea en session_state.
+    sieve_key = f"sieve_{assay_id}"
+    if sieve_key not in st.session_state.sieve_draft:
+        rows = [{"Tamiz": label, "Abertura (mm)": apert, "Retenido (g)": to_float(data.get(key), 0.0)} for key, label, apert, _cell in SIEVES]
+        st.session_state.sieve_draft[sieve_key] = pd.DataFrame(rows)
+    df_source = st.session_state.sieve_draft[sieve_key]
     edited = st.data_editor(
-        df, hide_index=True, use_container_width=True, disabled=["Tamiz", "Abertura (mm)"],
-        column_config={"Retenido (g)": st.column_config.NumberColumn(format="%.2f", step=0.1, default=0.0)},
-        key="gran_sieve_editor",
+        df_source, hide_index=True, use_container_width=True, disabled=["Tamiz", "Abertura (mm)"],
+        column_config={"Retenido (g)": st.column_config.NumberColumn(step=0.1, default=0.0)},
+        key=f"gran_sieve_editor_{assay_id}",
     )
     for i, (key, _label, _apert, _cell) in enumerate(SIEVES):
         data[key] = edited.iloc[i]["Retenido (g)"]
@@ -1220,7 +1236,7 @@ def render_assay_form():
         return
 
     if assay["tipo"] == "granulometria":
-        render_granulometria_form(data)
+        render_granulometria_form(data, assay_id)
     elif assay["tipo"] == "humedad":
         render_humedad_form(data)
     elif assay["tipo"] == "masa-unitaria":
