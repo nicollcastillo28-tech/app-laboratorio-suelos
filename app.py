@@ -739,7 +739,8 @@ def _resumen_tecnico_perforaciones(codigo):
 
 
 def render_projects_active():
-    st.button("← Atrás", on_click=lambda: navigate("home"))
+    if st.button("← Atrás"):
+        navigate("home")
     st.markdown("## Proyectos en ejecución")
     st.caption("Monitoreo técnico de sondeos y análisis geotécnico.")
 
@@ -802,7 +803,8 @@ def render_projects_active():
 
 
 def render_projects_done():
-    st.button("← Atrás", on_click=lambda: navigate("home"))
+    if st.button("← Atrás"):
+        navigate("home")
     st.markdown("## Proyectos ejecutados")
     if st.session_state.role == "auxiliar":
         st.info("Modo consulta: puedes ver los resultados, pero no editarlos.")
@@ -816,7 +818,8 @@ def render_projects_done():
 # ════════════════════════════════════════════════════════════════════
 def render_new_project():
     require_role("jefe")
-    st.button("← Atrás", on_click=lambda: navigate("home"))
+    if st.button("← Atrás"):
+        navigate("home")
     st.markdown("## Nuevo proyecto")
 
     st.markdown('<div class="section-title">Código interno</div>', unsafe_allow_html=True)
@@ -965,7 +968,8 @@ def render_project_detail():
         navigate("home")
         return
 
-    st.button("← Atrás", on_click=lambda: navigate("home"))
+    if st.button("← Atrás"):
+        navigate("home")
 
     progreso = project_progress(codigo)
     total = sum(progreso.values())
@@ -1065,7 +1069,8 @@ def render_perforacion_detail():
         navigate("home")
         return
 
-    st.button("← Atrás", on_click=lambda: navigate("project-detail"))
+    if st.button("← Atrás"):
+        navigate("project-detail")
 
     perf = next((p for p in st.session_state.perforaciones.get(codigo, []) if p["codigo"] == perf_codigo), None)
     muestras = st.session_state.muestras.get(f"{codigo}::{perf_codigo}", [])
@@ -1144,7 +1149,8 @@ def _muestras_to_rows(muestras):
 
 
 def render_bitacora():
-    st.button("← Atrás", on_click=lambda: navigate("home"))
+    if st.button("← Atrás"):
+        navigate("home")
     st.markdown("## Bitácora orden para ensayos de laboratorio")
 
     codes = [p["codigo_interno"] for p in st.session_state.projects]
@@ -1293,7 +1299,8 @@ def render_muestra_detail():
         return
 
     project = get_project(codigo)
-    st.button("← Atrás", on_click=lambda: navigate("perforacion-detail"))
+    if st.button("← Atrás"):
+        navigate("perforacion-detail")
 
     with st.container(border=True):
         top = st.columns([3, 1])
@@ -1524,7 +1531,8 @@ def render_assay_form():
     muestra = get_muestra(codigo, perf_codigo, muestra_id)
     read_only = st.session_state.role == "auxiliar" and project_status(codigo) == "ejecutado"
 
-    st.button("← Atrás", on_click=lambda: navigate("muestra-detail"))
+    if st.button("← Atrás"):
+        navigate("muestra-detail")
 
     bar_cols = st.columns(5)
     bar_cols[0].markdown(f"**Proyecto**<br>{codigo}", unsafe_allow_html=True)
@@ -1586,7 +1594,8 @@ def render_assay_form():
 # CONTINUAR / BUSCAR
 # ════════════════════════════════════════════════════════════════════
 def render_continue():
-    st.button("← Atrás", on_click=lambda: navigate("home"))
+    if st.button("← Atrás"):
+        navigate("home")
     st.markdown("## Continuar ensayo")
     in_progress = [a for a in st.session_state.assays if a["status"] == "en-proceso"]
     if not in_progress:
@@ -1608,7 +1617,8 @@ def render_continue():
 
 
 def render_search():
-    st.button("← Atrás", on_click=lambda: navigate("home"))
+    if st.button("← Atrás"):
+        navigate("home")
     st.markdown("## Buscar ensayos")
 
     codes = [p["codigo_interno"] for p in st.session_state.projects]
