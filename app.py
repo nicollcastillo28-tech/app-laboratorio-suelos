@@ -299,7 +299,7 @@ BITACORA_ENSAYOS = [
 ]
 SUPPORTED_ASSAY_MAP = {"Granulometría": "granulometria", "Humedad": "humedad", "Peso unitario": "masa-unitaria"}
 
-BITACORA_BASE_COLS = ["Número", "Prof. De", "Prof. A", "Tipo de muestra"] + BITACORA_ENSAYOS
+BITACORA_BASE_COLS = ["Número", "Prof. De", "Prof. A", "Tipo de muestra"] + BITACORA_ENSAYOS + ["Observaciones"]
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -322,7 +322,7 @@ def init_state():
     st.session_state.muestras = {
         f"{codigo_demo}::S1": [{
             "numero": "1", "id_unico": f"{codigo_demo}-S1-M1", "profundidad_de": 0.0, "profundidad_hasta": 1.5,
-            "tipo_muestra": "Shelby", "ensayos": {"Granulometría": True, "Humedad": True},
+            "tipo_muestra": "Shelby", "ensayos": {"Granulometría": True, "Humedad": True}, "observaciones": "",
         }]
     }
     st.session_state.assays = [{
@@ -835,6 +835,12 @@ def render_new_project():
     with c2:
         fecha_ingreso = st.date_input("Fecha de ingreso de muestra", value=date.today())
 
+    laboratorista_asignado = st.text_input(
+        "Asignar bitácora a laboratorista (opcional)", placeholder="Nombre del laboratorista",
+        help="Es solo una referencia informativa: como todos los auxiliares comparten la misma clave, "
+             "esto no restringe quién puede ver o digitar el proyecto.",
+    )
+
     # Perforaciones y muestras se arman aquí mismo, antes de crear el proyecto formalmente.
     # Se usa el código interno (ya calculado en vivo) como llave temporal en session_state.
     perforaciones = []
@@ -878,6 +884,8 @@ def render_new_project():
                 }
                 for e in BITACORA_ENSAYOS:
                     column_config[e] = st.column_config.CheckboxColumn(e, default=False)
+                column_config["Observaciones"] = st.column_config.TextColumn(
+                    default="", width="medium", help="Cómo llegó la muestra o cualquier condición que impida el ensayo.")
 
                 st.caption("Usa el ícono para agregar fila sobre la tabla para sumar una muestra nueva. Para eliminar una, selecciona el cuadro a la izquierda de su fila y usa el ícono de basura que aparece sobre la tabla.")
                 edited = st.data_editor(
@@ -909,6 +917,7 @@ def render_new_project():
                 "codigo_interno": codigo_interno, "numero": numero, "anio": anio, "nombre": nombre,
                 "localizacion": localizacion, "norma": norma,
                 "fecha_bitacora": str(fecha_bitacora), "fecha_ingreso_muestra": str(fecha_ingreso),
+                "laboratorista_asignado": laboratorista_asignado,
             })
             st.session_state.perforaciones.setdefault(codigo_interno, [])
             for perf in perforaciones:
@@ -926,6 +935,7 @@ def render_new_project():
                         "profundidad_de": row.get("Prof. De") or 0.0, "profundidad_hasta": row.get("Prof. A") or 0.0,
                         "tipo_muestra": row.get("Tipo de muestra") or TIPO_MUESTRA_OPTIONS[0],
                         "ensayos": {e: bool(row.get(e, False)) for e in BITACORA_ENSAYOS},
+                        "observaciones": row.get("Observaciones") or "",
                     })
                 st.session_state.muestras[key] = nuevas
             st.session_state.selected_codigo = codigo_interno
@@ -958,7 +968,7 @@ def render_project_detail():
     ''', unsafe_allow_html=True)
 
     with st.container(border=True):
-        cols = st.columns(3)
+        cols = st.columns(4)
         with cols[0]:
             st.markdown(f'<div class="cell-muted">{icon("location_on", size=14)} Ubicación</div>'
                         f'<div style="font-weight:600;">{html.escape(project.get("localizacion") or "—")}</div>', unsafe_allow_html=True)
@@ -968,6 +978,9 @@ def render_project_detail():
         with cols[2]:
             st.markdown(f'<div class="cell-muted">{icon("move_to_inbox", size=14)} Ingreso de muestras</div>'
                         f'<div style="font-weight:600;">{html.escape(project.get("fecha_ingreso_muestra") or "—")}</div>', unsafe_allow_html=True)
+        with cols[3]:
+            st.markdown(f'<div class="cell-muted">{icon("person", size=14)} Asignado a</div>'
+                        f'<div style="font-weight:600;">{html.escape(project.get("laboratorista_asignado") or "—")}</div>', unsafe_allow_html=True)
 
     with st.container(border=True):
         st.markdown('<div class="section-title">Progreso general (así avanzan los auxiliares)</div>', unsafe_allow_html=True)
@@ -1040,24 +1053,56 @@ def render_perforacion_detail():
         return
 
     st.button("← Atrás", on_click=lambda: navigate("project-detail"))
-    st.markdown(f"## Perforación {perf_codigo}")
-    st.caption(f"{project['codigo_interno']} · {project['nombre']}")
 
+    perf = next((p for p in st.session_state.perforaciones.get(codigo, []) if p["codigo"] == perf_codigo), None)
     muestras = st.session_state.muestras.get(f"{codigo}::{perf_codigo}", [])
-    if not muestras:
-        st.info("Esta perforación todavía no tiene muestras. Agrégalas desde la Bitácora.")
+    counts = {"sin-iniciar": 0, "en-proceso": 0, "finalizado": 0}
     for m in muestras:
-        estado = compute_muestra_estado(m)
-        with st.container(border=True):
-            cols = st.columns([2.5, 2, 1.3, 1])
-            with cols[0]:
-                st.markdown(f"**Muestra {m['numero']}**")
-                st.caption(m["id_unico"])
-            with cols[1]:
-                st.caption(f"Prof. {m['profundidad_de']}–{m['profundidad_hasta']} m · {m['tipo_muestra']}")
-            with cols[2]:
-                st.markdown(status_badge_html(estado), unsafe_allow_html=True)
-            with cols[3]:
+        counts[compute_muestra_estado(m)] += 1
+    total = len(muestras)
+    pct = round(counts["finalizado"] / total * 100) if total else 0
+
+    with st.container(border=True):
+        top = st.columns([3, 1])
+        with top[0]:
+            st.markdown(f"### {perf_codigo}")
+            st.caption(f"{project['codigo_interno']} · {project['nombre']}")
+        with top[1]:
+            st.markdown(f'<div style="text-align:right;"><span class="assigned-chip">{html.escape(perf["tipo"] if perf else "—")}</span></div>',
+                        unsafe_allow_html=True)
+        if st.session_state.role == "jefe":
+            if st.button("Agregar muestra", icon=":material/add:", use_container_width=True):
+                navigate("bitacora")
+
+    with st.container(border=True):
+        st.markdown('<div class="section-title">Avance del sondeo</div>', unsafe_allow_html=True)
+        c1, c2 = st.columns([1, 3])
+        with c1:
+            st.markdown(f'<div style="font-size:32px;font-weight:800;color:{PRIMARY};">{pct}%</div>', unsafe_allow_html=True)
+        with c2:
+            st.markdown(f'<div class="cell-muted" style="margin-top:16px;">{counts["finalizado"]} de {total} muestras completadas</div>',
+                        unsafe_allow_html=True)
+        st.progress(pct / 100)
+
+    st.markdown('<div class="section-title">Orden de laboratorio</div>', unsafe_allow_html=True)
+    if not muestras:
+        st.info("Esta perforación todavía no tiene muestras. Usa la Bitácora para agregarlas.")
+    else:
+        col_ratios = [1, 1.3, 1.6, 2.6, 1.3, 0.9]
+        headers = st.columns(col_ratios)
+        for col, label in zip(headers, ["Muestra ID", "Tipo", "Profundidad", "Ensayos asignados", "Estado", "Acción"]):
+            col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
+        for m in muestras:
+            cols = st.columns(col_ratios, vertical_alignment="center")
+            cols[0].markdown(f'<span class="cell-id">M-{html.escape(str(m["numero"]))}</span>', unsafe_allow_html=True)
+            cols[1].markdown(f'<span class="cell-muted">{html.escape(m["tipo_muestra"])}</span>', unsafe_allow_html=True)
+            cols[2].markdown(f'<span class="cell-muted">{m["profundidad_de"]}–{m["profundidad_hasta"]} m</span>', unsafe_allow_html=True)
+            ensayos_sol = [e for e, v in m["ensayos"].items() if v]
+            chips = "".join(f'<span class="assigned-chip" style="margin-right:4px;">{html.escape(e)}</span>' for e in ensayos_sol) \
+                or '<span class="cell-muted">—</span>'
+            cols[3].markdown(chips, unsafe_allow_html=True)
+            cols[4].markdown(status_badge_html(compute_muestra_estado(m)), unsafe_allow_html=True)
+            with cols[5]:
                 if st.button("Abrir", key=f"open_muestra_{m['id_unico']}", use_container_width=True):
                     st.session_state.selected_muestra_id = m["id_unico"]
                     navigate("muestra-detail")
@@ -1070,6 +1115,7 @@ def _bitacora_row_defaults():
     row = {"Número": "", "Prof. De": 0.0, "Prof. A": 0.0, "Tipo de muestra": TIPO_MUESTRA_OPTIONS[0]}
     for e in BITACORA_ENSAYOS:
         row[e] = False
+    row["Observaciones"] = ""
     return row
 
 
@@ -1079,6 +1125,7 @@ def _muestras_to_rows(muestras):
         row = {"Número": m["numero"], "Prof. De": m["profundidad_de"], "Prof. A": m["profundidad_hasta"], "Tipo de muestra": m["tipo_muestra"]}
         for e in BITACORA_ENSAYOS:
             row[e] = m["ensayos"].get(e, False)
+        row["Observaciones"] = m.get("observaciones", "")
         rows.append(row)
     return rows or [_bitacora_row_defaults()]
 
@@ -1152,6 +1199,8 @@ def render_bitacora():
             }
             for e in BITACORA_ENSAYOS:
                 column_config[e] = st.column_config.CheckboxColumn(e, default=False)
+            column_config["Observaciones"] = st.column_config.TextColumn(
+                default="", width="medium", help="Cómo llegó la muestra o cualquier condición que impida el ensayo.")
 
             if es_jefe:
                 st.caption("Usa el ícono para agregar fila sobre la tabla para sumar una muestra nueva. Para eliminar una, selecciona el cuadro a la izquierda de su fila y usa el ícono de basura que aparece sobre la tabla.")
@@ -1194,6 +1243,7 @@ def render_bitacora():
                         "profundidad_de": row.get("Prof. De") or 0.0, "profundidad_hasta": row.get("Prof. A") or 0.0,
                         "tipo_muestra": row.get("Tipo de muestra") or TIPO_MUESTRA_OPTIONS[0],
                         "ensayos": {e: bool(row.get(e, False)) for e in BITACORA_ENSAYOS},
+                        "observaciones": row.get("Observaciones") or "",
                     })
                 st.session_state.muestras[key] = nuevas
             st.success("Bitácora guardada. Los auxiliares ya pueden ver y digitar las muestras.")
@@ -1229,23 +1279,58 @@ def render_muestra_detail():
         navigate("home")
         return
 
+    project = get_project(codigo)
     st.button("← Atrás", on_click=lambda: navigate("perforacion-detail"))
-    st.markdown(f"## Muestra {muestra['numero']}")
-    st.caption(muestra["id_unico"])
 
     with st.container(border=True):
-        cols = st.columns(4)
-        cols[0].metric("Perforación", perf_codigo)
-        cols[1].metric("Profundidad", f"{muestra['profundidad_de']}–{muestra['profundidad_hasta']} m")
-        cols[2].metric("Tipo de muestra", muestra["tipo_muestra"])
-        cols[3].metric("Proyecto", codigo)
+        top = st.columns([3, 1])
+        with top[0]:
+            st.markdown(f"### Muestra {muestra['numero']}")
+            st.caption(f"{codigo} · {project['nombre'] if project else ''}")
+        with top[1]:
+            st.markdown(f'<div style="text-align:right;"><span class="assigned-chip">{html.escape(muestra["tipo_muestra"])}</span></div>',
+                        unsafe_allow_html=True)
+        c1, c2, c3 = st.columns(3)
+        c1.markdown(f'<div class="cell-muted">Identificador</div><div style="font-weight:600;">{html.escape(muestra["id_unico"])}</div>',
+                    unsafe_allow_html=True)
+        c2.markdown(f'<div class="cell-muted">Profundidad</div><div style="font-weight:600;">'
+                    f'{muestra["profundidad_de"]}–{muestra["profundidad_hasta"]} m</div>', unsafe_allow_html=True)
+        c3.markdown(f'<div class="cell-muted">Perforación</div><div style="font-weight:600;">{html.escape(perf_codigo)}</div>',
+                    unsafe_allow_html=True)
+        estado = compute_muestra_estado(muestra)
+        st.markdown(f'<div style="margin-top:10px;">{status_badge_html(estado, font_size=13)}</div>', unsafe_allow_html=True)
 
-    estado = compute_muestra_estado(muestra)
-    st.markdown('<div class="section-title">Estado de la muestra (calculado según los ensayos)</div>', unsafe_allow_html=True)
-    st.markdown(status_badge_html(estado, font_size=14), unsafe_allow_html=True)
+    with st.container(border=True):
+        st.markdown('<div class="section-title">Observaciones de la muestra</div>', unsafe_allow_html=True)
+        st.caption("Cómo llegó la muestra, o cualquier condición que impida continuar con el ensayo. "
+                   "Se guarda para todos los ensayos de esta muestra y la puede editar tanto el Jefe como el laboratorista.")
+        observacion = st.text_area(
+            "Observaciones de la muestra", value=muestra.get("observaciones", ""), label_visibility="collapsed",
+            placeholder="Ej: Muestra con humedad visible, sin alteraciones aparentes...", key=f"obs_{muestra_id}",
+        )
+        if st.button("Guardar observación", icon=":material/save:", key=f"obs_save_{muestra_id}"):
+            muestra["observaciones"] = observacion
+            st.success("Observación guardada.")
 
-    st.markdown("### Ensayos solicitados")
     solicitados = [e for e, v in muestra["ensayos"].items() if v]
+    finalizados = sum(
+        1 for e in solicitados
+        if SUPPORTED_ASSAY_MAP.get(e) and (get_assay(muestra_id, SUPPORTED_ASSAY_MAP[e]) or {}).get("status") == "finalizado"
+    )
+    total_sol = len(solicitados)
+    pct_ensayos = round(finalizados / total_sol * 100) if total_sol else 0
+
+    with st.container(border=True):
+        st.markdown('<div class="section-title">Avance de ensayos</div>', unsafe_allow_html=True)
+        c1, c2 = st.columns([1, 3])
+        with c1:
+            st.markdown(f'<div style="font-size:32px;font-weight:800;color:{PRIMARY};">{pct_ensayos}%</div>', unsafe_allow_html=True)
+        with c2:
+            st.markdown(f'<div class="cell-muted" style="margin-top:16px;">{finalizados} de {total_sol} ensayos programados</div>',
+                        unsafe_allow_html=True)
+        st.progress(pct_ensayos / 100)
+
+    st.markdown('<div class="section-title">Ensayos asignados</div>', unsafe_allow_html=True)
     if not solicitados:
         st.info("Esta muestra no tiene ensayos marcados en la bitácora.")
     for ensayo_label in solicitados:
