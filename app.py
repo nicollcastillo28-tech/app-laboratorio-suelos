@@ -508,13 +508,14 @@ def render_login():
 # NAVEGACIÓN — TopAppBar + BottomNav (reemplaza el sidebar)
 # ════════════════════════════════════════════════════════════════════
 NAV_ITEMS = [
-    ("home", "Inicio", "home"), ("bitacora", "Bitácora", "assignment"),
-    ("continue", "Continuar", "folder_open"), ("search", "Buscar", "search"),
+    ("home", "Inicio", "home"), ("projects-active", "Proyectos", "folder"), ("search", "Buscar", "search"),
 ]
 ACTIVE_MAP = {
-    "home": "home", "projects-active": "home", "projects-done": "home", "new-project": "home",
-    "project-detail": "home", "perforacion-detail": "home", "muestra-detail": "home",
-    "bitacora": "bitacora", "continue": "continue", "assay-form": "continue", "search": "search",
+    "home": "home",
+    "projects-active": "projects-active", "projects-done": "projects-active", "new-project": "projects-active",
+    "project-detail": "projects-active", "perforacion-detail": "projects-active", "muestra-detail": "projects-active",
+    "bitacora": "projects-active", "continue": "projects-active", "assay-form": "projects-active",
+    "search": "search",
 }
 
 
