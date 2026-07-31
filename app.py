@@ -384,6 +384,7 @@ def init_state():
         "lastModified": datetime.now().isoformat(), "createdAt": datetime.now().isoformat(),
     }]
 
+    st.session_state.nav_stack = []
     st.session_state.bitacora_draft = {}
     st.session_state.sieve_draft = {}
     st.session_state.selected_codigo = ""
@@ -398,7 +399,19 @@ init_state()
 
 
 def navigate(screen):
+    actual = st.session_state.get("screen")
+    if actual and actual != screen:
+        st.session_state.nav_stack.append(actual)
     st.session_state.screen = screen
+    st.rerun()
+
+
+def go_back(fallback="home"):
+    """Vuelve a la pantalla realmente anterior (pila de navegación) en vez de un destino fijo."""
+    if st.session_state.nav_stack:
+        st.session_state.screen = st.session_state.nav_stack.pop()
+    else:
+        st.session_state.screen = fallback
     st.rerun()
 
 
@@ -535,6 +548,7 @@ def render_login():
                 role_key = "jefe" if role_choice == "Jefe" else "auxiliar"
                 if password == PASSWORDS[role_key]:
                     st.session_state.role = role_key
+                    st.session_state.nav_stack = []
                     navigate("home")
                 else:
                     st.error("Clave incorrecta.")
@@ -580,6 +594,7 @@ def render_topbar():
         with c_logout:
             if st.button("", key="logout_top", help="Cerrar sesión", use_container_width=True, icon=":material/logout:"):
                 st.session_state.role = None
+                st.session_state.nav_stack = []
                 navigate("home")
 
 
@@ -780,7 +795,7 @@ def _resumen_tecnico_perforaciones(codigo):
 
 def render_projects_active():
     if st.button("← Atrás"):
-        navigate("home")
+        go_back()
     st.markdown("## Proyectos en ejecución")
     st.caption("Monitoreo técnico de sondeos y análisis geotécnico.")
 
@@ -849,7 +864,7 @@ def render_projects_active():
 
 def render_projects_done():
     if st.button("← Atrás"):
-        navigate("home")
+        go_back()
     st.markdown("## Proyectos ejecutados")
     if st.session_state.role == "auxiliar":
         st.info("Modo consulta: puedes ver los resultados, pero no editarlos.")
@@ -864,7 +879,7 @@ def render_projects_done():
 def render_new_project():
     require_role("jefe")
     if st.button("← Atrás"):
-        navigate("home")
+        go_back()
     st.markdown("## Nuevo proyecto")
 
     st.markdown('<div class="section-title">Código interno</div>', unsafe_allow_html=True)
@@ -1028,6 +1043,10 @@ def render_new_project():
                         "observaciones": row.get("Observaciones") or "",
                     })
                 st.session_state.muestras[key] = nuevas
+                # El draft cacheado quedó vacío desde que se creó la perforación (antes de guardar);
+                # se descarta para que la próxima vez que se abra la Bitácora se reconstruya a partir
+                # de las muestras recién guardadas y no muestre/reescriba una tabla vacía.
+                st.session_state.bitacora_draft.pop(key, None)
             st.session_state.selected_codigo = codigo_interno
             navigate("project-detail")
 
@@ -1043,7 +1062,7 @@ def render_project_detail():
         return
 
     if st.button("← Atrás"):
-        navigate("home")
+        go_back()
 
     progreso = project_progress(codigo)
     total = sum(progreso.values())
@@ -1185,7 +1204,7 @@ def render_perforacion_detail():
         return
 
     if st.button("← Atrás"):
-        navigate("project-detail")
+        go_back(fallback="project-detail")
 
     perf = next((p for p in st.session_state.perforaciones.get(codigo, []) if p["codigo"] == perf_codigo), None)
     muestras = st.session_state.muestras.get(f"{codigo}::{perf_codigo}", [])
@@ -1291,7 +1310,7 @@ def _muestras_to_rows(muestras):
 
 def render_bitacora():
     if st.button("← Atrás"):
-        navigate("home")
+        go_back()
     st.markdown("## Bitácora orden para ensayos de laboratorio")
 
     codes = [p["codigo_interno"] for p in st.session_state.projects]
@@ -1406,6 +1425,10 @@ def render_bitacora():
                         "observaciones": row.get("Observaciones") or "",
                     })
                 st.session_state.muestras[key] = nuevas
+                # Se descarta el draft cacheado para que, si se vuelve a abrir esta perforación,
+                # se reconstruya desde las muestras recién guardadas (evita mostrar/pisar con una
+                # tabla vieja lo que ya se guardó).
+                st.session_state.bitacora_draft.pop(key, None)
             st.success("Bitácora guardada. Los auxiliares ya pueden ver y digitar las muestras.")
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1441,7 +1464,7 @@ def render_muestra_detail():
 
     project = get_project(codigo)
     if st.button("← Atrás"):
-        navigate("perforacion-detail")
+        go_back(fallback="perforacion-detail")
 
     with st.container(border=True):
         top = st.columns([3, 1])
@@ -1720,7 +1743,7 @@ def render_assay_form():
     read_only = st.session_state.role == "auxiliar" and project_status(codigo) == "ejecutado"
 
     if st.button("← Atrás"):
-        navigate("muestra-detail")
+        go_back(fallback="muestra-detail")
 
     bar_cols = st.columns(5)
     bar_cols[0].markdown(f"**Proyecto**<br>{codigo}", unsafe_allow_html=True)
@@ -1783,7 +1806,7 @@ def render_assay_form():
 # ════════════════════════════════════════════════════════════════════
 def render_continue():
     if st.button("← Atrás"):
-        navigate("home")
+        go_back()
     st.markdown("## Continuar ensayo")
     in_progress = [a for a in st.session_state.assays if a["status"] == "en-proceso"]
     if not in_progress:
@@ -1806,7 +1829,7 @@ def render_continue():
 
 def render_search():
     if st.button("← Atrás"):
-        navigate("home")
+        go_back()
     st.markdown("## Buscar ensayos")
 
     codes = [p["codigo_interno"] for p in st.session_state.projects]
