@@ -256,6 +256,18 @@ st.markdown(f"""
         background: {BG}; border: 1px solid {BORDER}; color: {PRIMARY}; font-size: 12px; font-weight: 700;
         padding: 3px 10px; border-radius: 6px; display: inline-block;
     }}
+
+    /* ---- TARJETAS DE PROYECTO (Proyectos en ejecución) ---- */
+    .code-badge {{
+        display: inline-block; background: {SECONDARY_CONTAINER}; color: {PRIMARY};
+        font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 13px;
+        padding: 3px 12px; border-radius: 6px;
+    }}
+    [class*="st-key-projcard_"] {{
+        border-left: 4px solid {PRIMARY} !important;
+        background: {SURFACE} !important;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -766,17 +778,21 @@ def render_projects_active():
         else:
             estado_badge, estado_label = "badge-muted", "Por iniciar"
 
-        with st.container(border=True):
+        with st.container(border=True, key=f"projcard_{codigo}"):
             top = st.columns([3, 1])
-            top[0].markdown(f'<span class="cell-id">{codigo}</span>', unsafe_allow_html=True)
+            top[0].markdown(f'<span class="code-badge">{html.escape(codigo)}</span>', unsafe_allow_html=True)
             top[1].markdown(f'<div style="text-align:right;"><span class="badge {estado_badge}">{estado_label}</span></div>',
                              unsafe_allow_html=True)
             st.markdown(f"**{p['nombre']}**")
             st.markdown(f'<span class="cell-muted">{icon("location_on", size=14)} {html.escape(p.get("localizacion") or "—")}</span>',
                         unsafe_allow_html=True)
+            st.markdown(f'<div class="section-title" style="margin-bottom:4px;">Norma</div>'
+                        f'<div style="margin-bottom:10px;">{html.escape(p.get("norma") or "—")}</div>', unsafe_allow_html=True)
             m1, m2 = st.columns(2)
-            m1.caption(f"NORMA · {p.get('norma') or '—'}")
-            m2.caption(f"Fecha bitácora · {p.get('fecha_bitacora') or '—'}")
+            m1.markdown(f'<span class="cell-muted">Fecha bitácora:</span><br><span style="font-weight:600;">'
+                        f'{html.escape(p.get("fecha_bitacora") or "—")}</span>', unsafe_allow_html=True)
+            m2.markdown(f'<span class="cell-muted">Fecha ingreso:</span><br><span style="font-weight:600;">'
+                        f'{html.escape(p.get("fecha_ingreso_muestra") or "—")}</span>', unsafe_allow_html=True)
             resumen = _resumen_tecnico_perforaciones(codigo)
             if resumen:
                 st.markdown(f'<div class="section-title" style="margin-bottom:6px;">'
