@@ -269,6 +269,12 @@ st.markdown(f"""
         box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important;
     }}
 
+    .perf-code-box {{
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 40px; height: 40px; border-radius: 8px; background: {PRIMARY_CONTAINER};
+        color: #fff; font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 14px;
+    }}
+
     /* Botón flotante "+" para crear proyecto desde Proyectos en ejecución */
     .st-key-fab-new-project {{
         position: fixed; right: 24px; bottom: 28px; z-index: 998; width: 56px !important;
@@ -1006,19 +1012,17 @@ def render_project_detail():
     ''', unsafe_allow_html=True)
 
     with st.container(border=True):
-        cols = st.columns(4)
-        with cols[0]:
-            st.markdown(f'<div class="cell-muted">{icon("location_on", size=14)} Ubicación</div>'
-                        f'<div style="font-weight:600;">{html.escape(project.get("localizacion") or "—")}</div>', unsafe_allow_html=True)
-        with cols[1]:
-            st.markdown(f'<div class="cell-muted">{icon("calendar_month", size=14)} Fecha de orden</div>'
-                        f'<div style="font-weight:600;">{html.escape(project.get("fecha_bitacora") or "—")}</div>', unsafe_allow_html=True)
-        with cols[2]:
-            st.markdown(f'<div class="cell-muted">{icon("move_to_inbox", size=14)} Ingreso de muestras</div>'
-                        f'<div style="font-weight:600;">{html.escape(project.get("fecha_ingreso_muestra") or "—")}</div>', unsafe_allow_html=True)
-        with cols[3]:
-            st.markdown(f'<div class="cell-muted">{icon("person", size=14)} Asignado a</div>'
-                        f'<div style="font-weight:600;">{html.escape(project.get("laboratorista_asignado") or "—")}</div>', unsafe_allow_html=True)
+        info_rows = [
+            ("location_on", "Ubicación", project.get("localizacion")),
+            ("calendar_month", "Fecha de orden", project.get("fecha_bitacora")),
+            ("move_to_inbox", "Ingreso de muestras", project.get("fecha_ingreso_muestra")),
+            ("person", "Asignado a", project.get("laboratorista_asignado")),
+        ]
+        for i, (icono, label, valor) in enumerate(info_rows):
+            margen = "margin-top:14px;" if i else ""
+            st.markdown(f'<div class="cell-muted" style="{margen}text-transform:uppercase;letter-spacing:0.04em;font-size:11px;">'
+                        f'{icon(icono, size=14)} {label}</div>'
+                        f'<div style="font-weight:600;font-size:15px;">{html.escape(valor or "—")}</div>', unsafe_allow_html=True)
 
     with st.container(border=True):
         st.markdown('<div class="section-title">Progreso general (así avanzan los auxiliares)</div>', unsafe_allow_html=True)
@@ -1030,9 +1034,16 @@ def render_project_detail():
                         unsafe_allow_html=True)
         st.progress(pct_general / 100)
         cols = st.columns(3)
-        cols[0].metric("Sin iniciar", progreso["sin-iniciar"])
-        cols[1].metric("En proceso", progreso["en-proceso"])
-        cols[2].metric("Finalizado", progreso["finalizado"])
+        for col, status_key, label in zip(cols, ["sin-iniciar", "en-proceso", "finalizado"],
+                                           ["Sin iniciar", "En proceso", "Finalizado"]):
+            with col:
+                st.markdown(f'''
+                    <div style="background:{BG};border:1px solid {BORDER};border-radius:8px;
+                                padding:8px 6px;text-align:center;">
+                        <div class="cell-muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.03em;">{label}</div>
+                        <div style="font-size:18px;font-weight:800;color:{TEXT};">{progreso[status_key]}</div>
+                    </div>
+                ''', unsafe_allow_html=True)
 
     if st.session_state.role == "jefe":
         if st.button("Generar bitácora de orden", type="primary", icon=":material/assignment:"):
@@ -1064,7 +1075,7 @@ def render_project_detail():
         with st.container(border=True):
             top = st.columns([1, 3, 1.3])
             with top[0]:
-                st.markdown(f'<span class="cell-id">{html.escape(perf["codigo"])}</span>', unsafe_allow_html=True)
+                st.markdown(f'<div class="perf-code-box">{html.escape(perf["codigo"])}</div>', unsafe_allow_html=True)
             with top[1]:
                 st.markdown(f'<span style="font-weight:700;">{perf_pct}%</span>&nbsp;&nbsp;'
                             f'<span class="badge {estado_badge}">{estado_label}</span>', unsafe_allow_html=True)
