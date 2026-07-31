@@ -809,11 +809,11 @@ def render_new_project():
     st.markdown('<div class="section-title">Código interno</div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1, 1, 1])
     with c1:
-        st.text_input("Prefijo", value="GDA", disabled=True)
+        st.text_input("Prefijo", value="GDA", disabled=True, autocomplete="off")
     with c2:
-        numero = st.text_input("Número", placeholder="001")
+        numero = st.text_input("Número", placeholder="001", autocomplete="off")
     with c3:
-        anio = st.text_input("Año", placeholder="24")
+        anio = st.text_input("Año", placeholder="24", autocomplete="off")
 
     codigo_interno = f"GDA-{numero}-{anio}" if numero and anio else ""
     existing_codes = [p["codigo_interno"] for p in st.session_state.projects]
