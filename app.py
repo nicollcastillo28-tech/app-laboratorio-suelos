@@ -921,13 +921,6 @@ def render_bitacora():
 
             df_source = st.session_state.bitacora_draft[key]
 
-            if es_jefe:
-                if st.button("➕ Agregar muestra", key=f"add_row_{key}"):
-                    nueva_fila = pd.DataFrame([_bitacora_row_defaults()])
-                    st.session_state.bitacora_draft[key] = pd.concat([df_source, nueva_fila], ignore_index=True)
-                    st.rerun()
-                df_source = st.session_state.bitacora_draft[key]
-
             column_config = {
                 "Número": st.column_config.TextColumn(default=""),
                 # Sin `format`: con NumberColumn + format printf-style, Streamlit reformatea el valor
@@ -941,7 +934,7 @@ def render_bitacora():
                 column_config[e] = st.column_config.CheckboxColumn(e, default=False)
 
             if es_jefe:
-                st.caption("Usa el botón de arriba para agregar una muestra nueva. Para eliminar una, selecciona el cuadro a la izquierda de su fila y usa el ícono de basura que aparece sobre la tabla.")
+                st.caption("Usa el ícono ➕ sobre la tabla para agregar una muestra nueva. Para eliminar una, selecciona el cuadro a la izquierda de su fila y usa el ícono de basura que aparece sobre la tabla.")
                 # OJO: `data` que se le pasa a st.data_editor debe permanecer estable entre reruns
                 # (bitacora_draft[key] solo cambia por acciones explícitas nuestras, como "Agregar
                 # muestra"). El resultado editado NO se vuelve a guardar ahí — hacerlo generaba el
