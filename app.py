@@ -41,7 +41,17 @@ MUTED = NEUTRAL
 
 st.markdown(f"""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
+    .material-symbols-outlined, [data-testid="stMarkdownContainer"] span.material-symbols-outlined,
+    [data-testid="stMarkdownContainer"] p span.material-symbols-outlined {{
+        font-family: 'Material Symbols Outlined' !important;
+        font-weight: normal; font-style: normal; text-transform: none;
+        letter-spacing: normal; word-wrap: normal; white-space: nowrap; direction: ltr;
+        -webkit-font-smoothing: antialiased;
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        vertical-align: middle; line-height: 1; font-size: 1.15em; display: inline-block;
+    }}
+    .msi-fill {{ font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24; }}
     html, body, [class*="css"] {{ font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif; }}
     [data-testid="stAppViewContainer"], [data-testid="stMarkdownContainer"], [data-testid="stMarkdownContainer"] p,
     [data-testid="stMarkdownContainer"] span, [data-testid="stMarkdownContainer"] li {{
@@ -268,7 +278,7 @@ NORMAS_ENSAYO = {
 }
 STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado"}
 STATUS_BADGE = {"sin-iniciar": "badge-muted", "en-proceso": "badge-warning", "finalizado": "badge-success"}
-STATUS_ICON = {"sin-iniciar": "⚪", "en-proceso": "🟡", "finalizado": "✅"}
+STATUS_ICON = {"sin-iniciar": "radio_button_unchecked", "en-proceso": "autorenew", "finalizado": "check_circle"}
 
 TIPO_PERFORACION_PREFIX = {"Sondeo": "S", "Apique": "AP", "Fuente/Cantera": "F"}
 TIPO_MUESTRA_OPTIONS = ["Shelby", "NQ", "SS", "N/A"]
@@ -347,6 +357,21 @@ def to_float(v, default=None):
         return default
 
 
+def icon(name, size=18, fill=False, color=None):
+    """Ícono de Material Symbols para insertar dentro de HTML propio (st.markdown con unsafe_allow_html)."""
+    cls = "material-symbols-outlined msi-fill" if fill else "material-symbols-outlined"
+    style = f"font-size:{size}px;"
+    if color:
+        style += f"color:{color};"
+    return f'<span class="{cls}" style="{style}">{name}</span>'
+
+
+def status_badge_html(status, font_size=None):
+    style = f' style="font-size:{font_size}px;"' if font_size else ""
+    return (f'<span class="badge {STATUS_BADGE[status]}"{style}>'
+            f'{icon(STATUS_ICON[status], size=13)} {STATUS_LABELS[status]}</span>')
+
+
 def now_iso():
     return datetime.now().isoformat()
 
@@ -360,7 +385,7 @@ def format_dt(iso_str):
 
 def require_role(*allowed):
     if st.session_state.role not in allowed:
-        st.warning("🔒 No tienes permiso para ver esta sección.")
+        st.warning("No tienes permiso para ver esta sección.")
         if st.button("← Volver al inicio"):
             navigate("home")
         st.stop()
@@ -433,7 +458,7 @@ def confirm_delete(action_key, label):
                 st.session_state[flag] = False
                 st.rerun()
         return False
-    if st.button("🗑️ Eliminar", key=f"del_{action_key}", use_container_width=True):
+    if st.button("Eliminar", key=f"del_{action_key}", use_container_width=True, icon=":material/delete:"):
         st.session_state[flag] = True
         st.rerun()
     return False
@@ -446,7 +471,7 @@ def render_login():
     st.markdown("<br>", unsafe_allow_html=True)
     col = st.columns([1, 1.3, 1])[1]
     with col:
-        st.markdown('<div class="login-icon">🧪</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="login-icon">{icon("biotech", size=26)}</div>', unsafe_allow_html=True)
         st.markdown('<div class="login-title">Geodelta Lab</div>', unsafe_allow_html=True)
         with st.container(border=True, key="login-card"):
             st.markdown("#### Bienvenido de nuevo")
@@ -464,14 +489,15 @@ def render_login():
             st.markdown('<hr style="margin:16px 0 4px 0;">', unsafe_allow_html=True)
             if st.button("¿Olvidaste tu clave?", key="forgot_pwd", type="secondary", use_container_width=True):
                 st.info("Contacta al Jefe de laboratorio para restablecer tu clave de acceso.")
-        st.markdown('<div class="login-footer">🛠️ Geodelta Lab Engineering</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="login-footer">{icon("build", size=14)} Geodelta Lab Engineering</div>', unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════════════════════════
 # NAVEGACIÓN — TopAppBar + BottomNav (reemplaza el sidebar)
 # ════════════════════════════════════════════════════════════════════
 NAV_ITEMS = [
-    ("home", "🏠 Inicio"), ("bitacora", "📋 Bitácora"), ("continue", "📂 Continuar"), ("search", "🔎 Buscar"),
+    ("home", "Inicio", "home"), ("bitacora", "Bitácora", "assignment"),
+    ("continue", "Continuar", "folder_open"), ("search", "Buscar", "search"),
 ]
 ACTIVE_MAP = {
     "home": "home", "projects-active": "home", "projects-done": "home", "new-project": "home",
@@ -485,20 +511,21 @@ def render_topbar():
     with st.container(key="topbar"):
         c_brand, c_nav, c_avatar, c_logout = st.columns([2.4, 4.6, 0.7, 0.7])
         with c_brand:
-            st.markdown('<div class="topbar-brand">🧪<span class="brand-title">Geodelta Lab</span></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="topbar-brand">{icon("biotech", size=24)}'
+                        f'<span class="brand-title">Geodelta Lab</span></div>', unsafe_allow_html=True)
         with c_nav:
             with st.container(key="topbar-nav"):
                 cols = st.columns(len(NAV_ITEMS))
-                for col, (key, label) in zip(cols, NAV_ITEMS):
+                for col, (key, label, icono) in zip(cols, NAV_ITEMS):
                     with col:
-                        if st.button(label, key=f"nav_{key}", use_container_width=True,
+                        if st.button(label, key=f"nav_{key}", use_container_width=True, icon=f":material/{icono}:",
                                      type="primary" if active == key else "secondary"):
                             navigate(key)
         with c_avatar:
             iniciales = "JL" if st.session_state.role == "jefe" else "AX"
             st.markdown(f'<div class="topbar-avatar">{iniciales}</div>', unsafe_allow_html=True)
         with c_logout:
-            if st.button("🚪", key="logout_top", help="Cerrar sesión", use_container_width=True):
+            if st.button("", key="logout_top", help="Cerrar sesión", use_container_width=True, icon=":material/logout:"):
                 st.session_state.role = None
                 navigate("home")
 
@@ -507,9 +534,9 @@ def render_bottomnav():
     active = ACTIVE_MAP.get(st.session_state.screen)
     with st.container(key="bottomnav"):
         cols = st.columns(len(NAV_ITEMS))
-        for col, (key, label) in zip(cols, NAV_ITEMS):
+        for col, (key, label, icono) in zip(cols, NAV_ITEMS):
             with col:
-                if st.button(label, key=f"bnav_{key}", use_container_width=True,
+                if st.button(label, key=f"bnav_{key}", use_container_width=True, icon=f":material/{icono}:",
                              type="primary" if active == key else "secondary"):
                     navigate(key)
 
@@ -532,19 +559,19 @@ def render_home():
         if es_jefe:
             c1, c2, c3 = st.columns(3)
             with c1:
-                st.markdown('<div class="bento-primary"><div class="bento-icon">➕</div>'
+                st.markdown(f'<div class="bento-primary"><div class="bento-icon">{icon("add")}</div>'
                              '<div><h3>Crear nuevo proyecto</h3><p>Registrar nuevo cliente y parámetros de sitio.</p></div></div>',
                              unsafe_allow_html=True)
                 if st.button("Crear proyecto →", key="cta_new_project", use_container_width=True):
                     navigate("new-project")
             with c2:
-                st.markdown('<div class="bento-light"><div class="bento-icon">🔄</div>'
+                st.markdown(f'<div class="bento-light"><div class="bento-icon">{icon("sync")}</div>'
                              f'<div><h3>Proyectos en ejecución</h3><p>{sum(1 for p in st.session_state.projects if project_status(p["codigo_interno"])=="ejecucion")} proyecto(s) activos en laboratorio.</p></div></div>',
                              unsafe_allow_html=True)
                 if st.button("Ver proyectos →", key="cta_active", use_container_width=True):
                     navigate("projects-active")
             with c3:
-                st.markdown('<div class="bento-light"><div class="bento-icon">🗄️</div>'
+                st.markdown(f'<div class="bento-light"><div class="bento-icon">{icon("archive")}</div>'
                              '<div><h3>Proyectos ejecutados</h3><p>Revisar reportes finales y resultados certificados.</p></div></div>',
                              unsafe_allow_html=True)
                 if st.button("Explorar archivo →", key="cta_done", use_container_width=True):
@@ -553,14 +580,14 @@ def render_home():
             c1, c2 = st.columns([2, 1])
             with c1:
                 activos = sum(1 for p in st.session_state.projects if project_status(p["codigo_interno"]) == "ejecucion")
-                st.markdown('<div class="bento-primary"><div class="bento-icon">📋</div>'
+                st.markdown(f'<div class="bento-primary"><div class="bento-icon">{icon("assignment")}</div>'
                              f'<div><span class="bento-eyebrow">Tareas prioritarias</span>'
                              f'<h3>Proyectos en ejecución</h3><p>Accede a los proyectos activos para registrar granulometría, humedad y peso unitario.</p></div></div>',
                              unsafe_allow_html=True)
                 if st.button(f"Ver proyectos → ({activos} activos)", key="cta_active_aux", use_container_width=True):
                     navigate("projects-active")
             with c2:
-                st.markdown('<div class="bento-light"><div class="bento-icon">🗄️</div>'
+                st.markdown(f'<div class="bento-light"><div class="bento-icon">{icon("archive")}</div>'
                              '<div><h3>Proyectos ejecutados</h3><p>Consulta el historial. Solo lectura.</p></div></div>',
                              unsafe_allow_html=True)
                 if st.button("Explorar archivo →", key="cta_done_aux", use_container_width=True):
@@ -574,8 +601,8 @@ def render_home():
         with st.container(border=True):
             h1, h2 = st.columns([4, 1])
             with h1:
-                st.markdown('<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">'
-                            '🕓 Actividad reciente</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">'
+                            f'{icon("history", size=15)} Actividad reciente</div>', unsafe_allow_html=True)
             with h2:
                 if st.button("Ver todo →", key="cta_ver_todo_actividad", use_container_width=True):
                     navigate("search")
@@ -596,7 +623,7 @@ def render_home():
                             <td class="cell-id">{html.escape(a['codigo_interno'])}</td>
                             <td><div class="cell-title">{titulo}</div><div class="cell-sub">{subtitulo}</div></td>
                             <td class="cell-muted">{html.escape(actualizacion)}</td>
-                            <td><span class="badge {STATUS_BADGE[a['status']]}">{STATUS_LABELS[a['status']]}</span></td>
+                            <td>{status_badge_html(a['status'])}</td>
                         </tr>""")
                 st.markdown(f"""
                     <div class="activity-table-wrap">
@@ -614,8 +641,8 @@ def render_home():
         with st.container(border=True):
             h1, h2 = st.columns([4, 1])
             with h1:
-                st.markdown('<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">'
-                            '📋 Ensayos asignados</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">'
+                            f'{icon("assignment", size=15)} Ensayos asignados</div>', unsafe_allow_html=True)
             with h2:
                 st.markdown(f'<div style="text-align:right;"><span class="badge badge-muted">Total: {len(pendientes)}</span></div>',
                             unsafe_allow_html=True)
@@ -639,8 +666,7 @@ def render_home():
                     cols[2].markdown(f'<span class="assigned-chip">{ASSAY_LABELS[a["tipo"]]}</span>', unsafe_allow_html=True)
                     cols[3].markdown(f'<span class="cell-muted">{html.escape(format_dt(a["lastModified"]))}</span>',
                                       unsafe_allow_html=True)
-                    cols[4].markdown(f'<span class="badge {STATUS_BADGE[a["status"]]}">{STATUS_LABELS[a["status"]]}</span>',
-                                      unsafe_allow_html=True)
+                    cols[4].markdown(status_badge_html(a["status"]), unsafe_allow_html=True)
                     with cols[5]:
                         if st.button("Abrir", key=f"open_assigned_{a['id']}", use_container_width=True):
                             st.session_state.selected_assay_id = a["id"]
@@ -665,7 +691,10 @@ def _render_project_list(codes, empty_msg, allow_delete, mark_read_only=False):
                 st.markdown(f"**{p['codigo_interno']}**")
                 st.caption(p["nombre"])
             with cols[1]:
-                st.caption(f"{STATUS_ICON['sin-iniciar']} {counts['sin-iniciar']}  ·  {STATUS_ICON['en-proceso']} {counts['en-proceso']}  ·  {STATUS_ICON['finalizado']} {counts['finalizado']}")
+                st.markdown(f'<span class="cell-muted">{icon(STATUS_ICON["sin-iniciar"], size=14)} {counts["sin-iniciar"]}'
+                            f'&nbsp;&nbsp;·&nbsp;&nbsp;{icon(STATUS_ICON["en-proceso"], size=14)} {counts["en-proceso"]}'
+                            f'&nbsp;&nbsp;·&nbsp;&nbsp;{icon(STATUS_ICON["finalizado"], size=14)} {counts["finalizado"]}</span>',
+                            unsafe_allow_html=True)
             with cols[2]:
                 if st.button("Abrir", key=f"openlist_{p['codigo_interno']}", use_container_width=True):
                     st.session_state.selected_codigo = p["codigo_interno"]
@@ -710,14 +739,14 @@ def render_projects_active():
     en_ensayo = sum(1 for p in proyectos if project_progress(p["codigo_interno"])["en-proceso"] > 0)
     c1, c2, c3 = st.columns(3)
     for col, icono, label, valor in [
-        (c1, "📁", "Activos", len(proyectos)), (c2, "🔬", "En ensayo", en_ensayo), (c3, "📍", "Ubicaciones", ubicaciones),
+        (c1, "folder", "Activos", len(proyectos)), (c2, "science", "En ensayo", en_ensayo), (c3, "location_on", "Ubicaciones", ubicaciones),
     ]:
         with col:
-            st.markdown(f'<div class="stat-chip"><div class="stat-icon">{icono}</div>'
+            st.markdown(f'<div class="stat-chip"><div class="stat-icon">{icon(icono, size=20)}</div>'
                         f'<div><div class="stat-label">{label}</div><div class="stat-value">{valor}</div></div></div>',
                         unsafe_allow_html=True)
 
-    busqueda = st.text_input("Buscar", placeholder="🔎 Buscar por código o nombre...", label_visibility="collapsed")
+    busqueda = st.text_input("Buscar", placeholder="Buscar por código o nombre...", label_visibility="collapsed", icon=":material/search:")
     if busqueda:
         q = busqueda.lower()
         proyectos = [p for p in proyectos if q in p["codigo_interno"].lower() or q in p["nombre"].lower()]
@@ -743,7 +772,8 @@ def render_projects_active():
             top[1].markdown(f'<div style="text-align:right;"><span class="badge {estado_badge}">{estado_label}</span></div>',
                              unsafe_allow_html=True)
             st.markdown(f"**{p['nombre']}**")
-            st.caption(f"📍 {p.get('localizacion') or '—'}")
+            st.markdown(f'<span class="cell-muted">{icon("location_on", size=14)} {html.escape(p.get("localizacion") or "—")}</span>',
+                        unsafe_allow_html=True)
             m1, m2 = st.columns(2)
             m1.caption(f"NORMA · {p.get('norma') or '—'}")
             m2.caption(f"Fecha bitácora · {p.get('fecha_bitacora') or '—'}")
@@ -760,9 +790,9 @@ def render_projects_active():
 
 def render_projects_done():
     st.button("← Atrás", on_click=lambda: navigate("home"))
-    st.markdown("## 🗄️ Proyectos ejecutados")
+    st.markdown("## Proyectos ejecutados")
     if st.session_state.role == "auxiliar":
-        st.info("🔒 Modo consulta: puedes ver los resultados, pero no editarlos.")
+        st.info("Modo consulta: puedes ver los resultados, pero no editarlos.")
     codes = [p["codigo_interno"] for p in st.session_state.projects if project_status(p["codigo_interno"]) == "ejecutado"]
     _render_project_list(codes, "Todavía no hay proyectos completamente finalizados.",
                           allow_delete=(st.session_state.role == "jefe"), mark_read_only=True)
@@ -844,14 +874,14 @@ def render_project_detail():
     with st.container(border=True):
         st.markdown('<div class="section-title">Progreso general (así avanzan los auxiliares)</div>', unsafe_allow_html=True)
         cols = st.columns(3)
-        cols[0].metric(f"{STATUS_ICON['sin-iniciar']} Sin iniciar", progreso["sin-iniciar"])
-        cols[1].metric(f"{STATUS_ICON['en-proceso']} En proceso", progreso["en-proceso"])
-        cols[2].metric(f"{STATUS_ICON['finalizado']} Finalizado", progreso["finalizado"])
+        cols[0].metric("Sin iniciar", progreso["sin-iniciar"])
+        cols[1].metric("En proceso", progreso["en-proceso"])
+        cols[2].metric("Finalizado", progreso["finalizado"])
         if total:
             st.progress(progreso["finalizado"] / total)
 
     if st.session_state.role == "jefe":
-        if st.button("📋  Generar bitácora de orden", type="primary"):
+        if st.button("Generar bitácora de orden", type="primary", icon=":material/assignment:"):
             navigate("bitacora")
 
     st.markdown("### Perforaciones")
@@ -869,7 +899,10 @@ def render_project_detail():
                 st.markdown(f"**{perf['codigo']}** — {perf['tipo']}")
                 st.caption(f"{len(muestras)} muestra(s)")
             with cols[1]:
-                st.caption(f"{STATUS_ICON['sin-iniciar']} {counts['sin-iniciar']}  ·  {STATUS_ICON['en-proceso']} {counts['en-proceso']}  ·  {STATUS_ICON['finalizado']} {counts['finalizado']}")
+                st.markdown(f'<span class="cell-muted">{icon(STATUS_ICON["sin-iniciar"], size=14)} {counts["sin-iniciar"]}'
+                            f'&nbsp;&nbsp;·&nbsp;&nbsp;{icon(STATUS_ICON["en-proceso"], size=14)} {counts["en-proceso"]}'
+                            f'&nbsp;&nbsp;·&nbsp;&nbsp;{icon(STATUS_ICON["finalizado"], size=14)} {counts["finalizado"]}</span>',
+                            unsafe_allow_html=True)
             with cols[2]:
                 if st.button("Abrir", key=f"open_perf_{perf['codigo']}", use_container_width=True):
                     st.session_state.selected_perforacion = perf["codigo"]
@@ -904,7 +937,7 @@ def render_perforacion_detail():
             with cols[1]:
                 st.caption(f"Prof. {m['profundidad_de']}–{m['profundidad_hasta']} m · {m['tipo_muestra']}")
             with cols[2]:
-                st.markdown(f'<span class="badge {STATUS_BADGE[estado]}">{STATUS_LABELS[estado]}</span>', unsafe_allow_html=True)
+                st.markdown(status_badge_html(estado), unsafe_allow_html=True)
             with cols[3]:
                 if st.button("Abrir", key=f"open_muestra_{m['id_unico']}", use_container_width=True):
                     st.session_state.selected_muestra_id = m["id_unico"]
@@ -933,7 +966,7 @@ def _muestras_to_rows(muestras):
 
 def render_bitacora():
     st.button("← Atrás", on_click=lambda: navigate("home"))
-    st.markdown("## 📋 Bitácora orden para ensayos de laboratorio")
+    st.markdown("## Bitácora orden para ensayos de laboratorio")
 
     codes = [p["codigo_interno"] for p in st.session_state.projects]
     if not codes:
@@ -957,7 +990,7 @@ def render_bitacora():
             tipo = st.selectbox("Tipo de perforación", list(TIPO_PERFORACION_PREFIX.keys()))
         with c2:
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("➕ Agregar perforación", use_container_width=True):
+            if st.button("Agregar perforación", use_container_width=True, icon=":material/add:"):
                 prefix = TIPO_PERFORACION_PREFIX[tipo]
                 consecutivo = len([p for p in perforaciones if p["tipo"] == tipo]) + 1
                 codigo_perf = f"{prefix}{consecutivo}"
@@ -1002,7 +1035,7 @@ def render_bitacora():
                 column_config[e] = st.column_config.CheckboxColumn(e, default=False)
 
             if es_jefe:
-                st.caption("Usa el ícono ➕ sobre la tabla para agregar una muestra nueva. Para eliminar una, selecciona el cuadro a la izquierda de su fila y usa el ícono de basura que aparece sobre la tabla.")
+                st.caption("Usa el ícono para agregar fila sobre la tabla para sumar una muestra nueva. Para eliminar una, selecciona el cuadro a la izquierda de su fila y usa el ícono de basura que aparece sobre la tabla.")
                 # OJO: `data` que se le pasa a st.data_editor debe permanecer estable entre reruns
                 # (bitacora_draft[key] solo cambia por acciones explícitas nuestras, como "Agregar
                 # muestra"). El resultado editado NO se vuelve a guardar ahí — hacerlo generaba el
@@ -1026,7 +1059,7 @@ def render_bitacora():
 
     if es_jefe:
         st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("💾  Guardar bitácora", type="primary", use_container_width=True):
+        if st.button("Guardar bitácora", type="primary", use_container_width=True, icon=":material/save:"):
             for perf in perforaciones:
                 key = f"{codigo}::{perf['codigo']}"
                 df_rows = edited_frames.get(key)
@@ -1044,7 +1077,7 @@ def render_bitacora():
                         "ensayos": {e: bool(row.get(e, False)) for e in BITACORA_ENSAYOS},
                     })
                 st.session_state.muestras[key] = nuevas
-            st.success("✅ Bitácora guardada. Los auxiliares ya pueden ver y digitar las muestras.")
+            st.success("Bitácora guardada. Los auxiliares ya pueden ver y digitar las muestras.")
 
     st.markdown("<br>", unsafe_allow_html=True)
     bio = BytesIO()
@@ -1059,7 +1092,7 @@ def render_bitacora():
                 r.update(m["ensayos"])
                 all_rows.append(r)
         pd.DataFrame(all_rows).to_excel(writer, index=False, sheet_name="Muestras")
-    st.download_button("📥  Descargar bitácora (Excel)", data=bio.getvalue(),
+    st.download_button("Descargar bitácora (Excel)", data=bio.getvalue(), icon=":material/download:",
                         file_name=f"Bitacora_{codigo}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True)
@@ -1090,7 +1123,7 @@ def render_muestra_detail():
 
     estado = compute_muestra_estado(muestra)
     st.markdown('<div class="section-title">Estado de la muestra (calculado según los ensayos)</div>', unsafe_allow_html=True)
-    st.markdown(f'<span class="badge {STATUS_BADGE[estado]}" style="font-size:14px;">{STATUS_LABELS[estado]}</span>', unsafe_allow_html=True)
+    st.markdown(status_badge_html(estado, font_size=14), unsafe_allow_html=True)
 
     st.markdown("### Ensayos solicitados")
     solicitados = [e for e, v in muestra["ensayos"].items() if v]
@@ -1104,7 +1137,7 @@ def render_muestra_detail():
             if tipo_interno:
                 existing = get_assay(muestra_id, tipo_interno)
                 status = existing["status"] if existing else "sin-iniciar"
-                cols[1].markdown(f'<span class="badge {STATUS_BADGE[status]}">{STATUS_LABELS[status]}</span>', unsafe_allow_html=True)
+                cols[1].markdown(status_badge_html(status), unsafe_allow_html=True)
                 with cols[2]:
                     if st.button("Abrir", key=f"open_ensayo_{ensayo_label}", use_container_width=True):
                         if existing:
@@ -1121,9 +1154,9 @@ def render_muestra_detail():
                         st.session_state.selected_assay_type = tipo_interno
                         navigate("assay-form")
                 if existing and existing.get("laboratorist"):
-                    st.markdown(f'<div class="timestamp-caption">🕓 Última actualización: {format_dt(existing["lastModified"])} · {existing["laboratorist"]}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(existing["lastModified"])} · {existing["laboratorist"]}</div>', unsafe_allow_html=True)
                 elif existing:
-                    st.markdown(f'<div class="timestamp-caption">🕓 Última actualización: {format_dt(existing["lastModified"])}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(existing["lastModified"])}</div>', unsafe_allow_html=True)
             else:
                 cols[1].markdown('<span class="badge badge-muted">Sin formulario aún</span>', unsafe_allow_html=True)
 
@@ -1281,14 +1314,15 @@ def render_assay_form():
     bar_cols[1].markdown(f"**Muestra**<br>{muestra['numero'] if muestra else '—'}", unsafe_allow_html=True)
     bar_cols[2].markdown(f"**Ensayo**<br>{ASSAY_LABELS[assay['tipo']]}", unsafe_allow_html=True)
     bar_cols[3].markdown(f"**Perforación**<br>{perf_codigo}", unsafe_allow_html=True)
-    bar_cols[4].markdown(f"**Estado**<br><span class='badge {STATUS_BADGE[assay['status']]}'>{STATUS_LABELS[assay['status']]}</span>", unsafe_allow_html=True)
-    st.caption(f"🕓 Última actualización: {format_dt(assay['lastModified'])}" + (f" · {assay['laboratorist']}" if assay.get("laboratorist") else ""))
+    bar_cols[4].markdown(f"**Estado**<br>{status_badge_html(assay['status'])}", unsafe_allow_html=True)
+    st.markdown(f'<div class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(assay["lastModified"])}'
+                + (f' · {html.escape(assay["laboratorist"])}' if assay.get("laboratorist") else "") + '</div>', unsafe_allow_html=True)
 
     st.markdown(f"## {ASSAY_LABELS[assay['tipo']]}")
     data = dict(assay.get("data", {}))
 
     if read_only:
-        st.info("🔒 Este proyecto ya fue ejecutado. Estás en modo consulta — no puedes editar estos datos.")
+        st.info("Este proyecto ya fue ejecutado. Estás en modo consulta — no puedes editar estos datos.")
         render_read_only_summary(assay["tipo"], data)
         st.markdown('<div class="section-title">Observaciones</div>', unsafe_allow_html=True)
         st.write(assay.get("observations") or "—")
@@ -1312,11 +1346,11 @@ def render_assay_form():
     st.markdown("<br>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("💾  Guardar borrador", use_container_width=True):
+        if st.button("Guardar borrador", use_container_width=True, icon=":material/save:"):
             assay.update(data=data, observations=observations, laboratorist=laboratorist, status="en-proceso", lastModified=now_iso())
             navigate("muestra-detail")
     with col2:
-        if st.button("✅  Finalizar ensayo", type="primary", use_container_width=True):
+        if st.button("Finalizar ensayo", type="primary", use_container_width=True, icon=":material/check_circle:"):
             assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado", lastModified=now_iso())
             navigate("muestra-detail")
 
@@ -1325,7 +1359,7 @@ def render_assay_form():
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_granulometria(codigo, perf_codigo, muestra, project, data)
         st.download_button(
-            "📥  Descargar Excel (plantilla oficial de Granulometría)",
+            "Descargar Excel (plantilla oficial de Granulometría)", icon=":material/download:",
             data=excel_bytes, file_name=f"Granulometria_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
@@ -1402,7 +1436,7 @@ def render_search():
                     if tipo_interno:
                         existing = get_assay(m["id_unico"], tipo_interno)
                         status = existing["status"] if existing else "sin-iniciar"
-                        cols[1].markdown(f'<span class="badge {STATUS_BADGE[status]}">{STATUS_LABELS[status]}</span>', unsafe_allow_html=True)
+                        cols[1].markdown(status_badge_html(status), unsafe_allow_html=True)
                         cols[1].caption(format_dt(existing["lastModified"]) if existing else "—")
                         with cols[2]:
                             if st.button("Abrir", key=f"search_open_{m['id_unico']}_{tipo_interno}", use_container_width=True):
@@ -1425,7 +1459,7 @@ def render_search():
                         with cols[3]:
                             if st.session_state.role == "jefe" and tipo_interno == "granulometria" and project:
                                 excel_bytes = generar_excel_granulometria(codigo, perf["codigo"], m, project, existing.get("data", {}) if existing else {})
-                                st.download_button("📥 Excel", data=excel_bytes, file_name=f"Granulometria_{m['id_unico']}.xlsm",
+                                st.download_button("Excel", icon=":material/download:", data=excel_bytes, file_name=f"Granulometria_{m['id_unico']}.xlsm",
                                                     mime="application/vnd.ms-excel.sheet.macroEnabled.12",
                                                     key=f"search_dl_{m['id_unico']}", use_container_width=True)
                     else:
