@@ -268,6 +268,22 @@ st.markdown(f"""
         background: {SURFACE} !important;
         box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important;
     }}
+
+    /* Botón flotante "+" para crear proyecto desde Proyectos en ejecución */
+    .st-key-fab-new-project {{
+        position: fixed; right: 24px; bottom: 28px; z-index: 998; width: 56px !important;
+    }}
+    .st-key-fab-new-project .stButton button {{
+        width: 56px; height: 56px; border-radius: 999px !important; padding: 0 !important;
+        background: {PRIMARY} !important; border: none !important;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.28) !important;
+    }}
+    .st-key-fab-new-project .stButton button span[data-testid="stIconMaterial"] {{
+        color: #fff !important; font-size: 26px !important;
+    }}
+    @media (max-width: 900px) {{
+        .st-key-fab-new-project {{ bottom: 92px; right: 16px; }}
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -760,6 +776,11 @@ def render_projects_active():
     if busqueda:
         q = busqueda.lower()
         proyectos = [p for p in proyectos if q in p["codigo_interno"].lower() or q in p["nombre"].lower()]
+
+    if st.session_state.role == "jefe":
+        with st.container(key="fab-new-project"):
+            if st.button("", icon=":material/add:", key="fab_new_project_btn", help="Crear nuevo proyecto"):
+                navigate("new-project")
 
     if not proyectos:
         st.info("No hay proyectos en ejecución en este momento.")
