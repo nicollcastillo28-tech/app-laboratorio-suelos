@@ -622,7 +622,10 @@ def render_home():
             if not recientes:
                 st.info("Todavía no hay actividad registrada.")
             else:
-                rows_html = []
+                col_ratios = [1.4, 2.6, 1.8, 1.3, 0.9]
+                headers = st.columns(col_ratios)
+                for col, label in zip(headers, ["ID proyecto", "Cliente / Ubicación", "Última actualización", "Estado", "Acción"]):
+                    col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
                 for a in recientes:
                     proyecto = get_project(a["codigo_interno"])
                     titulo = html.escape(proyecto["nombre"] if proyecto else a["codigo_interno"])
@@ -630,24 +633,18 @@ def render_home():
                     actualizacion = format_dt(a["lastModified"])
                     if a.get("laboratorist"):
                         actualizacion += f' · {html.escape(a["laboratorist"])}'
-                    rows_html.append(f"""
-                        <tr>
-                            <td class="cell-id">{html.escape(a['codigo_interno'])}</td>
-                            <td><div class="cell-title">{titulo}</div><div class="cell-sub">{subtitulo}</div></td>
-                            <td class="cell-muted">{html.escape(actualizacion)}</td>
-                            <td>{status_badge_html(a['status'])}</td>
-                        </tr>""")
-                st.markdown(f"""
-                    <div class="activity-table-wrap">
-                    <table class="activity-table">
-                        <thead><tr>
-                            <th>ID proyecto</th><th>Cliente / Ubicación</th><th>Última actualización</th><th>Estado</th>
-                        </tr></thead>
-                        <tbody>{''.join(rows_html)}</tbody>
-                    </table>
-                    </div>
-                    <div class="activity-footer">Mostrando {len(recientes)} de {len(todos_los_ensayos)} ensayo(s)</div>
-                """, unsafe_allow_html=True)
+                    cols = st.columns(col_ratios, vertical_alignment="center")
+                    cols[0].markdown(f'<span class="cell-id">{html.escape(a["codigo_interno"])}</span>', unsafe_allow_html=True)
+                    cols[1].markdown(f'<div class="cell-title">{titulo}</div><div class="cell-sub">{subtitulo}</div>',
+                                      unsafe_allow_html=True)
+                    cols[2].markdown(f'<span class="cell-muted">{html.escape(actualizacion)}</span>', unsafe_allow_html=True)
+                    cols[3].markdown(status_badge_html(a["status"]), unsafe_allow_html=True)
+                    with cols[4]:
+                        if st.button("Abrir", key=f"open_recent_{a['id']}", use_container_width=True):
+                            st.session_state.selected_codigo = a["codigo_interno"]
+                            navigate("project-detail")
+                st.markdown(f'<div class="activity-footer">Mostrando {len(recientes)} de {len(todos_los_ensayos)} ensayo(s)</div>',
+                            unsafe_allow_html=True)
     else:
         pendientes = [a for a in todos_los_ensayos if a["status"] != "finalizado"]
         with st.container(border=True):
@@ -747,11 +744,10 @@ def render_projects_active():
 
     proyectos = [p for p in st.session_state.projects if project_status(p["codigo_interno"]) == "ejecucion"]
 
-    ubicaciones = len({p["localizacion"] for p in proyectos if p.get("localizacion")})
     en_ensayo = sum(1 for p in proyectos if project_progress(p["codigo_interno"])["en-proceso"] > 0)
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     for col, icono, label, valor in [
-        (c1, "folder", "Activos", len(proyectos)), (c2, "science", "En ensayo", en_ensayo), (c3, "location_on", "Ubicaciones", ubicaciones),
+        (c1, "folder", "Activos", len(proyectos)), (c2, "science", "En ensayo", en_ensayo),
     ]:
         with col:
             st.markdown(f'<div class="stat-chip"><div class="stat-icon">{icon(icono, size=20)}</div>'
