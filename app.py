@@ -682,12 +682,80 @@ def _render_project_list(codes, empty_msg, allow_delete, mark_read_only=False):
                         st.rerun()
 
 
+def _resumen_tecnico_perforaciones(codigo):
+    """Una línea por perforación: sus muestras y los ensayos solicitados en ellas."""
+    lineas = []
+    for perf in st.session_state.perforaciones.get(codigo, []):
+        muestras = st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", [])
+        if not muestras:
+            lineas.append(f"<strong>{perf['codigo']}</strong>: sin muestras")
+            continue
+        ids = ", ".join(f"M-{m['numero']}" for m in muestras)
+        ensayos = sorted({e for m in muestras for e, activo in m["ensayos"].items() if activo})
+        linea = f"<strong>{perf['codigo']}</strong>: {ids}"
+        if ensayos:
+            linea += f" · {', '.join(ensayos)}"
+        lineas.append(linea)
+    return lineas
+
+
 def render_projects_active():
     st.button("← Atrás", on_click=lambda: navigate("home"))
-    st.markdown("## 🔄 Proyectos en ejecución")
-    codes = [p["codigo_interno"] for p in st.session_state.projects if project_status(p["codigo_interno"]) == "ejecucion"]
-    _render_project_list(codes, "No hay proyectos en ejecución en este momento.",
-                          allow_delete=(st.session_state.role == "jefe"), mark_read_only=False)
+    st.markdown("## Proyectos en ejecución")
+    st.caption("Monitoreo técnico de sondeos y análisis geotécnico.")
+
+    proyectos = [p for p in st.session_state.projects if project_status(p["codigo_interno"]) == "ejecucion"]
+
+    ubicaciones = len({p["localizacion"] for p in proyectos if p.get("localizacion")})
+    en_ensayo = sum(1 for p in proyectos if project_progress(p["codigo_interno"])["en-proceso"] > 0)
+    c1, c2, c3 = st.columns(3)
+    for col, icono, label, valor in [
+        (c1, "📁", "Activos", len(proyectos)), (c2, "🔬", "En ensayo", en_ensayo), (c3, "📍", "Ubicaciones", ubicaciones),
+    ]:
+        with col:
+            st.markdown(f'<div class="stat-chip"><div class="stat-icon">{icono}</div>'
+                        f'<div><div class="stat-label">{label}</div><div class="stat-value">{valor}</div></div></div>',
+                        unsafe_allow_html=True)
+
+    busqueda = st.text_input("Buscar", placeholder="🔎 Buscar por código o nombre...", label_visibility="collapsed")
+    if busqueda:
+        q = busqueda.lower()
+        proyectos = [p for p in proyectos if q in p["codigo_interno"].lower() or q in p["nombre"].lower()]
+
+    if not proyectos:
+        st.info("No hay proyectos en ejecución en este momento.")
+        return
+
+    for p in proyectos:
+        codigo = p["codigo_interno"]
+        counts = project_progress(codigo)
+        total = sum(counts.values())
+        if counts["en-proceso"] > 0:
+            estado_badge, estado_label = "badge-warning", "En ensayo"
+        elif total == 0:
+            estado_badge, estado_label = "badge-muted", "Sin muestras"
+        else:
+            estado_badge, estado_label = "badge-muted", "Por iniciar"
+
+        with st.container(border=True):
+            top = st.columns([3, 1])
+            top[0].markdown(f'<span class="cell-id">{codigo}</span>', unsafe_allow_html=True)
+            top[1].markdown(f'<div style="text-align:right;"><span class="badge {estado_badge}">{estado_label}</span></div>',
+                             unsafe_allow_html=True)
+            st.markdown(f"**{p['nombre']}**")
+            st.caption(f"📍 {p.get('localizacion') or '—'}")
+            m1, m2 = st.columns(2)
+            m1.caption(f"NORMA · {p.get('norma') or '—'}")
+            m2.caption(f"Fecha bitácora · {p.get('fecha_bitacora') or '—'}")
+            resumen = _resumen_tecnico_perforaciones(codigo)
+            if resumen:
+                st.markdown(f'<div class="section-title" style="margin-bottom:6px;">'
+                            f'Resumen técnico de perforaciones ({len(resumen)})</div>', unsafe_allow_html=True)
+                for linea in resumen:
+                    st.markdown(f'<div class="cell-sub" style="margin-bottom:4px;">{linea}</div>', unsafe_allow_html=True)
+            if st.button("Ver proyecto →", key=f"veractivo_{codigo}", type="primary", use_container_width=True):
+                st.session_state.selected_codigo = codigo
+                navigate("project-detail")
 
 
 def render_projects_done():
