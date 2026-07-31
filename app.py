@@ -817,8 +817,9 @@ def render_new_project():
 
     codigo_interno = f"GDA-{numero}-{anio}" if numero and anio else ""
     existing_codes = [p["codigo_interno"] for p in st.session_state.projects]
+    codigo_valido = bool(codigo_interno) and codigo_interno not in existing_codes
     if codigo_interno:
-        st.error(f"El código **{codigo_interno}** ya existe.") if codigo_interno in existing_codes else st.success(f"Código interno: **{codigo_interno}**")
+        st.error(f"El código **{codigo_interno}** ya existe.") if not codigo_valido else st.success(f"Código interno: **{codigo_interno}**")
 
     st.markdown('<div class="section-title">Información del proyecto</div>', unsafe_allow_html=True)
     nombre = st.text_input("Nombre del proyecto", placeholder="Estudio de suelos vía Bogotá-Medellín")
@@ -831,21 +832,101 @@ def render_new_project():
     with c2:
         fecha_ingreso = st.date_input("Fecha de ingreso de muestra", value=date.today())
 
+    # Perforaciones y muestras se arman aquí mismo, antes de crear el proyecto formalmente.
+    # Se usa el código interno (ya calculado en vivo) como llave temporal en session_state.
+    perforaciones = []
+    edited_frames = {}
+    if codigo_valido and nombre:
+        perforaciones = st.session_state.perforaciones.setdefault(codigo_interno, [])
+
+        st.markdown('<div class="section-title">Perforación</div>', unsafe_allow_html=True)
+        pc1, pc2 = st.columns([2, 1])
+        with pc1:
+            tipo = st.selectbox("Tipo de perforación", list(TIPO_PERFORACION_PREFIX.keys()))
+        with pc2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("Nueva perforación", use_container_width=True, icon=":material/add:"):
+                prefix = TIPO_PERFORACION_PREFIX[tipo]
+                consecutivo = len([p for p in perforaciones if p["tipo"] == tipo]) + 1
+                codigo_perf = f"{prefix}{consecutivo}"
+                perforaciones.append({"tipo": tipo, "consecutivo": consecutivo, "codigo": codigo_perf})
+                st.session_state.muestras[f"{codigo_interno}::{codigo_perf}"] = []
+                st.rerun()
+
+        if perforaciones:
+            st.markdown('<div class="section-title">Perforaciones y muestras</div>', unsafe_allow_html=True)
+        for perf in perforaciones:
+            key = f"{codigo_interno}::{perf['codigo']}"
+            muestras = st.session_state.muestras.setdefault(key, [])
+            with st.expander(f"**{perf['codigo']}** — {perf['tipo']}  ·  {len(muestras)} muestra(s)", expanded=True):
+                if key not in st.session_state.bitacora_draft:
+                    df_init = pd.DataFrame(_muestras_to_rows(muestras))
+                    for col in BITACORA_BASE_COLS:
+                        if col not in df_init.columns:
+                            df_init[col] = _bitacora_row_defaults()[col]
+                    st.session_state.bitacora_draft[key] = df_init[BITACORA_BASE_COLS]
+                df_source = st.session_state.bitacora_draft[key]
+
+                column_config = {
+                    "Número": st.column_config.TextColumn(default=""),
+                    "Prof. De": st.column_config.NumberColumn(default=0.0, step=0.01),
+                    "Prof. A": st.column_config.NumberColumn(default=0.0, step=0.01),
+                    "Tipo de muestra": st.column_config.SelectboxColumn(options=TIPO_MUESTRA_OPTIONS, default=TIPO_MUESTRA_OPTIONS[0]),
+                }
+                for e in BITACORA_ENSAYOS:
+                    column_config[e] = st.column_config.CheckboxColumn(e, default=False)
+
+                st.caption("Usa el ícono para agregar fila sobre la tabla para sumar una muestra nueva. Para eliminar una, selecciona el cuadro a la izquierda de su fila y usa el ícono de basura que aparece sobre la tabla.")
+                edited = st.data_editor(
+                    df_source, num_rows="dynamic", use_container_width=True,
+                    column_config=column_config, key=f"neweditor_{key}",
+                )
+                edited_frames[key] = edited
+                if confirm_delete(f"newperf_{key}", f"la perforación {perf['codigo']}"):
+                    st.session_state.perforaciones[codigo_interno] = [p for p in perforaciones if p["codigo"] != perf["codigo"]]
+                    st.session_state.muestras.pop(key, None)
+                    st.session_state.bitacora_draft.pop(key, None)
+                    st.rerun()
+    elif nombre or numero or anio:
+        st.info("Completa un código interno válido y el nombre del proyecto para agregar perforaciones y muestras.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Cancelar", use_container_width=True):
+            if codigo_interno:
+                st.session_state.perforaciones.pop(codigo_interno, None)
+                st.session_state.muestras = {k: v for k, v in st.session_state.muestras.items() if not k.startswith(codigo_interno + "::")}
+                st.session_state.bitacora_draft = {k: v for k, v in st.session_state.bitacora_draft.items() if not k.startswith(codigo_interno + "::")}
             navigate("home")
     with col2:
-        disabled = not codigo_interno or not nombre or codigo_interno in existing_codes
-        if st.button("Crear proyecto →", type="primary", use_container_width=True, disabled=disabled):
+        if st.button("Guardar bitácora", type="primary", use_container_width=True, icon=":material/save:",
+                      disabled=not codigo_valido or not nombre):
             st.session_state.projects.append({
                 "codigo_interno": codigo_interno, "numero": numero, "anio": anio, "nombre": nombre,
                 "localizacion": localizacion, "norma": norma,
                 "fecha_bitacora": str(fecha_bitacora), "fecha_ingreso_muestra": str(fecha_ingreso),
             })
-            st.session_state.perforaciones[codigo_interno] = []
+            st.session_state.perforaciones.setdefault(codigo_interno, [])
+            for perf in perforaciones:
+                key = f"{codigo_interno}::{perf['codigo']}"
+                df_rows = edited_frames.get(key)
+                rows = df_rows.to_dict("records") if df_rows is not None else []
+                nuevas = []
+                for row in rows:
+                    numero_m = str(row.get("Número", "")).strip()
+                    if not numero_m or numero_m.lower() == "none" or numero_m == "nan":
+                        continue
+                    id_unico = f"{codigo_interno}-{perf['codigo']}-M{numero_m}"
+                    nuevas.append({
+                        "numero": numero_m, "id_unico": id_unico,
+                        "profundidad_de": row.get("Prof. De") or 0.0, "profundidad_hasta": row.get("Prof. A") or 0.0,
+                        "tipo_muestra": row.get("Tipo de muestra") or TIPO_MUESTRA_OPTIONS[0],
+                        "ensayos": {e: bool(row.get(e, False)) for e in BITACORA_ENSAYOS},
+                    })
+                st.session_state.muestras[key] = nuevas
             st.session_state.selected_codigo = codigo_interno
-            navigate("bitacora")
+            navigate("project-detail")
 
 
 # ════════════════════════════════════════════════════════════════════
