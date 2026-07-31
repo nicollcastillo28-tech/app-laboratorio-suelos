@@ -1001,7 +1001,7 @@ def render_new_project():
         }
         excel_bytes, truncado = generar_excel_bitacora_orden(project_preview, filas_preview, tipos_usados)
         st.download_button("Descargar bitácora de orden (Excel)", data=excel_bytes, icon=":material/download:",
-                            file_name=f"Bitacora_orden_{codigo_interno}.xlsx",
+                            file_name=f"{codigo_interno} Bitacora de orden.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             use_container_width=True)
         if truncado:
@@ -1146,7 +1146,7 @@ def render_project_detail():
                     })
             excel_bytes, truncado = generar_excel_bitacora_orden(project, filas_proy, tipos_usados)
             st.download_button("Descargar bitácora de orden", data=excel_bytes, icon=":material/download:",
-                                file_name=f"Bitacora_orden_{codigo}.xlsx",
+                                file_name=f"{codigo} Bitacora de orden.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 use_container_width=True)
         if truncado:
@@ -1280,8 +1280,9 @@ def render_perforacion_detail():
     ensayos_completados, ensayos_total = _perforacion_ensayos_progress(codigo, perf_codigo)
     pct = round(ensayos_completados / ensayos_total * 100) if ensayos_total else 0
 
-    st.markdown(f'<div class="cell-muted" style="text-transform:uppercase;letter-spacing:0.04em;font-size:11px;">'
-                f'Proyecto: {html.escape(project["nombre"])} · {html.escape(project["codigo_interno"])}</div>',
+    st.markdown(f'<div class="cell-muted" style="text-transform:uppercase;letter-spacing:0.04em;font-size:11px;margin-bottom:4px;">Proyecto</div>'
+                f'<span class="code-badge">{html.escape(project["codigo_interno"])}</span> '
+                f'<span style="font-weight:600;">{html.escape(project["nombre"])}</span>',
                 unsafe_allow_html=True)
     st.markdown(f"### Muestras de Perforación {html.escape(perf_codigo)}")
 
@@ -1304,7 +1305,7 @@ def render_perforacion_detail():
             } for m in muestras]
             excel_bytes, _truncado = generar_excel_bitacora_orden(project, filas_perf, {perf["tipo"]} if perf else set())
             st.download_button("Exportar perfil", data=excel_bytes, icon=":material/download:",
-                                file_name=f"Bitacora_orden_{perf_codigo}.xlsx",
+                                file_name=f"{codigo} Bitacora de orden {perf_codigo}.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 use_container_width=True)
         with c2:
