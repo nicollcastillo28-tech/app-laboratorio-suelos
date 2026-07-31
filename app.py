@@ -827,8 +827,7 @@ def render_new_project():
     st.markdown('<div class="section-title">Información del proyecto</div>', unsafe_allow_html=True)
     nombre = st.text_input("Nombre del proyecto", placeholder="Estudio de suelos vía Bogotá-Medellín")
     localizacion = st.text_input("Localización", placeholder="Km 14+200")
-    normas_sel = st.multiselect("Norma", NORMA_PROYECTO_OPTIONS, placeholder="Selecciona una o varias normas")
-    norma = ", ".join(normas_sel)
+    norma = st.radio("Norma", NORMA_PROYECTO_OPTIONS, horizontal=True)
 
     c1, c2 = st.columns(2)
     with c1:
