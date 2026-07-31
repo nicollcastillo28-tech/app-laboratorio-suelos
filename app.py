@@ -24,6 +24,7 @@ st.set_page_config(page_title="Geodelta Lab", page_icon="🧪", layout="wide", i
 APP_VERSION = "v5.0.0"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_GRANULOMETRIA = os.path.join(BASE_DIR, "templates", "CLASIFICACION_DE_SUELOS.xlsm")
+TEMPLATE_BITACORA_ORDEN = os.path.join(BASE_DIR, "templates", "GDA-FL-003_bitacora_orden.xlsx")
 
 PASSWORDS = {"jefe": "geodelta2024", "auxiliar": "aux2024"}
 
@@ -253,7 +254,7 @@ st.markdown(f"""
     .assigned-th {{
         background: {SECONDARY_CONTAINER}; color: {PRIMARY}; font-family: 'JetBrains Mono', monospace;
         font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
-        padding: 8px 10px; border-radius: 6px; margin-bottom: 4px;
+        padding: 8px 10px; border-radius: 6px; margin-bottom: 4px; white-space: nowrap;
     }}
     .assigned-chip {{
         background: {BG}; border: 1px solid {BORDER}; color: {PRIMARY}; font-size: 12px; font-weight: 700;
@@ -337,6 +338,20 @@ BITACORA_ENSAYOS = [
 SUPPORTED_ASSAY_MAP = {"Granulometría": "granulometria", "Humedad": "humedad", "Peso unitario": "masa-unitaria"}
 
 BITACORA_BASE_COLS = ["Número", "Prof. De", "Prof. A", "Tipo de muestra"] + BITACORA_ENSAYOS + ["Observaciones"]
+
+# Celdas de la plantilla oficial GDA-FL-003 (hoja "S1"): columna por ensayo, checkbox de
+# norma y checkbox de tipo de perforación. Ensayos sin columna en la plantilla (p. ej.
+# Carga puntual, Desgaste) simplemente no se marcan.
+BITACORA_XLSX_ENSAYO_COL = {
+    "Granulometría": "F", "Pasa 200": "G", "Humedad": "H", "Límites de Atterberg": "I",
+    "Límite de contracción": "J", "Materia orgánica": "K", "Proctor": "L", "CBR": "M",
+    "Compresión inconfinada": "N", "Compresión en roca": "O", "Peso unitario": "P",
+    "Gravedad específica": "Q", "Consolidación": "R", "Corte CD": "S", "Corte CU": "T",
+    "Corte UU": "U", "Otro": "AG",
+}
+BITACORA_XLSX_NORMA_CELL = {"IDU": "AG10", "INVIAS": "AI10", "NTC": "AG12", "Otro": "AI12"}
+BITACORA_XLSX_TIPO_CELL = {"Sondeo": "H14", "Apique": "D14", "Fuente/Cantera": "AH14"}
+BITACORA_XLSX_MAX_ROWS = 14  # la plantilla trae 14 filas fijas (18 a 31)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -947,6 +962,35 @@ def render_new_project():
     elif nombre or numero or anio:
         st.info("Completa un código interno válido y el nombre del proyecto para agregar perforaciones y muestras.")
 
+    if perforaciones:
+        filas_preview, tipos_usados = [], set()
+        for perf in perforaciones:
+            tipos_usados.add(perf["tipo"])
+            df_rows = edited_frames.get(f"{codigo_interno}::{perf['codigo']}")
+            rows = df_rows.to_dict("records") if df_rows is not None else []
+            for row in rows:
+                numero_m = str(row.get("Número", "")).strip()
+                if not numero_m or numero_m.lower() == "none" or numero_m == "nan":
+                    continue
+                filas_preview.append({
+                    "perf_codigo": perf["codigo"], "numero": numero_m,
+                    "tipo_muestra": row.get("Tipo de muestra") or TIPO_MUESTRA_OPTIONS[0],
+                    "profundidad_de": row.get("Prof. De") or 0.0, "profundidad_hasta": row.get("Prof. A") or 0.0,
+                    "ensayos": {e: bool(row.get(e, False)) for e in BITACORA_ENSAYOS},
+                    "observaciones": row.get("Observaciones") or "",
+                })
+        project_preview = {
+            "codigo_interno": codigo_interno, "nombre": nombre, "localizacion": localizacion,
+            "norma": norma, "fecha_bitacora": str(fecha_bitacora),
+        }
+        excel_bytes, truncado = generar_excel_bitacora_orden(project_preview, filas_preview, tipos_usados)
+        st.download_button("Descargar bitácora de orden (Excel)", data=excel_bytes, icon=":material/download:",
+                            file_name=f"Bitacora_orden_{codigo_interno}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True)
+        if truncado:
+            st.caption(f"El formato oficial admite hasta {BITACORA_XLSX_MAX_ROWS} muestras; se incluyeron las primeras {BITACORA_XLSX_MAX_ROWS}.")
+
     st.markdown("<br>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
@@ -1012,8 +1056,7 @@ def render_project_detail():
             <span class="bento-eyebrow">Proyecto ID</span>
             <h2 style="color:#fff;margin:4px 0 2px 0;">{html.escape(project["codigo_interno"])}</h2>
             <p style="opacity:0.85;font-size:15px;margin:0 0 12px 0;">{html.escape(project["nombre"])}</p>
-            <span class="badge" style="background:rgba(255,255,255,0.15);color:#fff;">{html.escape(project.get("norma") or "—")}</span>
-            <span class="badge" style="background:rgba(255,255,255,0.15);color:#fff;margin-left:6px;">{sondeos_txt}</span>
+            <span class="badge" style="background:rgba(255,255,255,0.15);color:#fff;">{sondeos_txt}</span>
         </div>
     ''', unsafe_allow_html=True)
 
@@ -1052,8 +1095,27 @@ def render_project_detail():
                 ''', unsafe_allow_html=True)
 
     if st.session_state.role == "jefe":
-        if st.button("Generar bitácora de orden", type="primary", icon=":material/assignment:"):
-            navigate("bitacora")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("Generar bitácora de orden", type="primary", icon=":material/assignment:", use_container_width=True):
+                navigate("bitacora")
+        with c2:
+            filas_proy, tipos_usados = [], set()
+            for perf in perforaciones:
+                tipos_usados.add(perf["tipo"])
+                for m in st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", []):
+                    filas_proy.append({
+                        "perf_codigo": perf["codigo"], "numero": m["numero"], "tipo_muestra": m["tipo_muestra"],
+                        "profundidad_de": m["profundidad_de"], "profundidad_hasta": m["profundidad_hasta"],
+                        "ensayos": m["ensayos"], "observaciones": m.get("observaciones", ""),
+                    })
+            excel_bytes, truncado = generar_excel_bitacora_orden(project, filas_proy, tipos_usados)
+            st.download_button("Descargar bitácora de orden", data=excel_bytes, icon=":material/download:",
+                                file_name=f"Bitacora_orden_{codigo}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                use_container_width=True)
+        if truncado:
+            st.caption(f"El formato oficial admite hasta {BITACORA_XLSX_MAX_ROWS} muestras; se incluyeron las primeras {BITACORA_XLSX_MAX_ROWS}.")
 
     st.markdown(f'<div class="section-title">Perforaciones realizadas ({len(perforaciones)} elemento(s) identificado(s))</div>',
                 unsafe_allow_html=True)
@@ -1098,6 +1160,21 @@ def render_project_detail():
 # ════════════════════════════════════════════════════════════════════
 # DETALLE DE PERFORACIÓN → LISTA DE MUESTRAS
 # ════════════════════════════════════════════════════════════════════
+def _perforacion_ensayos_progress(codigo, perf_codigo):
+    muestras = st.session_state.muestras.get(f"{codigo}::{perf_codigo}", [])
+    total_ensayos, completados = 0, 0
+    for m in muestras:
+        for label, activo in m["ensayos"].items():
+            if not activo:
+                continue
+            total_ensayos += 1
+            tipo_interno = SUPPORTED_ASSAY_MAP.get(label)
+            a = get_assay(m["id_unico"], tipo_interno) if tipo_interno else None
+            if a and a["status"] == "finalizado":
+                completados += 1
+    return completados, total_ensayos
+
+
 def render_perforacion_detail():
     codigo = st.session_state.selected_codigo
     perf_codigo = st.session_state.selected_perforacion
@@ -1111,23 +1188,40 @@ def render_perforacion_detail():
 
     perf = next((p for p in st.session_state.perforaciones.get(codigo, []) if p["codigo"] == perf_codigo), None)
     muestras = st.session_state.muestras.get(f"{codigo}::{perf_codigo}", [])
-    counts = {"sin-iniciar": 0, "en-proceso": 0, "finalizado": 0}
-    for m in muestras:
-        counts[compute_muestra_estado(m)] += 1
-    total = len(muestras)
-    pct = round(counts["finalizado"] / total * 100) if total else 0
+    ensayos_completados, ensayos_total = _perforacion_ensayos_progress(codigo, perf_codigo)
+    pct = round(ensayos_completados / ensayos_total * 100) if ensayos_total else 0
+
+    st.markdown(f'<div class="cell-muted" style="text-transform:uppercase;letter-spacing:0.04em;font-size:11px;">'
+                f'Proyecto: {html.escape(project["nombre"])} · {html.escape(project["codigo_interno"])}</div>',
+                unsafe_allow_html=True)
+    st.markdown(f"### Muestras de Perforación {html.escape(perf_codigo)}")
 
     with st.container(border=True):
         top = st.columns([3, 1])
         with top[0]:
-            st.markdown(f"### {perf_codigo}")
-            st.caption(f"{project['codigo_interno']} · {project['nombre']}")
-        with top[1]:
-            st.markdown(f'<div style="text-align:right;"><span class="assigned-chip">{html.escape(perf["tipo"] if perf else "—")}</span></div>',
+            st.markdown(f"#### Sondeo {html.escape(perf_codigo)}")
+            st.markdown(f'<span class="assigned-chip">{html.escape(perf["tipo"] if perf else "—")}</span>',
                         unsafe_allow_html=True)
-        if st.session_state.role == "jefe":
-            if st.button("Agregar muestra", icon=":material/add:", use_container_width=True):
-                navigate("bitacora")
+            st.markdown(f'<div class="cell-muted" style="margin-top:10px;">'
+                        f'{icon("location_on", size=13)} {html.escape(project.get("localizacion") or "—")}'
+                        f'&nbsp;&nbsp;&nbsp;{icon("calendar_month", size=13)} {html.escape(project.get("fecha_bitacora") or "—")}</div>',
+                        unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        with c1:
+            filas_perf = [{
+                "perf_codigo": perf_codigo, "numero": m["numero"], "tipo_muestra": m["tipo_muestra"],
+                "profundidad_de": m["profundidad_de"], "profundidad_hasta": m["profundidad_hasta"],
+                "ensayos": m["ensayos"], "observaciones": m.get("observaciones", ""),
+            } for m in muestras]
+            excel_bytes, _truncado = generar_excel_bitacora_orden(project, filas_perf, {perf["tipo"]} if perf else set())
+            st.download_button("Exportar perfil", data=excel_bytes, icon=":material/download:",
+                                file_name=f"Bitacora_orden_{perf_codigo}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                use_container_width=True)
+        with c2:
+            if st.session_state.role == "jefe":
+                if st.button("Nueva muestra", icon=":material/add:", type="primary", use_container_width=True):
+                    navigate("bitacora")
 
     with st.container(border=True):
         st.markdown('<div class="section-title">Avance del sondeo</div>', unsafe_allow_html=True)
@@ -1135,32 +1229,41 @@ def render_perforacion_detail():
         with c1:
             st.markdown(f'<div style="font-size:32px;font-weight:800;color:{PRIMARY};">{pct}%</div>', unsafe_allow_html=True)
         with c2:
-            st.markdown(f'<div class="cell-muted" style="margin-top:16px;">{counts["finalizado"]} de {total} muestras completadas</div>',
+            st.markdown(f'<div class="cell-muted" style="margin-top:16px;">'
+                        f'{icon("check_circle", size=14)} {ensayos_completados} de {ensayos_total} ensayos completados</div>',
                         unsafe_allow_html=True)
         st.progress(pct / 100)
 
-    st.markdown('<div class="section-title">Orden de laboratorio</div>', unsafe_allow_html=True)
+    st.markdown(f'''
+        <div style="background:{PRIMARY};color:#fff;border-radius:10px;padding:10px 16px;
+                    display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;margin-bottom:10px;">
+            {icon("science", size=16)} Orden de Laboratorio
+        </div>
+    ''', unsafe_allow_html=True)
     if not muestras:
         st.info("Esta perforación todavía no tiene muestras. Usa la Bitácora para agregarlas.")
     else:
-        col_ratios = [1, 1.3, 1.6, 2.6, 1.3, 0.9]
-        headers = st.columns(col_ratios)
-        for col, label in zip(headers, ["Muestra ID", "Tipo", "Profundidad", "Ensayos asignados", "Estado", "Acción"]):
-            col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
-        for m in muestras:
-            cols = st.columns(col_ratios, vertical_alignment="center")
-            cols[0].markdown(f'<span class="cell-id">M-{html.escape(str(m["numero"]))}</span>', unsafe_allow_html=True)
-            cols[1].markdown(f'<span class="cell-muted">{html.escape(m["tipo_muestra"])}</span>', unsafe_allow_html=True)
-            cols[2].markdown(f'<span class="cell-muted">{m["profundidad_de"]}–{m["profundidad_hasta"]} m</span>', unsafe_allow_html=True)
-            ensayos_sol = [e for e, v in m["ensayos"].items() if v]
-            chips = "".join(f'<span class="assigned-chip" style="margin-right:4px;">{html.escape(e)}</span>' for e in ensayos_sol) \
-                or '<span class="cell-muted">—</span>'
-            cols[3].markdown(chips, unsafe_allow_html=True)
-            cols[4].markdown(status_badge_html(compute_muestra_estado(m)), unsafe_allow_html=True)
-            with cols[5]:
-                if st.button("Abrir", key=f"open_muestra_{m['id_unico']}", use_container_width=True):
-                    st.session_state.selected_muestra_id = m["id_unico"]
-                    navigate("muestra-detail")
+        with st.container(border=True):
+            col_ratios = [0.9, 1.1, 1.4, 2.5, 1.2, 1.1]
+            headers = st.columns(col_ratios)
+            for col, label in zip(headers, ["Muestra ID", "Tipo", "Profundidad", "Ensayos asignados", "Estado", "Acción"]):
+                col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
+            for i, m in enumerate(muestras):
+                if i:
+                    st.markdown('<hr style="margin:8px 0;border-color:#C4C6CF;">', unsafe_allow_html=True)
+                cols = st.columns(col_ratios, vertical_alignment="center")
+                cols[0].markdown(f'<span class="cell-id">M-{html.escape(str(m["numero"]))}</span>', unsafe_allow_html=True)
+                cols[1].markdown(f'<span class="cell-muted">{html.escape(m["tipo_muestra"])}</span>', unsafe_allow_html=True)
+                cols[2].markdown(f'<span class="cell-muted">{m["profundidad_de"]}–{m["profundidad_hasta"]} m</span>', unsafe_allow_html=True)
+                ensayos_sol = [e for e, v in m["ensayos"].items() if v]
+                chips = "".join(f'<span class="assigned-chip" style="margin-right:4px;">{html.escape(e)}</span>' for e in ensayos_sol) \
+                    or '<span class="cell-muted">—</span>'
+                cols[3].markdown(chips, unsafe_allow_html=True)
+                cols[4].markdown(status_badge_html(compute_muestra_estado(m)), unsafe_allow_html=True)
+                with cols[5]:
+                    if st.button("Abrir", key=f"open_muestra_{m['id_unico']}", use_container_width=True):
+                        st.session_state.selected_muestra_id = m["id_unico"]
+                        navigate("muestra-detail")
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -1420,6 +1523,48 @@ def render_muestra_detail():
                     st.markdown(f'<div class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(existing["lastModified"])}</div>', unsafe_allow_html=True)
             else:
                 cols[1].markdown('<span class="badge badge-muted">Sin formulario aún</span>', unsafe_allow_html=True)
+
+
+# ════════════════════════════════════════════════════════════════════
+# GENERAR EXCEL DE BITÁCORA DE ORDEN (plantilla oficial GDA-FL-003)
+# ════════════════════════════════════════════════════════════════════
+def generar_excel_bitacora_orden(project, filas, tipos_usados):
+    """filas: lista de dicts con perf_codigo, numero, tipo_muestra, profundidad_de,
+    profundidad_hasta, ensayos (dict) y observaciones. Devuelve (bytes, truncado)."""
+    wb = load_workbook(TEMPLATE_BITACORA_ORDEN)
+    ws = wb["S1"]
+
+    ws["AC8"] = project.get("codigo_interno") or ""
+    ws["F8"] = str(project.get("fecha_bitacora") or "")
+    ws["F10"] = project.get("nombre") or ""
+    ws["E12"] = project.get("localizacion") or ""
+
+    norma_cell = BITACORA_XLSX_NORMA_CELL.get(project.get("norma"))
+    if norma_cell:
+        ws[norma_cell] = "X"
+    for tipo in tipos_usados:
+        tipo_cell = BITACORA_XLSX_TIPO_CELL.get(tipo)
+        if tipo_cell:
+            ws[tipo_cell] = "X"
+
+    truncado = len(filas) > BITACORA_XLSX_MAX_ROWS
+    for i, fila in enumerate(filas[:BITACORA_XLSX_MAX_ROWS]):
+        r = 18 + i
+        ws[f"A{r}"] = fila["perf_codigo"]
+        ws[f"B{r}"] = fila["numero"]
+        ws[f"C{r}"] = fila["tipo_muestra"]
+        ws[f"D{r}"] = to_float(fila.get("profundidad_de"))
+        ws[f"E{r}"] = to_float(fila.get("profundidad_hasta"))
+        for label, activo in fila.get("ensayos", {}).items():
+            col = BITACORA_XLSX_ENSAYO_COL.get(label)
+            if activo and col:
+                ws[f"{col}{r}"] = "X"
+        ws[f"AH{r}"] = fila.get("observaciones") or ""
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return bio.getvalue(), truncado
 
 
 # ════════════════════════════════════════════════════════════════════
