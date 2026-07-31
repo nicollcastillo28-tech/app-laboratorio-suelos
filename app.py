@@ -106,9 +106,12 @@ st.markdown(f"""
     }}
 
     /* Contenedores con borde nativos de Streamlit = nuestras "tarjetas" (sin bugs de HTML suelto) */
-    [data-testid="stVerticalBlockBorderWrapper"] {{
+    /* OJO: en esta versión de Streamlit ya no existe stVerticalBlockBorderWrapper como wrapper
+    aparte — st.container(border=True) marca el propio stVerticalBlock con
+    data-test-scroll-behavior="normal" (no lo tienen los stVerticalBlock sin borde). */
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] {{
         border-radius: 12px !important; border: 1px solid {BORDER} !important;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04) !important; background: {SURFACE};
+        box-shadow: 0 1px 4px rgba(11,28,48,0.08) !important; background: {SURFACE} !important;
     }}
 
     .section-title {{
@@ -271,8 +274,8 @@ st.markdown(f"""
 
     .perf-code-box {{
         display: inline-flex; align-items: center; justify-content: center;
-        width: 40px; height: 40px; border-radius: 8px; background: {PRIMARY_CONTAINER};
-        color: #fff; font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 14px;
+        width: 30px; height: 30px; border-radius: 7px; background: {PRIMARY_CONTAINER};
+        color: #fff; font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 12px;
     }}
 
     /* Botón flotante "+" para crear proyecto desde Proyectos en ejecución */
@@ -1001,6 +1004,8 @@ def render_project_detail():
     progreso = project_progress(codigo)
     total = sum(progreso.values())
     pct_general = round(progreso["finalizado"] / total * 100) if total else 0
+    perforaciones = st.session_state.perforaciones.get(codigo, [])
+    sondeos_txt = f'{len(perforaciones)} sondeo(s) registrado(s)'
 
     st.markdown(f'''
         <div class="bento-primary" style="margin-bottom:16px;">
@@ -1008,6 +1013,7 @@ def render_project_detail():
             <h2 style="color:#fff;margin:4px 0 2px 0;">{html.escape(project["codigo_interno"])}</h2>
             <p style="opacity:0.85;font-size:15px;margin:0 0 12px 0;">{html.escape(project["nombre"])}</p>
             <span class="badge" style="background:rgba(255,255,255,0.15);color:#fff;">{html.escape(project.get("norma") or "—")}</span>
+            <span class="badge" style="background:rgba(255,255,255,0.15);color:#fff;margin-left:6px;">{sondeos_txt}</span>
         </div>
     ''', unsafe_allow_html=True)
 
@@ -1028,9 +1034,9 @@ def render_project_detail():
         st.markdown('<div class="section-title">Progreso general (así avanzan los auxiliares)</div>', unsafe_allow_html=True)
         c1, c2 = st.columns([1, 3])
         with c1:
-            st.markdown(f'<div style="font-size:32px;font-weight:800;color:{PRIMARY};">{pct_general}%</div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="font-size:24px;font-weight:800;color:{PRIMARY};">{pct_general}%</div>', unsafe_allow_html=True)
         with c2:
-            st.markdown(f'<div class="cell-muted" style="margin-top:16px;">{progreso["finalizado"]} de {total} muestras completadas</div>',
+            st.markdown(f'<div class="cell-muted" style="margin-top:8px;">{progreso["finalizado"]} de {total} muestras completadas</div>',
                         unsafe_allow_html=True)
         st.progress(pct_general / 100)
         cols = st.columns(3)
@@ -1038,10 +1044,10 @@ def render_project_detail():
                                            ["Sin iniciar", "En proceso", "Finalizado"]):
             with col:
                 st.markdown(f'''
-                    <div style="background:{BG};border:1px solid {BORDER};border-radius:8px;
-                                padding:8px 6px;text-align:center;">
-                        <div class="cell-muted" style="font-size:10px;text-transform:uppercase;letter-spacing:0.03em;">{label}</div>
-                        <div style="font-size:18px;font-weight:800;color:{TEXT};">{progreso[status_key]}</div>
+                    <div style="background:{SECONDARY_CONTAINER};border-radius:8px;
+                                padding:6px 6px;text-align:center;margin-top:10px;margin-bottom:10px;">
+                        <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.03em;color:{PRIMARY};">{label}</div>
+                        <div style="font-size:15px;font-weight:800;color:{PRIMARY};">{progreso[status_key]}</div>
                     </div>
                 ''', unsafe_allow_html=True)
 
@@ -1049,7 +1055,6 @@ def render_project_detail():
         if st.button("Generar bitácora de orden", type="primary", icon=":material/assignment:"):
             navigate("bitacora")
 
-    perforaciones = st.session_state.perforaciones.get(codigo, [])
     st.markdown(f'<div class="section-title">Perforaciones realizadas ({len(perforaciones)} elemento(s) identificado(s))</div>',
                 unsafe_allow_html=True)
     if not perforaciones:
@@ -1082,7 +1087,7 @@ def render_project_detail():
             with top[2]:
                 st.markdown(f'<div style="text-align:right;"><span class="assigned-chip">{html.escape(perf["tipo"])}</span></div>',
                             unsafe_allow_html=True)
-            st.markdown(f'<div class="cell-muted">{icon("straighten", size=13)} Profundidad {prof_txt} · {len(muestras)} muestra(s)</div>',
+            st.markdown(f'<div class="cell-muted"><strong>Profundidad</strong> {prof_txt} · {len(muestras)} muestra(s)</div>',
                         unsafe_allow_html=True)
             st.progress(perf_pct / 100)
             if st.button("Ver muestras →", key=f"open_perf_{perf['codigo']}", use_container_width=True):
