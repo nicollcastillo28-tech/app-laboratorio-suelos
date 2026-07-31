@@ -282,7 +282,7 @@ STATUS_ICON = {"sin-iniciar": "radio_button_unchecked", "en-proceso": "autorenew
 
 TIPO_PERFORACION_PREFIX = {"Sondeo": "S", "Apique": "AP", "Fuente/Cantera": "F"}
 TIPO_MUESTRA_OPTIONS = ["Shelby", "NQ", "SS", "N/A"]
-NORMA_PROYECTO_OPTIONS = ["NTC", "IDU", "RAS", "GDA", "Otro"]
+NORMA_PROYECTO_OPTIONS = ["IDU", "NTC", "INVIAS", "Otro"]
 
 # Lista de equipos del laboratorio. Por ahora sin código — agrega o edita los que tengas aquí.
 EQUIPO_LIST = [
@@ -819,12 +819,16 @@ def render_new_project():
     existing_codes = [p["codigo_interno"] for p in st.session_state.projects]
     codigo_valido = bool(codigo_interno) and codigo_interno not in existing_codes
     if codigo_interno:
-        st.error(f"El código **{codigo_interno}** ya existe.") if not codigo_valido else st.success(f"Código interno: **{codigo_interno}**")
+        if not codigo_valido:
+            st.error(f"El código **{codigo_interno}** ya existe.")
+        else:
+            st.success(f"Código interno: **{codigo_interno}**")
 
     st.markdown('<div class="section-title">Información del proyecto</div>', unsafe_allow_html=True)
     nombre = st.text_input("Nombre del proyecto", placeholder="Estudio de suelos vía Bogotá-Medellín")
     localizacion = st.text_input("Localización", placeholder="Km 14+200")
-    norma = st.selectbox("Norma", NORMA_PROYECTO_OPTIONS)
+    normas_sel = st.multiselect("Norma", NORMA_PROYECTO_OPTIONS, placeholder="Selecciona una o varias normas")
+    norma = ", ".join(normas_sel)
 
     c1, c2 = st.columns(2)
     with c1:
@@ -940,33 +944,53 @@ def render_project_detail():
         return
 
     st.button("← Atrás", on_click=lambda: navigate("home"))
-    st.markdown(f"## {project['codigo_interno']}")
-    st.caption(project["nombre"])
-
-    with st.container(border=True):
-        cols = st.columns(4)
-        cols[0].metric("Localización", project.get("localizacion") or "—")
-        cols[1].metric("Norma", project.get("norma") or "—")
-        cols[2].metric("Fecha bitácora", project.get("fecha_bitacora") or "—")
-        cols[3].metric("Fecha ingreso muestra", project.get("fecha_ingreso_muestra") or "—")
 
     progreso = project_progress(codigo)
     total = sum(progreso.values())
+    pct_general = round(progreso["finalizado"] / total * 100) if total else 0
+
+    st.markdown(f'''
+        <div class="bento-primary" style="margin-bottom:16px;">
+            <span class="bento-eyebrow">Proyecto ID</span>
+            <h2 style="color:#fff;margin:4px 0 2px 0;">{html.escape(project["codigo_interno"])}</h2>
+            <p style="opacity:0.85;font-size:15px;margin:0 0 12px 0;">{html.escape(project["nombre"])}</p>
+            <span class="badge" style="background:rgba(255,255,255,0.15);color:#fff;">{html.escape(project.get("norma") or "—")}</span>
+        </div>
+    ''', unsafe_allow_html=True)
+
+    with st.container(border=True):
+        cols = st.columns(3)
+        with cols[0]:
+            st.markdown(f'<div class="cell-muted">{icon("location_on", size=14)} Ubicación</div>'
+                        f'<div style="font-weight:600;">{html.escape(project.get("localizacion") or "—")}</div>', unsafe_allow_html=True)
+        with cols[1]:
+            st.markdown(f'<div class="cell-muted">{icon("calendar_month", size=14)} Fecha de orden</div>'
+                        f'<div style="font-weight:600;">{html.escape(project.get("fecha_bitacora") or "—")}</div>', unsafe_allow_html=True)
+        with cols[2]:
+            st.markdown(f'<div class="cell-muted">{icon("move_to_inbox", size=14)} Ingreso de muestras</div>'
+                        f'<div style="font-weight:600;">{html.escape(project.get("fecha_ingreso_muestra") or "—")}</div>', unsafe_allow_html=True)
+
     with st.container(border=True):
         st.markdown('<div class="section-title">Progreso general (así avanzan los auxiliares)</div>', unsafe_allow_html=True)
+        c1, c2 = st.columns([1, 3])
+        with c1:
+            st.markdown(f'<div style="font-size:32px;font-weight:800;color:{PRIMARY};">{pct_general}%</div>', unsafe_allow_html=True)
+        with c2:
+            st.markdown(f'<div class="cell-muted" style="margin-top:16px;">{progreso["finalizado"]} de {total} muestras completadas</div>',
+                        unsafe_allow_html=True)
+        st.progress(pct_general / 100)
         cols = st.columns(3)
         cols[0].metric("Sin iniciar", progreso["sin-iniciar"])
         cols[1].metric("En proceso", progreso["en-proceso"])
         cols[2].metric("Finalizado", progreso["finalizado"])
-        if total:
-            st.progress(progreso["finalizado"] / total)
 
     if st.session_state.role == "jefe":
         if st.button("Generar bitácora de orden", type="primary", icon=":material/assignment:"):
             navigate("bitacora")
 
-    st.markdown("### Perforaciones")
     perforaciones = st.session_state.perforaciones.get(codigo, [])
+    st.markdown(f'<div class="section-title">Perforaciones realizadas ({len(perforaciones)} elemento(s) identificado(s))</div>',
+                unsafe_allow_html=True)
     if not perforaciones:
         st.info("Este proyecto todavía no tiene perforaciones. Usa la Bitácora para agregarlas.")
     for perf in perforaciones:
@@ -974,20 +998,35 @@ def render_project_detail():
         counts = {"sin-iniciar": 0, "en-proceso": 0, "finalizado": 0}
         for m in muestras:
             counts[compute_muestra_estado(m)] += 1
+        perf_total = len(muestras)
+        perf_pct = round(counts["finalizado"] / perf_total * 100) if perf_total else 0
+        if perf_total == 0:
+            estado_badge, estado_label = "badge-muted", "Pendiente"
+        elif counts["finalizado"] == perf_total:
+            estado_badge, estado_label = "badge-success", "Completado"
+        else:
+            estado_badge, estado_label = "badge-warning", "En progreso"
+        if muestras:
+            prof_txt = f'{min(m["profundidad_de"] for m in muestras):.2f}m – {max(m["profundidad_hasta"] for m in muestras):.2f}m'
+        else:
+            prof_txt = "—"
+
         with st.container(border=True):
-            cols = st.columns([3, 3, 1])
-            with cols[0]:
-                st.markdown(f"**{perf['codigo']}** — {perf['tipo']}")
-                st.caption(f"{len(muestras)} muestra(s)")
-            with cols[1]:
-                st.markdown(f'<span class="cell-muted">{icon(STATUS_ICON["sin-iniciar"], size=14)} {counts["sin-iniciar"]}'
-                            f'&nbsp;&nbsp;·&nbsp;&nbsp;{icon(STATUS_ICON["en-proceso"], size=14)} {counts["en-proceso"]}'
-                            f'&nbsp;&nbsp;·&nbsp;&nbsp;{icon(STATUS_ICON["finalizado"], size=14)} {counts["finalizado"]}</span>',
+            top = st.columns([1, 3, 1.3])
+            with top[0]:
+                st.markdown(f'<span class="cell-id">{html.escape(perf["codigo"])}</span>', unsafe_allow_html=True)
+            with top[1]:
+                st.markdown(f'<span style="font-weight:700;">{perf_pct}%</span>&nbsp;&nbsp;'
+                            f'<span class="badge {estado_badge}">{estado_label}</span>', unsafe_allow_html=True)
+            with top[2]:
+                st.markdown(f'<div style="text-align:right;"><span class="assigned-chip">{html.escape(perf["tipo"])}</span></div>',
                             unsafe_allow_html=True)
-            with cols[2]:
-                if st.button("Abrir", key=f"open_perf_{perf['codigo']}", use_container_width=True):
-                    st.session_state.selected_perforacion = perf["codigo"]
-                    navigate("perforacion-detail")
+            st.markdown(f'<div class="cell-muted">{icon("straighten", size=13)} Profundidad {prof_txt} · {len(muestras)} muestra(s)</div>',
+                        unsafe_allow_html=True)
+            st.progress(perf_pct / 100)
+            if st.button("Ver muestras →", key=f"open_perf_{perf['codigo']}", use_container_width=True):
+                st.session_state.selected_perforacion = perf["codigo"]
+                navigate("perforacion-detail")
 
 
 # ════════════════════════════════════════════════════════════════════
