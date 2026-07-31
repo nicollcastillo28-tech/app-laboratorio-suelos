@@ -241,7 +241,7 @@ st.markdown(f"""
     }}
     .activity-table tbody tr:last-child td {{ border-bottom: none; }}
     .activity-table tbody tr:hover {{ background: {BG}; }}
-    .activity-table .cell-id {{ font-family: 'JetBrains Mono', monospace; color: {PRIMARY}; font-weight: 600; }}
+    .activity-table .cell-id {{ font-family: 'JetBrains Mono', monospace; color: {PRIMARY}; font-weight: 800; font-size: 15px; }}
     .activity-table .cell-title {{ font-weight: 600; color: {TEXT}; }}
     .activity-table .cell-sub {{ font-size: 12px; color: {NEUTRAL}; margin-top: 1px; }}
     .activity-table .cell-muted {{ color: {NEUTRAL}; font-size: 13px; }}
@@ -264,8 +264,8 @@ st.markdown(f"""
     /* ---- TARJETAS DE PROYECTO (Proyectos en ejecución) ---- */
     .code-badge {{
         display: inline-block; background: {SECONDARY_CONTAINER}; color: {PRIMARY};
-        font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 13px;
-        padding: 3px 12px; border-radius: 6px;
+        font-family: 'JetBrains Mono', monospace; font-weight: 800; font-size: 16px;
+        letter-spacing: 0.02em; padding: 4px 14px; border-radius: 6px;
     }}
     [class*="st-key-projcard_"] {{
         border-left: 4px solid {PRIMARY} !important;
@@ -567,7 +567,8 @@ NAV_ITEMS = [
 ACTIVE_MAP = {
     "home": "home",
     "projects-active": "projects-active", "projects-done": "projects-active", "new-project": "projects-active",
-    "project-detail": "projects-active", "perforacion-detail": "projects-active", "muestra-detail": "projects-active",
+    "project-detail": "projects-active", "edit-project": "projects-active",
+    "perforacion-detail": "projects-active", "muestra-detail": "projects-active",
     "bitacora": "projects-active", "continue": "projects-active", "assay-form": "projects-active",
     "search": "search",
 }
@@ -995,8 +996,8 @@ def render_new_project():
                     "observaciones": row.get("Observaciones") or "",
                 })
         project_preview = {
-            "codigo_interno": codigo_interno, "nombre": nombre, "localizacion": localizacion,
-            "norma": norma, "fecha_bitacora": str(fecha_bitacora),
+            "codigo_interno": codigo_interno, "numero": numero, "anio": anio, "nombre": nombre,
+            "localizacion": localizacion, "norma": norma, "fecha_bitacora": str(fecha_bitacora),
         }
         excel_bytes, truncado = generar_excel_bitacora_orden(project_preview, filas_preview, tipos_usados)
         st.download_button("Descargar bitácora de orden (Excel)", data=excel_bytes, icon=":material/download:",
@@ -1093,6 +1094,20 @@ def render_project_detail():
                         f'{icon(icono, size=14)} {label}</div>'
                         f'<div style="font-weight:600;font-size:15px;">{html.escape(valor or "—")}</div>', unsafe_allow_html=True)
 
+    if st.session_state.role == "jefe":
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("Editar proyecto", icon=":material/edit:", use_container_width=True):
+                navigate("edit-project")
+        with c2:
+            if confirm_delete(f"project_{codigo}", f"el proyecto {codigo} y todas sus perforaciones y muestras"):
+                st.session_state.projects = [p for p in st.session_state.projects if p["codigo_interno"] != codigo]
+                st.session_state.perforaciones.pop(codigo, None)
+                st.session_state.muestras = {k: v for k, v in st.session_state.muestras.items() if not k.startswith(codigo + "::")}
+                st.session_state.bitacora_draft = {k: v for k, v in st.session_state.bitacora_draft.items() if not k.startswith(codigo + "::")}
+                st.session_state.assays = [a for a in st.session_state.assays if a["codigo_interno"] != codigo]
+                navigate("home")
+
     with st.container(border=True):
         st.markdown('<div class="section-title">Progreso general (así avanzan los auxiliares)</div>', unsafe_allow_html=True)
         c1, c2 = st.columns([1, 3])
@@ -1175,6 +1190,60 @@ def render_project_detail():
             if st.button("Ver muestras →", key=f"open_perf_{perf['codigo']}", use_container_width=True):
                 st.session_state.selected_perforacion = perf["codigo"]
                 navigate("perforacion-detail")
+
+
+# ════════════════════════════════════════════════════════════════════
+# EDITAR PROYECTO (el código interno no se puede editar: es la llave
+# que usan perforaciones, muestras y ensayos en session_state)
+# ════════════════════════════════════════════════════════════════════
+def render_edit_project():
+    require_role("jefe")
+    codigo = st.session_state.selected_codigo
+    project = get_project(codigo)
+    if not project:
+        navigate("home")
+        return
+
+    if st.button("← Atrás"):
+        go_back(fallback="project-detail")
+    st.markdown("## Editar proyecto")
+    st.markdown(f'<span class="code-badge">{html.escape(codigo)}</span>', unsafe_allow_html=True)
+    st.caption("El código interno no se puede modificar.")
+
+    nombre = st.text_input("Nombre del proyecto", value=project.get("nombre", ""))
+    localizacion = st.text_input("Localización", value=project.get("localizacion", ""))
+    norma_actual = project.get("norma")
+    idx = NORMA_PROYECTO_OPTIONS.index(norma_actual) if norma_actual in NORMA_PROYECTO_OPTIONS else 0
+    norma = st.radio("Norma", NORMA_PROYECTO_OPTIONS, index=idx, horizontal=True)
+
+    def _parse_fecha(valor):
+        try:
+            return date.fromisoformat(valor)
+        except (TypeError, ValueError):
+            return date.today()
+
+    c1, c2 = st.columns(2)
+    with c1:
+        fecha_bitacora = st.date_input("Fecha de bitácora", value=_parse_fecha(project.get("fecha_bitacora")))
+    with c2:
+        fecha_ingreso = st.date_input("Fecha de ingreso de muestra", value=_parse_fecha(project.get("fecha_ingreso_muestra")))
+    laboratorista_asignado = st.text_input(
+        "Asignar bitácora a laboratorista (opcional)", value=project.get("laboratorista_asignado", ""))
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Cancelar", use_container_width=True):
+            go_back(fallback="project-detail")
+    with c2:
+        if st.button("Guardar cambios", type="primary", use_container_width=True, icon=":material/save:", disabled=not nombre):
+            project["nombre"] = nombre
+            project["localizacion"] = localizacion
+            project["norma"] = norma
+            project["fecha_bitacora"] = str(fecha_bitacora)
+            project["fecha_ingreso_muestra"] = str(fecha_ingreso)
+            project["laboratorista_asignado"] = laboratorista_asignado
+            navigate("project-detail")
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -1558,7 +1627,12 @@ def generar_excel_bitacora_orden(project, filas, tipos_usados):
     wb = load_workbook(TEMPLATE_BITACORA_ORDEN)
     ws = wb["S1"]
 
-    ws["AC8"] = project.get("codigo_interno") or ""
+    # La plantilla ya trae "GDA" impreso en su propio recuadro (AC8); solo se llena el
+    # recuadro siguiente (AG8) con número-año, tal como se digita en Código interno.
+    numero_proy = str(project.get("numero") or "").strip()
+    anio_proy = str(project.get("anio") or "").strip()
+    if numero_proy or anio_proy:
+        ws["AG8"] = f"{numero_proy}-{anio_proy}"
     fecha_partes = str(project.get("fecha_bitacora") or "").split("-")  # "AAAA-MM-DD"
     if len(fecha_partes) == 3:
         anio, mes, dia = fecha_partes
@@ -1916,6 +1990,7 @@ else:
     render_topbar()
     SCREENS = {
         "home": render_home, "new-project": render_new_project, "project-detail": render_project_detail,
+        "edit-project": render_edit_project,
         "perforacion-detail": render_perforacion_detail, "muestra-detail": render_muestra_detail,
         "bitacora": render_bitacora, "assay-form": render_assay_form,
         "continue": render_continue, "search": render_search,
