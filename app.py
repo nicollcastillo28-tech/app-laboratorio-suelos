@@ -1063,6 +1063,7 @@ def render_project_detail():
     with st.container(border=True):
         info_rows = [
             ("location_on", "Ubicación", project.get("localizacion")),
+            ("rule", "Norma", project.get("norma")),
             ("calendar_month", "Fecha de orden", project.get("fecha_bitacora")),
             ("move_to_inbox", "Ingreso de muestras", project.get("fecha_ingreso_muestra")),
             ("person", "Asignado a", project.get("laboratorista_asignado")),
@@ -1535,7 +1536,12 @@ def generar_excel_bitacora_orden(project, filas, tipos_usados):
     ws = wb["S1"]
 
     ws["AC8"] = project.get("codigo_interno") or ""
-    ws["F8"] = str(project.get("fecha_bitacora") or "")
+    fecha_partes = str(project.get("fecha_bitacora") or "").split("-")  # "AAAA-MM-DD"
+    if len(fecha_partes) == 3:
+        anio, mes, dia = fecha_partes
+        ws["E8"] = dia
+        ws["F8"] = mes
+        ws["H8"] = anio
     ws["F10"] = project.get("nombre") or ""
     ws["E12"] = project.get("localizacion") or ""
 
