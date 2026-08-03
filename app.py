@@ -321,7 +321,7 @@ SIEVES = [
 
 ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario"}
 NORMAS_ENSAYO = {
-    "granulometria": ["INV E-213", "INV E-214", "ASTM D422", "ASTM D7928"],
+    "granulometria": ["INV-214-13", "INV.E-213-13", "INV.E 123-13"],
     "humedad": ["INV E-122", "ASTM D2216"],
     "masa-unitaria": ["INV E-202", "ASTM D1188"],
 }
@@ -1722,14 +1722,18 @@ def generar_excel_granulometria(codigo, perf_codigo, muestra, project, data):
     wb = load_workbook(TEMPLATE_GRANULOMETRIA, keep_vba=True)
     ws = wb["MUESTRA"]
 
-    ws["D7"] = project["nombre"] if project else codigo
-    ws["D9"] = project.get("localizacion", "") if project else ""
-    ws["K7"] = project.get("fecha_ingreso_muestra", "") if project else ""
+    hoy = str(date.today())
+    ws["D7"] = project["nombre"] if project else codigo          # Proyecto
+    ws["D9"] = project.get("localizacion", "") if project else ""  # Localización
+    ws["D10"] = project.get("laboratorista_asignado", "") if project else ""  # Muestra tomada por
+    ws["K6"] = project.get("fecha_ingreso_muestra", "") if project else ""  # Fecha de recepción
+    ws["K7"] = hoy  # Fecha de ejecución
+    ws["K8"] = hoy  # Fecha de emisión
     ws["D12"] = perf_codigo
     ws["H12"] = muestra["numero"]
     ws["K12"] = to_float(muestra.get("profundidad_de"))
     ws["M12"] = to_float(muestra.get("profundidad_hasta"))
-    ws["D13"] = f"Tipo de muestra: {muestra.get('tipo_muestra','')}"
+    ws["D13"] = muestra.get("observaciones") or f"Tipo de muestra: {muestra.get('tipo_muestra','')}"  # Descripción visual
     ws["D17"] = to_float(data.get("masa_inicial_seca"))
 
     for key, _label, _apert, cell in SIEVES:
@@ -1793,23 +1797,35 @@ def render_granulometria_form(data, assay_id):
         for key, label in PASA_200_FILAS:
             row = st.columns([2.2, 1, 1])
             row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
-            data[f"{key}_antes"] = row[1].text_input(
-                f"{label} antes", value=data.get(f"{key}_antes", ""), key=f"{key}_antes_{assay_id}",
-                label_visibility="collapsed", placeholder="0.00")
-            data[f"{key}_despues"] = row[2].text_input(
-                f"{label} después", value=data.get(f"{key}_despues", ""), key=f"{key}_despues_{assay_id}",
-                label_visibility="collapsed", placeholder="0.00")
-        row_total = st.columns([2.2, 1, 1])
-        row_total[0].markdown('<div style="padding-top:8px;font-weight:700;">Muestra total seca (g)</div>', unsafe_allow_html=True)
-        data["p200_total_antes"] = row_total[1].text_input(
-            "Muestra total seca antes", value=data.get("p200_total_antes", ""), key=f"p200_total_antes_{assay_id}",
-            label_visibility="collapsed", placeholder="0.00")
-        data["p200_total_despues"] = row_total[2].text_input(
-            "Muestra total seca después", value=data.get("p200_total_despues", ""), key=f"p200_total_despues_{assay_id}",
-            label_visibility="collapsed", placeholder="0.00")
-        # La plantilla de Excel usa "masa inicial seca" como la masa seca de partida del ensayo;
-        # para no duplicar el campo, se toma directo del total (antes del lavado) de esta tabla.
-        data["masa_inicial_seca"] = data["p200_total_antes"]
+            for suffix, col in (("antes", row[1]), ("despues", row[2])):
+                field_key = f"{key}_{suffix}"
+                widget_key = f"{field_key}_{assay_id}"
+                # No se pasa `value=` junto con un key que también se controla por session_state
+                # (el autocompletado de abajo lo hace) — Streamlit no permite mezclar ambos.
+                if widget_key not in st.session_state:
+                    st.session_state[widget_key] = data.get(field_key, "")
+                data[field_key] = col.text_input(
+                    f"{label} {suffix}", key=widget_key, label_visibility="collapsed", placeholder="0.00")
+            if key == "p200_seco_mas_recipiente":
+                # Autocompleta las 3 lecturas de horas con esta masa apenas se digita, pero si el
+                # laboratorista ya las cambió a mano, no se vuelven a pisar en el siguiente rerun —
+                # solo se repite el autocompletado cuando el valor de origen vuelve a cambiar.
+                for suffix in ("antes", "despues"):
+                    src_key = f"{key}_{suffix}"
+                    current_val = data[src_key]
+                    lastsync_key = f"{src_key}_lastsync"
+                    if data.get(lastsync_key) != current_val:
+                        for hkey in ("p200_seco_14h", "p200_seco_15h", "p200_seco_16h"):
+                            st.session_state[f"{hkey}_{suffix}_{assay_id}"] = current_val
+                            data[f"{hkey}_{suffix}"] = current_val
+                        data[lastsync_key] = current_val
+
+        # La plantilla de Excel necesita la masa inicial seca (neta, sin el recipiente) para calcular
+        # el % que pasa cada tamiz. Se deriva de las lecturas "antes del lavado" ya digitadas arriba
+        # (no es un campo nuevo en la interfaz, solo cómo se arma el dato para el Excel).
+        masa_seco_mas_recip = to_float(data.get("p200_seco_mas_recipiente_antes"))
+        masa_recip = to_float(data.get("p200_masa_recipiente_antes"))
+        data["masa_inicial_seca"] = (masa_seco_mas_recip - masa_recip) if (masa_seco_mas_recip is not None and masa_recip is not None) else ""
 
     with st.container(border=True):
         st.markdown(card_header_html("grid_view", "Granulometría (Masa de Suelo Retenido)"), unsafe_allow_html=True)
