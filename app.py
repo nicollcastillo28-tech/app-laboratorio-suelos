@@ -127,6 +127,17 @@ st.markdown(f"""
     .badge-success {{ background: {SUCCESS_LIGHT}; color: {SUCCESS}; }}
     .badge-warning {{ background: {WARNING_LIGHT}; color: {WARNING}; }}
     .badge-muted {{ background: #EEF1F5; color: {MUTED}; }}
+    .status-circle {{
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 36px; height: 36px; border-radius: 999px; flex-shrink: 0;
+    }}
+    .status-circle-success {{ background: {SUCCESS_LIGHT}; color: {SUCCESS}; }}
+    .status-circle-warning {{ background: {WARNING_LIGHT}; color: {WARNING}; }}
+    .status-circle-muted {{ background: #EEF1F5; color: {MUTED}; }}
+
+    /* Tarjeta con acento a la izquierda, para encabezados de detalle (ej. Detalle de Muestra) */
+    .st-key-muestra-header-card {{ border-left: 4px solid {PRIMARY} !important; }}
+    .st-key-muestra-obs-box .stTextArea textarea {{ background-color: {SECONDARY_CONTAINER} !important; }}
     .role-pill {{
         display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 11px;
         font-family: 'JetBrains Mono', monospace; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
@@ -435,6 +446,11 @@ def status_badge_html(status, font_size=None):
     style = f' style="font-size:{font_size}px;"' if font_size else ""
     return (f'<span class="badge {STATUS_BADGE[status]}"{style}>'
             f'{icon(STATUS_ICON[status], size=13)} {STATUS_LABELS[status]}</span>')
+
+
+def status_circle_html(status, size=20):
+    circle_class = STATUS_BADGE[status].replace("badge-", "status-circle-")
+    return f'<span class="status-circle {circle_class}">{icon(STATUS_ICON[status], size=size, fill=True)}</span>'
 
 
 def now_iso():
@@ -1530,10 +1546,13 @@ def render_muestra_detail():
     if st.button("← Atrás"):
         go_back(fallback="perforacion-detail")
 
-    with st.container(border=True):
+    estado = compute_muestra_estado(muestra)
+    with st.container(border=True, key="muestra-header-card"):
         top = st.columns([3, 1])
         with top[0]:
-            st.markdown(f"### Muestra {muestra['numero']}")
+            st.markdown(f'<div style="display:flex;align-items:center;gap:8px;">'
+                        f'<h3 style="margin:0;">Muestra {muestra["numero"]}</h3>'
+                        f'{status_badge_html(estado, font_size=13)}</div>', unsafe_allow_html=True)
             st.caption(f"{codigo} · {project['nombre'] if project else ''}")
         with top[1]:
             st.markdown(f'<div style="text-align:right;"><span class="assigned-chip">{html.escape(muestra["tipo_muestra"])}</span></div>',
@@ -1545,17 +1564,16 @@ def render_muestra_detail():
                     f'{muestra["profundidad_de"]}–{muestra["profundidad_hasta"]} m</div>', unsafe_allow_html=True)
         c3.markdown(f'<div class="cell-muted">Perforación</div><div style="font-weight:600;">{html.escape(perf_codigo)}</div>',
                     unsafe_allow_html=True)
-        estado = compute_muestra_estado(muestra)
-        st.markdown(f'<div style="margin-top:10px;">{status_badge_html(estado, font_size=13)}</div>', unsafe_allow_html=True)
 
     with st.container(border=True):
         st.markdown('<div class="section-title">Observaciones de la muestra</div>', unsafe_allow_html=True)
         st.caption("Cómo llegó la muestra, o cualquier condición que impida continuar con el ensayo. "
                    "Se guarda para todos los ensayos de esta muestra y la puede editar tanto el Jefe como el laboratorista.")
-        observacion = st.text_area(
-            "Observaciones de la muestra", value=muestra.get("observaciones", ""), label_visibility="collapsed",
-            placeholder="Ej: Muestra con humedad visible, sin alteraciones aparentes...", key=f"obs_{muestra_id}",
-        )
+        with st.container(key="muestra-obs-box"):
+            observacion = st.text_area(
+                "Observaciones de la muestra", value=muestra.get("observaciones", ""), label_visibility="collapsed",
+                placeholder="Ej: Muestra con humedad visible, sin alteraciones aparentes...", key=f"obs_{muestra_id}",
+            )
         if st.button("Guardar observación", icon=":material/save:", key=f"obs_save_{muestra_id}"):
             muestra["observaciones"] = observacion
             st.success("Observación guardada.")
@@ -1583,14 +1601,16 @@ def render_muestra_detail():
         st.info("Esta muestra no tiene ensayos marcados en la bitácora.")
     for ensayo_label in solicitados:
         with st.container(border=True):
-            cols = st.columns([3, 1.6, 1])
-            cols[0].markdown(f"**{ensayo_label}**")
             tipo_interno = SUPPORTED_ASSAY_MAP.get(ensayo_label)
+            existing = get_assay(muestra_id, tipo_interno) if tipo_interno else None
+            status = existing["status"] if existing else "sin-iniciar"
+
+            cols = st.columns([0.6, 2.4, 1.6, 1])
+            cols[0].markdown(status_circle_html(status), unsafe_allow_html=True)
+            cols[1].markdown(f"**{ensayo_label}**")
             if tipo_interno:
-                existing = get_assay(muestra_id, tipo_interno)
-                status = existing["status"] if existing else "sin-iniciar"
-                cols[1].markdown(status_badge_html(status), unsafe_allow_html=True)
-                with cols[2]:
+                cols[2].markdown(status_badge_html(status), unsafe_allow_html=True)
+                with cols[3]:
                     if st.button("Abrir", key=f"open_ensayo_{ensayo_label}", use_container_width=True):
                         if existing:
                             st.session_state.selected_assay_id = existing["id"]
@@ -1610,7 +1630,7 @@ def render_muestra_detail():
                 elif existing:
                     st.markdown(f'<div class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(existing["lastModified"])}</div>', unsafe_allow_html=True)
             else:
-                cols[1].markdown('<span class="badge badge-muted">Sin formulario aún</span>', unsafe_allow_html=True)
+                cols[2].markdown('<span class="badge badge-muted">Sin formulario aún</span>', unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════════════════════════
