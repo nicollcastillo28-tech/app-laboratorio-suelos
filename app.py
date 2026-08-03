@@ -25,6 +25,7 @@ APP_VERSION = "v5.0.0"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_GRANULOMETRIA = os.path.join(BASE_DIR, "templates", "CLASIFICACION_DE_SUELOS.xlsm")
 TEMPLATE_BITACORA_ORDEN = os.path.join(BASE_DIR, "templates", "GDA-FL-003_bitacora_orden.xlsx")
+TEMPLATE_HUMEDAD = os.path.join(BASE_DIR, "templates", "GDA-FLC-014_humedad_natural.xlsx")
 
 PASSWORDS = {"jefe": "geodelta2024", "auxiliar": "aux2024"}
 
@@ -348,6 +349,9 @@ EQUIPO_GRANULOMETRIA = [
     "Horno GDA-E-007", "Horno GDA-E-404",
     "Tamiz de lavado GDA-E-", "Serie de tamices GDA-E-030 a GDA-E-045",
 ]
+
+# Equipos reales usados en el ensayo de Contenido de Humedad Natural.
+EQUIPO_HUMEDAD = ["Balanza GDA-E-011", "Horno GDA-E-007"]
 
 BITACORA_ENSAYOS = [
     "Granulometría", "Pasa 200", "Humedad", "Límites de Atterberg", "Límite de contracción",
@@ -944,6 +948,11 @@ def render_new_project():
     with c2:
         fecha_ingreso = st.date_input("Fecha de ingreso de muestra", value=date.today())
 
+    st.markdown('<div class="section-title">Datos del cliente (para el encabezado de los informes)</div>', unsafe_allow_html=True)
+    cliente = st.text_input("Cliente", placeholder="Nombre del cliente")
+    correo_cliente = st.text_input("Correo electrónico", placeholder="correo@cliente.com")
+    muestra_tomada_por = st.text_input("Muestra tomada por", placeholder="Nombre de quien tomó la muestra")
+
     laboratorista_asignado = st.text_input(
         "Asignar bitácora a laboratorista (opcional)", placeholder="Nombre del laboratorista",
         help="Es solo una referencia informativa: como todos los auxiliares comparten la misma clave, "
@@ -1054,6 +1063,7 @@ def render_new_project():
                 "localizacion": localizacion, "norma": norma,
                 "fecha_bitacora": str(fecha_bitacora), "fecha_ingreso_muestra": str(fecha_ingreso),
                 "laboratorista_asignado": laboratorista_asignado,
+                "cliente": cliente, "correo_cliente": correo_cliente, "muestra_tomada_por": muestra_tomada_por,
             })
             st.session_state.perforaciones.setdefault(codigo_interno, [])
             for perf in perforaciones:
@@ -1250,6 +1260,12 @@ def render_edit_project():
         fecha_bitacora = st.date_input("Fecha de bitácora", value=_parse_fecha(project.get("fecha_bitacora")))
     with c2:
         fecha_ingreso = st.date_input("Fecha de ingreso de muestra", value=_parse_fecha(project.get("fecha_ingreso_muestra")))
+
+    st.markdown('<div class="section-title">Datos del cliente (para el encabezado de los informes)</div>', unsafe_allow_html=True)
+    cliente = st.text_input("Cliente", value=project.get("cliente", ""))
+    correo_cliente = st.text_input("Correo electrónico", value=project.get("correo_cliente", ""))
+    muestra_tomada_por = st.text_input("Muestra tomada por", value=project.get("muestra_tomada_por", ""))
+
     laboratorista_asignado = st.text_input(
         "Asignar bitácora a laboratorista (opcional)", value=project.get("laboratorista_asignado", ""))
 
@@ -1266,6 +1282,9 @@ def render_edit_project():
             project["fecha_bitacora"] = str(fecha_bitacora)
             project["fecha_ingreso_muestra"] = str(fecha_ingreso)
             project["laboratorista_asignado"] = laboratorista_asignado
+            project["cliente"] = cliente
+            project["correo_cliente"] = correo_cliente
+            project["muestra_tomada_por"] = muestra_tomada_por
             navigate("project-detail")
 
 
@@ -1716,16 +1735,16 @@ def generar_excel_bitacora_orden(project, filas, tipos_usados):
 
 
 # ════════════════════════════════════════════════════════════════════
-# GENERAR EXCEL DE GRANULOMETRÍA (plantilla real del laboratorio)
+# GENERAR EXCEL DE GRANULOMETRÍA Y HUMEDAD (plantillas reales del laboratorio,
+# ambas comparten el mismo diseño de encabezado — filas 1 a 13)
 # ════════════════════════════════════════════════════════════════════
-def generar_excel_granulometria(codigo, perf_codigo, muestra, project, data):
-    wb = load_workbook(TEMPLATE_GRANULOMETRIA, keep_vba=True)
-    ws = wb["MUESTRA"]
-
+def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project):
     hoy = str(date.today())
+    ws["D6"] = project.get("cliente", "") if project else ""  # Cliente
     ws["D7"] = project["nombre"] if project else codigo          # Proyecto
+    ws["D8"] = project.get("correo_cliente", "") if project else ""  # Correo electrónico
     ws["D9"] = project.get("localizacion", "") if project else ""  # Localización
-    ws["D10"] = project.get("laboratorista_asignado", "") if project else ""  # Muestra tomada por
+    ws["D10"] = project.get("muestra_tomada_por", "") if project else ""  # Muestra tomada por
     ws["K6"] = project.get("fecha_ingreso_muestra", "") if project else ""  # Fecha de recepción
     ws["K7"] = hoy  # Fecha de ejecución
     ws["K8"] = hoy  # Fecha de emisión
@@ -1734,10 +1753,34 @@ def generar_excel_granulometria(codigo, perf_codigo, muestra, project, data):
     ws["K12"] = to_float(muestra.get("profundidad_de"))
     ws["M12"] = to_float(muestra.get("profundidad_hasta"))
     ws["D13"] = muestra.get("observaciones") or f"Tipo de muestra: {muestra.get('tipo_muestra','')}"  # Descripción visual
+
+
+def generar_excel_granulometria(codigo, perf_codigo, muestra, project, data):
+    wb = load_workbook(TEMPLATE_GRANULOMETRIA, keep_vba=True)
+    ws = wb["MUESTRA"]
+
+    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project)
     ws["D17"] = to_float(data.get("masa_inicial_seca"))
 
     for key, _label, _apert, cell in SIEVES:
         ws[cell] = to_float(data.get(key)) or 0
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return bio.getvalue()
+
+
+def generar_excel_humedad(codigo, perf_codigo, muestra, project, data):
+    wb = load_workbook(TEMPLATE_HUMEDAD)
+    ws = wb["GUIA"]
+
+    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project)
+    ws["I19"] = data.get("hum_recipiente", "")
+    ws["I20"] = to_float(data.get("hum_masa_humedo_mas_recipiente"))
+    ws["I21"] = to_float(data.get("hum_seco_mas_recipiente"))
+    ws["I22"] = to_float(data.get("hum_masa_recipiente"))
+    # I23 (masa seca) e I24 (% humedad) son fórmulas de la propia plantilla; no se tocan.
 
     bio = BytesIO()
     wb.save(bio)
@@ -1847,25 +1890,68 @@ def render_granulometria_form(data, assay_id):
         st.caption("El % retenido y la clasificación USCS se calculan en la plantilla de Excel, no aquí.")
 
 
-def render_humedad_form(data):
-    st.info("Estos datos se guardan tal cual, sin calcular el % de humedad dentro de la app.")
-    metodo = data.get("hum_metodo", "Método A")
-    choice = st.radio("Método de ensayo", ["Método A", "Método B"], index=["Método A", "Método B"].index(metodo) if metodo in ["Método A", "Método B"] else 0, horizontal=True, key="hum_metodo_radio")
-    data["hum_metodo"] = choice
+def render_humedad_form(data, assay_id):
+    st.info("Estos datos se guardan tal cual y se llevan a la plantilla oficial de Excel — el % de humedad lo calcula el Excel, no la app.")
 
-    st.markdown('<div class="section-title">Determinación de humedad natural</div>', unsafe_allow_html=True)
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        data["hum_recipiente"] = st.text_input("Recipiente No.", value=data.get("hum_recipiente", ""), placeholder="R-01")
-    with c2:
-        data["hum_tara"] = st.text_input("Masa del recipiente (g)", value=data.get("hum_tara", ""), placeholder="25.30")
-    with c3:
-        data["hum_suelo_humedo_tara"] = st.text_input("M. suelo húmedo + recipiente (g)", value=data.get("hum_suelo_humedo_tara", ""), placeholder="148.60")
-    with c4:
-        data["hum_suelo_seco_tara"] = st.text_input("M. suelo seco + recipiente 74h (g)", value=data.get("hum_suelo_seco_tara", ""), placeholder="132.40")
-
-    render_equipo(data, "hum")
     render_norma_selector("humedad", data, "hum")
+    render_equipo(data, "hum", EQUIPO_HUMEDAD)
+
+    with st.container(border=True):
+        st.markdown(card_header_html("science", "Determinación de Humedad"), unsafe_allow_html=True)
+
+        def _campo(key, label, placeholder="0.00"):
+            row = st.columns([2.2, 1])
+            row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+            data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                           label_visibility="collapsed", placeholder=placeholder)
+
+        _campo("hum_recipiente", "Recipiente no.", placeholder="Ej: 839")
+        _campo("hum_masa_recipiente", "Masa del recipiente (g)")
+        _campo("hum_masa_humedo_mas_recipiente", "Masa suelo húmedo + recipiente (g)")
+
+        # "Masa suelo seco + recipiente" se autocompleta en las 3 lecturas de horas apenas se
+        # digita, igual que en Pasa No. 200 de Granulometría — si el laboratorista cambia una
+        # lectura a mano, ya no se vuelve a pisar hasta que el valor de origen vuelva a cambiar.
+        src_key = "hum_seco_mas_recipiente"
+        src_widget_key = f"{src_key}_{assay_id}"
+        if src_widget_key not in st.session_state:
+            st.session_state[src_widget_key] = data.get(src_key, "")
+        row = st.columns([2.2, 1])
+        row[0].markdown('<div style="padding-top:8px;">Masa suelo seco + recipiente (g)</div>', unsafe_allow_html=True)
+        data[src_key] = row[1].text_input("Masa suelo seco + recipiente (g)", key=src_widget_key,
+                                           label_visibility="collapsed", placeholder="0.00")
+        current_val = data[src_key]
+        lastsync_key = f"{src_key}_lastsync"
+        if data.get(lastsync_key) != current_val:
+            for hkey in ("hum_seco_14h", "hum_seco_15h", "hum_seco_16h"):
+                st.session_state[f"{hkey}_{assay_id}"] = current_val
+                data[hkey] = current_val
+            data[lastsync_key] = current_val
+        for hkey, hlabel in (("hum_seco_14h", "Masa suelo seco + recipiente (g) (14 hrs)"),
+                              ("hum_seco_15h", "Masa suelo seco + recipiente (g) (15 hrs)"),
+                              ("hum_seco_16h", "Masa suelo seco + recipiente (g) (16 hrs)")):
+            hwidget_key = f"{hkey}_{assay_id}"
+            if hwidget_key not in st.session_state:
+                st.session_state[hwidget_key] = data.get(hkey, "")
+            hrow = st.columns([2.2, 1])
+            hrow[0].markdown(f'<div style="padding-top:8px;">{hlabel}</div>', unsafe_allow_html=True)
+            data[hkey] = hrow[1].text_input(hlabel, key=hwidget_key, label_visibility="collapsed", placeholder="0.00")
+
+        _campo("hum_masa_agua", "Masa del agua (g)")
+        _campo("hum_masa_seca", "Masa suelo seco (g)")
+        st.caption("El % de humedad se calcula en la plantilla de Excel, no aquí.")
+
+    with st.container(border=True):
+        st.markdown(card_header_html("local_fire_department", "Datos del Laboratorio"), unsafe_allow_html=True)
+        temp_actual = data.get("hum_temp_horno", "110 ± 5 °C")
+        opciones_temp = ["110 ± 5 °C", "60 °C"]
+        idx = opciones_temp.index(temp_actual) if temp_actual in opciones_temp else 0
+        c1, c2 = st.columns(2)
+        with c1:
+            data["hum_temp_horno"] = st.selectbox("Temperatura Horno", opciones_temp, index=idx, key=f"hum_temp_horno_{assay_id}")
+        with c2:
+            data["hum_tiempo_secado"] = st.text_input("Tiempo de secado", value=data.get("hum_tiempo_secado", ""),
+                                                       key=f"hum_tiempo_secado_{assay_id}", placeholder="16 hrs")
 
 
 def render_masa_unitaria_form(data):
@@ -1891,8 +1977,14 @@ def render_read_only_summary(tipo, data):
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         equipos, norma = data.get("gran_equipos", []), data.get("gran_norma", "—")
     elif tipo == "humedad":
-        campos = [("hum_metodo", "Método"), ("hum_recipiente", "Recipiente No."), ("hum_tara", "Masa recipiente (g)"),
-                  ("hum_suelo_humedo_tara", "M. suelo húmedo + recipiente (g)"), ("hum_suelo_seco_tara", "M. suelo seco + recipiente 74h (g)")]
+        campos = [("hum_recipiente", "Recipiente no."), ("hum_masa_recipiente", "Masa del recipiente (g)"),
+                  ("hum_masa_humedo_mas_recipiente", "Masa suelo húmedo + recipiente (g)"),
+                  ("hum_seco_mas_recipiente", "Masa suelo seco + recipiente (g)"),
+                  ("hum_seco_14h", "Masa suelo seco + recipiente (g) (14 hrs)"),
+                  ("hum_seco_15h", "Masa suelo seco + recipiente (g) (15 hrs)"),
+                  ("hum_seco_16h", "Masa suelo seco + recipiente (g) (16 hrs)"),
+                  ("hum_masa_agua", "Masa del agua (g)"), ("hum_masa_seca", "Masa suelo seco (g)"),
+                  ("hum_temp_horno", "Temperatura horno"), ("hum_tiempo_secado", "Tiempo de secado")]
         for key, label in campos:
             st.markdown(f"**{label}:** {data.get(key) or '—'}")
         equipos, norma = data.get("hum_equipos", []), data.get("hum_norma", "—")
@@ -1917,7 +2009,9 @@ def render_assay_form():
     codigo, perf_codigo, muestra_id = assay["codigo_interno"], assay["perforacion_codigo"], assay["muestra_id"]
     project = get_project(codigo)
     muestra = get_muestra(codigo, perf_codigo, muestra_id)
-    read_only = st.session_state.role == "auxiliar" and project_status(codigo) == "ejecutado"
+    es_jefe = st.session_state.role == "jefe"
+    # El Jefe solo consulta los ensayos — quien digita los datos de laboratorio es el laboratorista.
+    read_only = es_jefe or (st.session_state.role == "auxiliar" and project_status(codigo) == "ejecutado")
 
     if st.button("← Atrás"):
         go_back(fallback="muestra-detail")
@@ -1939,42 +2033,66 @@ def render_assay_form():
         profundidad_txt = f'{muestra["profundidad_de"]:.2f}m - {muestra["profundidad_hasta"]:.2f}m' if muestra else "—"
         g4.markdown(f'<div class="cell-muted" style="margin-top:12px;">Profundidad</div><div style="font-weight:600;">{profundidad_txt}</div>',
                     unsafe_allow_html=True)
+
+    if muestra is not None:
+        with st.container(border=True):
+            st.markdown(card_header_html("thermostat", "Condición del Ensayo"), unsafe_allow_html=True)
+            st.caption("Se digita una sola vez por muestra: la inicial al empezar el ensayo y la final al terminarlo. Se comparte entre todos los ensayos de esta muestra.")
+            head = st.columns([1.4, 1, 1])
+            head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Temperatura °C</div>', unsafe_allow_html=True)
+            head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Humedad %</div>', unsafe_allow_html=True)
+            for cond_key, cond_label in (("inicial", "Inicial"), ("final", "Final")):
+                row = st.columns([1.4, 1, 1])
+                row[0].markdown(f'<div style="padding-top:8px;">{cond_label}</div>', unsafe_allow_html=True)
+                if read_only:
+                    row[1].markdown(f'<div style="padding-top:8px;">{muestra.get(f"cond_{cond_key}_temp") or "—"}</div>', unsafe_allow_html=True)
+                    row[2].markdown(f'<div style="padding-top:8px;">{muestra.get(f"cond_{cond_key}_hum") or "—"}</div>', unsafe_allow_html=True)
+                else:
+                    muestra[f"cond_{cond_key}_temp"] = row[1].text_input(
+                        f"Temperatura {cond_label}", value=muestra.get(f"cond_{cond_key}_temp", ""),
+                        key=f"cond_{cond_key}_temp_{muestra_id}", label_visibility="collapsed", placeholder="0.0")
+                    muestra[f"cond_{cond_key}_hum"] = row[2].text_input(
+                        f"Humedad {cond_label}", value=muestra.get(f"cond_{cond_key}_hum", ""),
+                        key=f"cond_{cond_key}_hum_{muestra_id}", label_visibility="collapsed", placeholder="0")
+
     data = dict(assay.get("data", {}))
 
     if read_only:
-        st.info("Este proyecto ya fue ejecutado. Estás en modo consulta — no puedes editar estos datos.")
+        if es_jefe:
+            st.info("Estás viendo el ensayo en modo consulta — solo el laboratorista puede digitar estos datos.")
+        else:
+            st.info("Este proyecto ya fue ejecutado. Estás en modo consulta — no puedes editar estos datos.")
         render_read_only_summary(assay["tipo"], data)
         st.markdown('<div class="section-title">Observaciones</div>', unsafe_allow_html=True)
         st.write(assay.get("observations") or "—")
         st.markdown('<div class="section-title">Laboratorista</div>', unsafe_allow_html=True)
         st.write(assay.get("laboratorist") or "—")
-        return
+    else:
+        if assay["tipo"] == "granulometria":
+            render_granulometria_form(data, assay_id)
+        elif assay["tipo"] == "humedad":
+            render_humedad_form(data, assay_id)
+        elif assay["tipo"] == "masa-unitaria":
+            render_masa_unitaria_form(data)
 
-    if assay["tipo"] == "granulometria":
-        render_granulometria_form(data, assay_id)
-    elif assay["tipo"] == "humedad":
-        render_humedad_form(data)
-    elif assay["tipo"] == "masa-unitaria":
-        render_masa_unitaria_form(data)
+        st.markdown('<div class="section-title">Observaciones</div>', unsafe_allow_html=True)
+        observations = st.text_area("Observaciones", value=assay.get("observations", ""), label_visibility="collapsed", placeholder="Observaciones generales del ensayo…")
 
-    st.markdown('<div class="section-title">Observaciones</div>', unsafe_allow_html=True)
-    observations = st.text_area("Observaciones", value=assay.get("observations", ""), label_visibility="collapsed", placeholder="Observaciones generales del ensayo…")
+        st.markdown('<div class="section-title">Laboratorista</div>', unsafe_allow_html=True)
+        laboratorist = st.text_input("Laboratorista", value=assay.get("laboratorist", ""), label_visibility="collapsed", placeholder="Nombre completo")
 
-    st.markdown('<div class="section-title">Laboratorista</div>', unsafe_allow_html=True)
-    laboratorist = st.text_input("Laboratorista", value=assay.get("laboratorist", ""), label_visibility="collapsed", placeholder="Nombre completo")
+        st.markdown("<br>", unsafe_allow_html=True)
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Guardar borrador", use_container_width=True, icon=":material/save:"):
+                assay.update(data=data, observations=observations, laboratorist=laboratorist, status="en-proceso", lastModified=now_iso())
+                navigate("muestra-detail")
+        with col2:
+            if st.button("Finalizar ensayo", type="primary", use_container_width=True, icon=":material/check_circle:"):
+                assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado", lastModified=now_iso())
+                navigate("muestra-detail")
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Guardar borrador", use_container_width=True, icon=":material/save:"):
-            assay.update(data=data, observations=observations, laboratorist=laboratorist, status="en-proceso", lastModified=now_iso())
-            navigate("muestra-detail")
-    with col2:
-        if st.button("Finalizar ensayo", type="primary", use_container_width=True, icon=":material/check_circle:"):
-            assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado", lastModified=now_iso())
-            navigate("muestra-detail")
-
-    if st.session_state.role == "jefe" and assay["tipo"] == "granulometria" and muestra:
+    if es_jefe and assay["tipo"] == "granulometria" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_granulometria(codigo, perf_codigo, muestra, project, data)
@@ -1982,6 +2100,16 @@ def render_assay_form():
             "Descargar Excel (plantilla oficial de Granulometría)", icon=":material/download:",
             data=excel_bytes, file_name=f"Granulometria_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
+        )
+
+    if es_jefe and assay["tipo"] == "humedad" and muestra:
+        st.markdown("---")
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        excel_bytes = generar_excel_humedad(codigo, perf_codigo, muestra, project, data)
+        st.download_button(
+            "Descargar Excel (plantilla oficial de Humedad)", icon=":material/download:",
+            data=excel_bytes, file_name=f"Humedad_{muestra['id_unico']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
 
 
