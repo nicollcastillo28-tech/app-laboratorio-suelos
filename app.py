@@ -970,6 +970,33 @@ def render_new_project():
                     column_config=column_config, key=f"neweditor_{key}",
                 )
                 edited_frames[key] = edited
+
+                # Cada perforación se descarga en su propio Excel: la plantilla oficial
+                # representa UN sondeo (hoja "S1"), así que no se mezclan varias en un archivo.
+                filas_perf_preview = []
+                for row in edited.to_dict("records"):
+                    numero_m = str(row.get("Número", "")).strip()
+                    if not numero_m or numero_m.lower() == "none" or numero_m == "nan":
+                        continue
+                    filas_perf_preview.append({
+                        "perf_codigo": perf["codigo"], "numero": numero_m,
+                        "tipo_muestra": row.get("Tipo de muestra") or TIPO_MUESTRA_OPTIONS[0],
+                        "profundidad_de": row.get("Prof. De") or 0.0, "profundidad_hasta": row.get("Prof. A") or 0.0,
+                        "ensayos": {e: bool(row.get(e, False)) for e in BITACORA_ENSAYOS},
+                        "observaciones": row.get("Observaciones") or "",
+                    })
+                project_preview = {
+                    "codigo_interno": codigo_interno, "numero": numero, "anio": anio, "nombre": nombre,
+                    "localizacion": localizacion, "norma": norma, "fecha_bitacora": str(fecha_bitacora),
+                }
+                excel_bytes, truncado = generar_excel_bitacora_orden(project_preview, filas_perf_preview, {perf["tipo"]})
+                st.download_button(f"Descargar bitácora — {perf['codigo']}", data=excel_bytes, icon=":material/download:",
+                                    file_name=f"{codigo_interno} Bitacora de orden {perf['codigo']}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    use_container_width=True, key=f"dl_newperf_{key}")
+                if truncado:
+                    st.caption(f"El formato oficial admite hasta {BITACORA_XLSX_MAX_ROWS} muestras; se incluyeron las primeras {BITACORA_XLSX_MAX_ROWS}.")
+
                 if confirm_delete(f"newperf_{key}", f"la perforación {perf['codigo']}"):
                     st.session_state.perforaciones[codigo_interno] = [p for p in perforaciones if p["codigo"] != perf["codigo"]]
                     st.session_state.muestras.pop(key, None)
@@ -977,35 +1004,6 @@ def render_new_project():
                     st.rerun()
     elif nombre or numero or anio:
         st.info("Completa un código interno válido y el nombre del proyecto para agregar perforaciones y muestras.")
-
-    if perforaciones:
-        filas_preview, tipos_usados = [], set()
-        for perf in perforaciones:
-            tipos_usados.add(perf["tipo"])
-            df_rows = edited_frames.get(f"{codigo_interno}::{perf['codigo']}")
-            rows = df_rows.to_dict("records") if df_rows is not None else []
-            for row in rows:
-                numero_m = str(row.get("Número", "")).strip()
-                if not numero_m or numero_m.lower() == "none" or numero_m == "nan":
-                    continue
-                filas_preview.append({
-                    "perf_codigo": perf["codigo"], "numero": numero_m,
-                    "tipo_muestra": row.get("Tipo de muestra") or TIPO_MUESTRA_OPTIONS[0],
-                    "profundidad_de": row.get("Prof. De") or 0.0, "profundidad_hasta": row.get("Prof. A") or 0.0,
-                    "ensayos": {e: bool(row.get(e, False)) for e in BITACORA_ENSAYOS},
-                    "observaciones": row.get("Observaciones") or "",
-                })
-        project_preview = {
-            "codigo_interno": codigo_interno, "numero": numero, "anio": anio, "nombre": nombre,
-            "localizacion": localizacion, "norma": norma, "fecha_bitacora": str(fecha_bitacora),
-        }
-        excel_bytes, truncado = generar_excel_bitacora_orden(project_preview, filas_preview, tipos_usados)
-        st.download_button("Descargar bitácora de orden (Excel)", data=excel_bytes, icon=":material/download:",
-                            file_name=f"{codigo_interno} Bitacora de orden.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True)
-        if truncado:
-            st.caption(f"El formato oficial admite hasta {BITACORA_XLSX_MAX_ROWS} muestras; se incluyeron las primeras {BITACORA_XLSX_MAX_ROWS}.")
 
     st.markdown("<br>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
@@ -1133,19 +1131,8 @@ def render_project_detail():
         tiene_bitacora = bool(perforaciones)
         label_bitacora = "Editar bitácora de orden" if tiene_bitacora else "Generar bitácora de orden"
         icon_bitacora = "edit_document" if tiene_bitacora else "assignment"
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button(label_bitacora, type="primary", icon=f":material/{icon_bitacora}:", use_container_width=True):
-                navigate("bitacora")
-        with c2:
-            filas_proy, tipos_usados = _bitacora_filas_proyecto(codigo, perforaciones)
-            excel_bytes, truncado = generar_excel_bitacora_orden(project, filas_proy, tipos_usados)
-            st.download_button("Descargar bitácora de orden", data=excel_bytes, icon=":material/download:",
-                                file_name=f"{codigo} Bitacora de orden.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True)
-        if truncado:
-            st.caption(f"El formato oficial admite hasta {BITACORA_XLSX_MAX_ROWS} muestras; se incluyeron las primeras {BITACORA_XLSX_MAX_ROWS}.")
+        if st.button(label_bitacora, type="primary", icon=f":material/{icon_bitacora}:", use_container_width=True):
+            navigate("bitacora")
 
     st.markdown(f'<div class="section-title">Perforaciones realizadas ({len(perforaciones)} elemento(s) identificado(s))</div>',
                 unsafe_allow_html=True)
@@ -1182,9 +1169,18 @@ def render_project_detail():
             st.markdown(f'<div class="cell-muted"><strong>Profundidad</strong> {prof_txt} · {len(muestras)} muestra(s)</div>',
                         unsafe_allow_html=True)
             st.progress(perf_pct / 100)
-            if st.button("Ver muestras →", key=f"open_perf_{perf['codigo']}", use_container_width=True):
-                st.session_state.selected_perforacion = perf["codigo"]
-                navigate("perforacion-detail")
+            bc1, bc2 = st.columns(2)
+            with bc1:
+                if st.button("Ver muestras →", key=f"open_perf_{perf['codigo']}", use_container_width=True):
+                    st.session_state.selected_perforacion = perf["codigo"]
+                    navigate("perforacion-detail")
+            with bc2:
+                filas_perf = _bitacora_filas_perforacion(codigo, perf["codigo"])
+                excel_bytes, _truncado = generar_excel_bitacora_orden(project, filas_perf, {perf["tipo"]})
+                st.download_button("Descargar bitácora", data=excel_bytes, icon=":material/download:",
+                                    file_name=f"{codigo} Bitacora de orden {perf['codigo']}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    use_container_width=True, key=f"dl_perf_{perf['codigo']}")
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -1293,11 +1289,7 @@ def render_perforacion_detail():
                         unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         with c1:
-            filas_perf = [{
-                "perf_codigo": perf_codigo, "numero": m["numero"], "tipo_muestra": m["tipo_muestra"],
-                "profundidad_de": m["profundidad_de"], "profundidad_hasta": m["profundidad_hasta"],
-                "ensayos": m["ensayos"], "observaciones": m.get("observaciones", ""),
-            } for m in muestras]
+            filas_perf = _bitacora_filas_perforacion(codigo, perf_codigo)
             excel_bytes, _truncado = generar_excel_bitacora_orden(project, filas_perf, {perf["tipo"]} if perf else set())
             st.download_button("Exportar perfil", data=excel_bytes, icon=":material/download:",
                                 file_name=f"{codigo} Bitacora de orden {perf_codigo}.xlsx",
@@ -1458,14 +1450,39 @@ def render_bitacora():
                     column_config=column_config, key=f"editor_{key}",
                 )
                 edited_frames[key] = edited
-                if confirm_delete(f"perf_{key}", f"la perforación {perf['codigo']} y todas sus muestras"):
-                    st.session_state.perforaciones[codigo] = [p for p in st.session_state.perforaciones[codigo] if p["codigo"] != perf["codigo"]]
-                    st.session_state.muestras.pop(key, None)
-                    st.session_state.bitacora_draft.pop(key, None)
-                    st.session_state.assays = [a for a in st.session_state.assays if not (a["codigo_interno"] == codigo and a["perforacion_codigo"] == perf["codigo"])]
-                    st.rerun()
+                filas_perf_rows = edited.to_dict("records")
             else:
                 st.dataframe(df_source, use_container_width=True, hide_index=True)
+                filas_perf_rows = df_source.to_dict("records")
+
+            # Cada perforación se descarga en su propio Excel: la plantilla oficial
+            # representa UN sondeo (hoja "S1"), así que no se mezclan varias en un archivo.
+            filas_perf = []
+            for row in filas_perf_rows:
+                numero_m = str(row.get("Número", "")).strip()
+                if not numero_m or numero_m.lower() == "none" or numero_m == "nan":
+                    continue
+                filas_perf.append({
+                    "perf_codigo": perf["codigo"], "numero": numero_m,
+                    "tipo_muestra": row.get("Tipo de muestra") or TIPO_MUESTRA_OPTIONS[0],
+                    "profundidad_de": row.get("Prof. De") or 0.0, "profundidad_hasta": row.get("Prof. A") or 0.0,
+                    "ensayos": {e: bool(row.get(e, False)) for e in BITACORA_ENSAYOS},
+                    "observaciones": row.get("Observaciones") or "",
+                })
+            excel_bytes, truncado = generar_excel_bitacora_orden(project, filas_perf, {perf["tipo"]})
+            st.download_button(f"Descargar bitácora — {perf['codigo']}", data=excel_bytes, icon=":material/download:",
+                                file_name=f"{codigo} Bitacora de orden {perf['codigo']}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                use_container_width=True, key=f"dl_bitacora_{key}")
+            if truncado:
+                st.caption(f"El formato oficial admite hasta {BITACORA_XLSX_MAX_ROWS} muestras; se incluyeron las primeras {BITACORA_XLSX_MAX_ROWS}.")
+
+            if es_jefe and confirm_delete(f"perf_{key}", f"la perforación {perf['codigo']} y todas sus muestras"):
+                st.session_state.perforaciones[codigo] = [p for p in st.session_state.perforaciones[codigo] if p["codigo"] != perf["codigo"]]
+                st.session_state.muestras.pop(key, None)
+                st.session_state.bitacora_draft.pop(key, None)
+                st.session_state.assays = [a for a in st.session_state.assays if not (a["codigo_interno"] == codigo and a["perforacion_codigo"] == perf["codigo"])]
+                st.rerun()
 
 
 
@@ -1495,16 +1512,6 @@ def render_bitacora():
                 # tabla vieja lo que ya se guardó).
                 st.session_state.bitacora_draft.pop(key, None)
             st.success("Bitácora guardada. Los auxiliares ya pueden ver y digitar las muestras.")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    filas_proy, tipos_usados = _bitacora_filas_proyecto(codigo, perforaciones)
-    excel_bytes, truncado = generar_excel_bitacora_orden(project, filas_proy, tipos_usados)
-    st.download_button("Descargar bitácora de orden", data=excel_bytes, icon=":material/download:",
-                        file_name=f"{codigo} Bitacora de orden.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True)
-    if truncado:
-        st.caption(f"El formato oficial admite hasta {BITACORA_XLSX_MAX_ROWS} muestras; se incluyeron las primeras {BITACORA_XLSX_MAX_ROWS}.")
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -1609,19 +1616,18 @@ def render_muestra_detail():
 # ════════════════════════════════════════════════════════════════════
 # GENERAR EXCEL DE BITÁCORA DE ORDEN (plantilla oficial GDA-FL-003)
 # ════════════════════════════════════════════════════════════════════
-def _bitacora_filas_proyecto(codigo, perforaciones):
-    """Junta todas las muestras de todas las perforaciones ya guardadas de un proyecto,
-    en el formato que espera generar_excel_bitacora_orden."""
-    filas, tipos_usados = [], set()
-    for perf in perforaciones:
-        tipos_usados.add(perf["tipo"])
-        for m in st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", []):
-            filas.append({
-                "perf_codigo": perf["codigo"], "numero": m["numero"], "tipo_muestra": m["tipo_muestra"],
-                "profundidad_de": m["profundidad_de"], "profundidad_hasta": m["profundidad_hasta"],
-                "ensayos": m["ensayos"], "observaciones": m.get("observaciones", ""),
-            })
-    return filas, tipos_usados
+def _bitacora_filas_perforacion(codigo, perf_codigo):
+    """Muestras de UNA perforación ya guardada, en el formato que espera
+    generar_excel_bitacora_orden. Cada perforación se exporta a su propio Excel —
+    la plantilla oficial (hoja "S1") representa un solo sondeo, no varios a la vez."""
+    filas = []
+    for m in st.session_state.muestras.get(f"{codigo}::{perf_codigo}", []):
+        filas.append({
+            "perf_codigo": perf_codigo, "numero": m["numero"], "tipo_muestra": m["tipo_muestra"],
+            "profundidad_de": m["profundidad_de"], "profundidad_hasta": m["profundidad_hasta"],
+            "ensayos": m["ensayos"], "observaciones": m.get("observaciones", ""),
+        })
+    return filas
 
 
 def generar_excel_bitacora_orden(project, filas, tipos_usados):
