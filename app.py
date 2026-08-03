@@ -341,6 +341,14 @@ EQUIPO_LIST = [
     "Horno de parafinado", "Cronómetro", "Termómetro", "Extractor de muestras", "Otro",
 ]
 
+# Equipos reales de laboratorio con su código interno, tal como aparecen en el formato físico
+# "EQUIPOS UTILIZADOS" para el ensayo de Granulometría (incluye el lavado por Tamiz No. 200).
+EQUIPO_GRANULOMETRIA = [
+    "Balanza GDA-E-010", "Balanza GDA-E-011", "Balanza GDA-E-012",
+    "Horno GDA-E-007", "Horno GDA-E-404",
+    "Tamiz de lavado GDA-E-", "Serie de tamices GDA-E-030 a GDA-E-045",
+]
+
 BITACORA_ENSAYOS = [
     "Granulometría", "Pasa 200", "Humedad", "Límites de Atterberg", "Límite de contracción",
     "Materia orgánica", "Proctor", "CBR", "Compresión inconfinada", "Compresión en roca",
@@ -451,6 +459,14 @@ def status_badge_html(status, font_size=None):
 def status_circle_html(status, size=20):
     circle_class = STATUS_BADGE[status].replace("badge-", "status-circle-")
     return f'<span class="status-circle {circle_class}">{icon(STATUS_ICON[status], size=size, fill=True)}</span>'
+
+
+def card_header_html(icon_name, title, extra_html=""):
+    """Encabezado de tarjeta con ícono + título (y opcionalmente un badge a la derecha),
+    usado en las tarjetas de los formularios de ensayo (Norma, Equipos, Pasa 200, etc.)."""
+    return (f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">'
+            f'<div style="display:flex;align-items:center;gap:8px;font-weight:700;color:{PRIMARY};font-size:15px;">'
+            f'{icon(icon_name, size=18)} {title}</div>{extra_html}</div>')
 
 
 def now_iso():
@@ -1728,49 +1744,91 @@ def generar_excel_granulometria(codigo, perf_codigo, muestra, project, data):
 # ════════════════════════════════════════════════════════════════════
 # FORMULARIOS DE ENSAYO (solo captura de datos, sin cálculos)
 # ════════════════════════════════════════════════════════════════════
-def render_equipo(data, prefix):
-    st.markdown('<div class="section-title">Equipo utilizado</div>', unsafe_allow_html=True)
-    seleccionados = data.get(f"{prefix}_equipos", [])
-    seleccionados = [e for e in seleccionados if e in EQUIPO_LIST]  # por si cambia la lista
-    data[f"{prefix}_equipos"] = st.multiselect(
-        "Marca todo el equipo utilizado en este ensayo", EQUIPO_LIST, default=seleccionados,
-        key=f"{prefix}_equipos_ms", placeholder="Selecciona uno o varios equipos…",
-    )
+def render_equipo(data, prefix, equipo_list=None):
+    lista = equipo_list or EQUIPO_LIST
+    with st.container(border=True):
+        st.markdown(card_header_html("construction", "Equipos Utilizados"), unsafe_allow_html=True)
+        seleccionados = set(data.get(f"{prefix}_equipos", []))
+        cols = st.columns(2)
+        nuevos = []
+        for i, equipo in enumerate(lista):
+            with cols[i % 2]:
+                if st.checkbox(equipo, value=equipo in seleccionados, key=f"{prefix}_equipo_{i}"):
+                    nuevos.append(equipo)
+        data[f"{prefix}_equipos"] = nuevos
 
 
 def render_norma_selector(assay_type, data, key_prefix):
-    st.markdown('<div class="section-title">Norma aplicada</div>', unsafe_allow_html=True)
-    options = NORMAS_ENSAYO[assay_type]
-    current = data.get(f"{key_prefix}_norma", "")
-    idx = options.index(current) if current in options else 0
-    choice = st.radio("Norma", options, index=idx, horizontal=True, key=f"norma_{key_prefix}", label_visibility="collapsed")
-    data[f"{key_prefix}_norma"] = choice
+    with st.container(border=True):
+        st.markdown(card_header_html("rule", "Norma a Utilizar"), unsafe_allow_html=True)
+        options = NORMAS_ENSAYO[assay_type]
+        current = data.get(f"{key_prefix}_norma", "")
+        idx = options.index(current) if current in options else 0
+        choice = st.selectbox("Norma", options, index=idx, key=f"norma_{key_prefix}", label_visibility="collapsed")
+        data[f"{key_prefix}_norma"] = choice
+
+
+PASA_200_FILAS = [
+    ("p200_recipiente", "Recipiente No."),
+    ("p200_seco_mas_recipiente", "Masa suelo seco + recipiente"),
+    ("p200_seco_14h", "Masa suelo seco (14 hrs)"),
+    ("p200_seco_15h", "Masa suelo seco (15 hrs)"),
+    ("p200_seco_16h", "Masa suelo seco (16 hrs)"),
+    ("p200_masa_recipiente", "Masa del recipiente"),
+]
 
 
 def render_granulometria_form(data, assay_id):
     st.info("Estos datos se guardan tal cual y se llevan a la plantilla oficial de Excel — los cálculos y la clasificación USCS los hace el Excel, no la app.")
-    st.markdown('<div class="section-title">Datos generales</div>', unsafe_allow_html=True)
-    data["masa_inicial_seca"] = st.text_input("Masa inicial seca (g)", value=data.get("masa_inicial_seca", ""), placeholder="350.5")
 
-    st.markdown('<div class="section-title">Pesos retenidos por tamiz (g)</div>', unsafe_allow_html=True)
-    # Igual que en la Bitácora: la fuente que se le pasa a st.data_editor debe permanecer estable
-    # entre reruns (si no, el editor descarta la primera edición y toca digitar dos veces). Por eso
-    # se arma una sola vez por ensayo y se cachea en session_state.
-    sieve_key = f"sieve_{assay_id}"
-    if sieve_key not in st.session_state.sieve_draft:
-        rows = [{"Tamiz": label, "Abertura (mm)": apert, "Retenido (g)": to_float(data.get(key), 0.0)} for key, label, apert, _cell in SIEVES]
-        st.session_state.sieve_draft[sieve_key] = pd.DataFrame(rows)
-    df_source = st.session_state.sieve_draft[sieve_key]
-    edited = st.data_editor(
-        df_source, hide_index=True, use_container_width=True, disabled=["Tamiz", "Abertura (mm)"],
-        column_config={"Retenido (g)": st.column_config.NumberColumn(step=0.1, default=0.0)},
-        key=f"gran_sieve_editor_{assay_id}",
-    )
-    for i, (key, _label, _apert, _cell) in enumerate(SIEVES):
-        data[key] = edited.iloc[i]["Retenido (g)"]
-
-    render_equipo(data, "gran")
     render_norma_selector("granulometria", data, "gran")
+    render_equipo(data, "gran", EQUIPO_GRANULOMETRIA)
+
+    with st.container(border=True):
+        st.markdown(card_header_html("water_drop", "Determinación Pasa No. 200",
+                                      '<span class="badge badge-warning">Requerido</span>'), unsafe_allow_html=True)
+        head = st.columns([2.2, 1, 1])
+        head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Antes del lavado (g)</div>', unsafe_allow_html=True)
+        head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Después del lavado (g)</div>', unsafe_allow_html=True)
+        for key, label in PASA_200_FILAS:
+            row = st.columns([2.2, 1, 1])
+            row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+            data[f"{key}_antes"] = row[1].text_input(
+                f"{label} antes", value=data.get(f"{key}_antes", ""), key=f"{key}_antes_{assay_id}",
+                label_visibility="collapsed", placeholder="0.00")
+            data[f"{key}_despues"] = row[2].text_input(
+                f"{label} después", value=data.get(f"{key}_despues", ""), key=f"{key}_despues_{assay_id}",
+                label_visibility="collapsed", placeholder="0.00")
+        row_total = st.columns([2.2, 1, 1])
+        row_total[0].markdown('<div style="padding-top:8px;font-weight:700;">Muestra total seca (g)</div>', unsafe_allow_html=True)
+        data["p200_total_antes"] = row_total[1].text_input(
+            "Muestra total seca antes", value=data.get("p200_total_antes", ""), key=f"p200_total_antes_{assay_id}",
+            label_visibility="collapsed", placeholder="0.00")
+        data["p200_total_despues"] = row_total[2].text_input(
+            "Muestra total seca después", value=data.get("p200_total_despues", ""), key=f"p200_total_despues_{assay_id}",
+            label_visibility="collapsed", placeholder="0.00")
+        # La plantilla de Excel usa "masa inicial seca" como la masa seca de partida del ensayo;
+        # para no duplicar el campo, se toma directo del total (antes del lavado) de esta tabla.
+        data["masa_inicial_seca"] = data["p200_total_antes"]
+
+    with st.container(border=True):
+        st.markdown(card_header_html("grid_view", "Granulometría (Masa de Suelo Retenido)"), unsafe_allow_html=True)
+        # Igual que en la Bitácora: la fuente que se le pasa a st.data_editor debe permanecer estable
+        # entre reruns (si no, el editor descarta la primera edición y toca digitar dos veces). Por eso
+        # se arma una sola vez por ensayo y se cachea en session_state.
+        sieve_key = f"sieve_{assay_id}"
+        if sieve_key not in st.session_state.sieve_draft:
+            rows = [{"Tamiz": label, "Abertura (mm)": apert, "Retenido (g)": to_float(data.get(key), 0.0)} for key, label, apert, _cell in SIEVES]
+            st.session_state.sieve_draft[sieve_key] = pd.DataFrame(rows)
+        df_source = st.session_state.sieve_draft[sieve_key]
+        edited = st.data_editor(
+            df_source, hide_index=True, use_container_width=True, disabled=["Tamiz", "Abertura (mm)"],
+            column_config={"Retenido (g)": st.column_config.NumberColumn(step=0.1, default=0.0)},
+            key=f"gran_sieve_editor_{assay_id}",
+        )
+        for i, (key, _label, _apert, _cell) in enumerate(SIEVES):
+            data[key] = edited.iloc[i]["Retenido (g)"]
+        st.caption("El % retenido y la clasificación USCS se calculan en la plantilla de Excel, no aquí.")
 
 
 def render_humedad_form(data):
@@ -1848,16 +1906,23 @@ def render_assay_form():
     if st.button("← Atrás"):
         go_back(fallback="muestra-detail")
 
-    bar_cols = st.columns(5)
-    bar_cols[0].markdown(f"**Proyecto**<br>{codigo}", unsafe_allow_html=True)
-    bar_cols[1].markdown(f"**Muestra**<br>{muestra['numero'] if muestra else '—'}", unsafe_allow_html=True)
-    bar_cols[2].markdown(f"**Ensayo**<br>{ASSAY_LABELS[assay['tipo']]}", unsafe_allow_html=True)
-    bar_cols[3].markdown(f"**Perforación**<br>{perf_codigo}", unsafe_allow_html=True)
-    bar_cols[4].markdown(f"**Estado**<br>{status_badge_html(assay['status'])}", unsafe_allow_html=True)
-    st.markdown(f'<div class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(assay["lastModified"])}'
-                + (f' · {html.escape(assay["laboratorist"])}' if assay.get("laboratorist") else "") + '</div>', unsafe_allow_html=True)
+    st.markdown(f"## Registro de Ensayo: {ASSAY_LABELS[assay['tipo']]}")
+    st.markdown(f'<div style="margin-bottom:10px;">{status_badge_html(assay["status"])}&nbsp;&nbsp;'
+                f'<span class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(assay["lastModified"])}'
+                + (f' · {html.escape(assay["laboratorist"])}' if assay.get("laboratorist") else "") + '</span></div>',
+                unsafe_allow_html=True)
 
-    st.markdown(f"## {ASSAY_LABELS[assay['tipo']]}")
+    with st.container(border=True):
+        st.markdown(card_header_html("info", "Información General"), unsafe_allow_html=True)
+        g1, g2 = st.columns(2)
+        g1.markdown(f'<div class="cell-muted">Proyecto</div><div style="font-weight:600;">{html.escape(codigo)}</div>', unsafe_allow_html=True)
+        g2.markdown(f'<div class="cell-muted">Sondeo</div><div style="font-weight:600;">{html.escape(perf_codigo)}</div>', unsafe_allow_html=True)
+        g3, g4 = st.columns(2)
+        g3.markdown(f'<div class="cell-muted" style="margin-top:12px;">Muestra</div>'
+                    f'<div style="font-weight:600;">M-{html.escape(str(muestra["numero"])) if muestra else "—"}</div>', unsafe_allow_html=True)
+        profundidad_txt = f'{muestra["profundidad_de"]:.2f}m - {muestra["profundidad_hasta"]:.2f}m' if muestra else "—"
+        g4.markdown(f'<div class="cell-muted" style="margin-top:12px;">Profundidad</div><div style="font-weight:600;">{profundidad_txt}</div>',
+                    unsafe_allow_html=True)
     data = dict(assay.get("data", {}))
 
     if read_only:
