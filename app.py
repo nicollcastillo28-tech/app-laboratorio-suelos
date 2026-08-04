@@ -353,6 +353,9 @@ EQUIPO_GRANULOMETRIA = [
 # Equipos reales usados en el ensayo de Contenido de Humedad Natural.
 EQUIPO_HUMEDAD = ["Balanza GDA-E-011", "Horno GDA-E-007"]
 
+# Método del ensayo de humedad (INV E-122), tal como aparece en la plantilla oficial (celda C28).
+METODO_HUMEDAD = ["Método A", "Método B"]
+
 BITACORA_ENSAYOS = [
     "Granulometría", "Pasa 200", "Humedad", "Límites de Atterberg", "Límite de contracción",
     "Materia orgánica", "Proctor", "CBR", "Compresión inconfinada", "Compresión en roca",
@@ -378,6 +381,39 @@ BITACORA_XLSX_MAX_ROWS = 14  # la plantilla trae 14 filas fijas (18 a 31)
 
 
 # ════════════════════════════════════════════════════════════════════
+# ALMACÉN COMPARTIDO ENTRE SESIONES (jefe y auxiliares deben ver los mismos datos
+# aunque estén en pestañas/dispositivos distintos — st.session_state por sí solo es
+# privado de cada sesión de navegador, así que los datos "de negocio" viven aquí,
+# en un recurso cacheado que vive mientras el proceso del servidor siga corriendo.
+# Nota: esto NO sobrevive un reinicio del servidor — eso es tarea de la migración a
+# Supabase, que queda pendiente aparte).
+# ════════════════════════════════════════════════════════════════════
+@st.cache_resource
+def get_shared_store():
+    codigo_demo = "GDA-001-24"
+    return {
+        "projects": [{
+            "codigo_interno": codigo_demo, "numero": "001", "anio": "24",
+            "nombre": "Estudio de suelos vía Bogotá-Medellín Km 14", "localizacion": "Sector Norte, Km 14+200",
+            "fecha_bitacora": "2024-11-15", "fecha_ingreso_muestra": "2024-11-15", "norma": "GDA",
+        }],
+        "perforaciones": {codigo_demo: [{"tipo": "Sondeo", "consecutivo": 1, "codigo": "S1"}]},
+        "muestras": {
+            f"{codigo_demo}::S1": [{
+                "numero": "1", "id_unico": f"{codigo_demo}-S1-M1", "profundidad_de": 0.0, "profundidad_hasta": 1.5,
+                "tipo_muestra": "Shelby", "ensayos": {"Granulometría": True, "Humedad": True}, "observaciones": "",
+            }]
+        },
+        "assays": [{
+            "id": "a001", "muestra_id": f"{codigo_demo}-S1-M1", "tipo": "granulometria", "status": "en-proceso",
+            "data": {}, "observations": "", "laboratorist": "",
+            "codigo_interno": codigo_demo, "perforacion_codigo": "S1", "muestra_numero": "1",
+            "lastModified": datetime.now().isoformat(), "createdAt": datetime.now().isoformat(),
+        }],
+    }
+
+
+# ════════════════════════════════════════════════════════════════════
 # ESTADO INICIAL
 # ════════════════════════════════════════════════════════════════════
 def init_state():
@@ -387,25 +423,11 @@ def init_state():
     st.session_state.role = None
     st.session_state.screen = "home"
 
-    codigo_demo = "GDA-001-24"
-    st.session_state.projects = [{
-        "codigo_interno": codigo_demo, "numero": "001", "anio": "24",
-        "nombre": "Estudio de suelos vía Bogotá-Medellín Km 14", "localizacion": "Sector Norte, Km 14+200",
-        "fecha_bitacora": "2024-11-15", "fecha_ingreso_muestra": "2024-11-15", "norma": "GDA",
-    }]
-    st.session_state.perforaciones = {codigo_demo: [{"tipo": "Sondeo", "consecutivo": 1, "codigo": "S1"}]}
-    st.session_state.muestras = {
-        f"{codigo_demo}::S1": [{
-            "numero": "1", "id_unico": f"{codigo_demo}-S1-M1", "profundidad_de": 0.0, "profundidad_hasta": 1.5,
-            "tipo_muestra": "Shelby", "ensayos": {"Granulometría": True, "Humedad": True}, "observaciones": "",
-        }]
-    }
-    st.session_state.assays = [{
-        "id": "a001", "muestra_id": f"{codigo_demo}-S1-M1", "tipo": "granulometria", "status": "en-proceso",
-        "data": {}, "observations": "", "laboratorist": "",
-        "codigo_interno": codigo_demo, "perforacion_codigo": "S1", "muestra_numero": "1",
-        "lastModified": datetime.now().isoformat(), "createdAt": datetime.now().isoformat(),
-    }]
+    store = get_shared_store()
+    st.session_state.projects = store["projects"]
+    st.session_state.perforaciones = store["perforaciones"]
+    st.session_state.muestras = store["muestras"]
+    st.session_state.assays = store["assays"]
 
     st.session_state.nav_stack = []
     st.session_state.bitacora_draft = {}
@@ -445,6 +467,14 @@ def to_float(v, default=None):
         return default
 
 
+def fmt_num(v, decimals=3):
+    """Formatea un derivado numérico permitiendo hasta `decimals` decimales, sin ceros de más."""
+    if v is None:
+        return None
+    s = f"{v:.{decimals}f}".rstrip("0").rstrip(".")
+    return s if s not in ("", "-") else "0"
+
+
 def icon(name, size=18, fill=False, color=None):
     """Ícono de Material Symbols para insertar dentro de HTML propio (st.markdown con unsafe_allow_html)."""
     cls = "material-symbols-outlined msi-fill" if fill else "material-symbols-outlined"
@@ -471,6 +501,60 @@ def card_header_html(icon_name, title, extra_html=""):
     return (f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">'
             f'<div style="display:flex;align-items:center;gap:8px;font-weight:700;color:{PRIMARY};font-size:15px;">'
             f'{icon(icon_name, size=18)} {title}</div>{extra_html}</div>')
+
+
+def param_table_html(rows, header_left="PARÁMETRO", header_right="VALOR REGISTRADO"):
+    """Tabla de 2 columnas (etiqueta/valor) para la vista de solo lectura ('Resultados de Ensayo')."""
+    body = "".join(
+        f'<tr><td style="padding:10px 14px;border-bottom:1px solid {BORDER};color:{TEXT};">{html.escape(str(label))}</td>'
+        f'<td style="padding:10px 14px;border-bottom:1px solid {BORDER};text-align:right;font-weight:600;color:{PRIMARY};">'
+        f'{html.escape(str(value)) if value not in (None, "") else "—"}</td></tr>'
+        for label, value in rows
+    )
+    return (f'<table style="width:100%;border-collapse:collapse;font-size:14px;">'
+            f'<thead><tr style="background:{SECONDARY_CONTAINER};">'
+            f'<th style="padding:10px 14px;text-align:left;font-size:11px;letter-spacing:0.04em;color:{PRIMARY};">{header_left}</th>'
+            f'<th style="padding:10px 14px;text-align:right;font-size:11px;letter-spacing:0.04em;color:{PRIMARY};">{header_right}</th>'
+            f'</tr></thead><tbody>{body}</tbody></table>')
+
+
+def condicion_table_html(muestra):
+    """Tabla 'CONDICIÓN / TEMPERATURA °C / HUMEDAD %' para la vista de solo lectura."""
+    def fila(cond_key, label):
+        temp = muestra.get(f"cond_{cond_key}_temp") or "—"
+        hum = muestra.get(f"cond_{cond_key}_hum") or "—"
+        return (f'<tr><td style="padding:10px 14px;border-bottom:1px solid {BORDER};font-weight:600;color:{TEXT};">{label}</td>'
+                f'<td style="padding:10px 14px;border-bottom:1px solid {BORDER};text-align:center;">{html.escape(str(temp))}</td>'
+                f'<td style="padding:10px 14px;border-bottom:1px solid {BORDER};text-align:center;">{html.escape(str(hum))}</td></tr>')
+    body = fila("inicial", "Inicial") + fila("final", "Final")
+    return (f'<table style="width:100%;border-collapse:collapse;font-size:14px;">'
+            f'<thead><tr style="background:{SECONDARY_CONTAINER};">'
+            f'<th style="padding:10px 14px;text-align:left;font-size:11px;letter-spacing:0.04em;color:{PRIMARY};">CONDICIÓN</th>'
+            f'<th style="padding:10px 14px;text-align:center;font-size:11px;letter-spacing:0.04em;color:{PRIMARY};">TEMPERATURA °C</th>'
+            f'<th style="padding:10px 14px;text-align:center;font-size:11px;letter-spacing:0.04em;color:{PRIMARY};">HUMEDAD %</th>'
+            f'</tr></thead><tbody>{body}</tbody></table>')
+
+
+def split_equipo_codigo(equipo):
+    """Separa 'Balanza GDA-E-011' en ('Balanza', 'GDA-E-011') para mostrarlo en dos líneas."""
+    idx = equipo.find("GDA-E")
+    if idx == -1:
+        return equipo, ""
+    return equipo[:idx].strip(), equipo[idx:].strip()
+
+
+def equipos_readonly_html(equipos):
+    """Lista de equipos utilizados (ícono + nombre + código) para la vista de solo lectura."""
+    if not equipos:
+        return f'<div class="cell-muted">Ningún equipo seleccionado.</div>'
+    items = "".join(
+        f'<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid {BORDER};">'
+        f'{icon("construction", size=18, color=PRIMARY)}'
+        f'<div><div style="font-weight:600;">{html.escape(nombre)}</div>'
+        f'<div class="cell-muted" style="font-size:12px;">{html.escape(codigo) if codigo else "—"}</div></div></div>'
+        for nombre, codigo in (split_equipo_codigo(e) for e in equipos)
+    )
+    return f'<div>{items}</div>'
 
 
 def now_iso():
@@ -805,10 +889,11 @@ def _render_project_list(codes, empty_msg, allow_delete, mark_read_only=False):
                 with cols[3]:
                     if confirm_delete(f"project_{p['codigo_interno']}", f"el proyecto {p['codigo_interno']}"):
                         codigo = p["codigo_interno"]
-                        st.session_state.projects = [x for x in st.session_state.projects if x["codigo_interno"] != codigo]
+                        st.session_state.projects[:] = [x for x in st.session_state.projects if x["codigo_interno"] != codigo]
                         st.session_state.perforaciones.pop(codigo, None)
-                        st.session_state.muestras = {k: v for k, v in st.session_state.muestras.items() if not k.startswith(codigo + "::")}
-                        st.session_state.assays = [a for a in st.session_state.assays if a["codigo_interno"] != codigo]
+                        for k in [k for k in st.session_state.muestras if k.startswith(codigo + "::")]:
+                            del st.session_state.muestras[k]
+                        st.session_state.assays[:] = [a for a in st.session_state.assays if a["codigo_interno"] != codigo]
                         st.session_state.bitacora_draft = {k: v for k, v in st.session_state.bitacora_draft.items() if not k.startswith(codigo + "::")}
                         st.rerun()
 
@@ -913,6 +998,19 @@ def render_projects_done():
 # ════════════════════════════════════════════════════════════════════
 # NUEVO PROYECTO (solo Jefe)
 # ════════════════════════════════════════════════════════════════════
+def _leer_bitacora_cliente_xlsx(file_obj):
+    """Lee el formato GDA-FL-021 (Bitácora de Proyecto) que envía el cliente y devuelve
+    los campos que sirven para precargar Nuevo Proyecto."""
+    wb = load_workbook(file_obj, data_only=True)
+    ws = wb["HOJA1"] if "HOJA1" in wb.sheetnames else wb.active
+    return {
+        "cliente": str(ws["E11"].value or "").strip(),
+        "nombre": str(ws["E12"].value or "").strip(),
+        "localizacion": str(ws["E13"].value or "").strip(),
+        "correo_cliente": str(ws["Q15"].value or "").strip(),
+    }
+
+
 def render_new_project():
     require_role("jefe")
     if st.button("← Atrás"):
@@ -937,9 +1035,27 @@ def render_new_project():
         else:
             st.success(f"Código interno: **{codigo_interno}**")
 
+    st.markdown('<div class="section-title">Cargar bitácora de proyecto del cliente (opcional)</div>', unsafe_allow_html=True)
+    uploaded_cliente_xlsx = st.file_uploader(
+        "Bitácora de proyecto del cliente (Excel)", type=["xlsx"], key="cliente_xlsx_uploader",
+        help="Si el cliente te envió el formato GDA-FL-021 (Bitácora de Proyecto), súbelo aquí para "
+             "precargar Cliente, Nombre del proyecto, Localización y Correo electrónico.",
+    )
+    if uploaded_cliente_xlsx is not None and st.session_state.get("_cliente_xlsx_last") != uploaded_cliente_xlsx.name:
+        try:
+            datos_cliente = _leer_bitacora_cliente_xlsx(uploaded_cliente_xlsx)
+            st.session_state["new_nombre"] = datos_cliente["nombre"]
+            st.session_state["new_localizacion"] = datos_cliente["localizacion"]
+            st.session_state["new_cliente"] = datos_cliente["cliente"]
+            st.session_state["new_correo_cliente"] = datos_cliente["correo_cliente"]
+            st.session_state["_cliente_xlsx_last"] = uploaded_cliente_xlsx.name
+            st.success("Datos del cliente cargados desde el Excel. Revísalos abajo antes de guardar.")
+        except Exception:
+            st.error("No se pudo leer el archivo. Verifica que sea el formato GDA-FL-021 (Bitácora de Proyecto).")
+
     st.markdown('<div class="section-title">Información del proyecto</div>', unsafe_allow_html=True)
-    nombre = st.text_input("Nombre del proyecto", placeholder="Estudio de suelos vía Bogotá-Medellín")
-    localizacion = st.text_input("Localización", placeholder="Km 14+200")
+    nombre = st.text_input("Nombre del proyecto", key="new_nombre", placeholder="Estudio de suelos vía Bogotá-Medellín")
+    localizacion = st.text_input("Localización", key="new_localizacion", placeholder="Km 14+200")
     norma = st.radio("Norma", NORMA_PROYECTO_OPTIONS, horizontal=True)
 
     c1, c2 = st.columns(2)
@@ -948,9 +1064,9 @@ def render_new_project():
     with c2:
         fecha_ingreso = st.date_input("Fecha de ingreso de muestra", value=date.today())
 
-    st.markdown('<div class="section-title">Datos del cliente (para el encabezado de los informes)</div>', unsafe_allow_html=True)
-    cliente = st.text_input("Cliente", placeholder="Nombre del cliente")
-    correo_cliente = st.text_input("Correo electrónico", placeholder="correo@cliente.com")
+    st.markdown('<div class="section-title">Datos del cliente (para el encabezado de los informes — solo el Jefe los ve)</div>', unsafe_allow_html=True)
+    cliente = st.text_input("Cliente", key="new_cliente", placeholder="Nombre del cliente")
+    correo_cliente = st.text_input("Correo electrónico", key="new_correo_cliente", placeholder="correo@cliente.com")
     muestra_tomada_por = st.text_input("Muestra tomada por", placeholder="Nombre de quien tomó la muestra")
 
     laboratorista_asignado = st.text_input(
@@ -1052,7 +1168,8 @@ def render_new_project():
         if st.button("Cancelar", use_container_width=True):
             if codigo_interno:
                 st.session_state.perforaciones.pop(codigo_interno, None)
-                st.session_state.muestras = {k: v for k, v in st.session_state.muestras.items() if not k.startswith(codigo_interno + "::")}
+                for k in [k for k in st.session_state.muestras if k.startswith(codigo_interno + "::")]:
+                    del st.session_state.muestras[k]
                 st.session_state.bitacora_draft = {k: v for k, v in st.session_state.bitacora_draft.items() if not k.startswith(codigo_interno + "::")}
             navigate("home")
     with col2:
@@ -1128,6 +1245,9 @@ def render_project_detail():
             ("move_to_inbox", "Ingreso de muestras", project.get("fecha_ingreso_muestra")),
             ("person", "Asignado a", project.get("laboratorista_asignado")),
         ]
+        # Datos del cliente: solo el Jefe los ve, nunca el laboratorista.
+        if st.session_state.role == "jefe":
+            info_rows.insert(1, ("badge", "Cliente", project.get("cliente")))
         for i, (icono, label, valor) in enumerate(info_rows):
             margen = "margin-top:14px;" if i else ""
             st.markdown(f'<div class="cell-muted" style="{margen}text-transform:uppercase;letter-spacing:0.04em;font-size:11px;">'
@@ -1141,11 +1261,12 @@ def render_project_detail():
                 navigate("edit-project")
         with c2:
             if confirm_delete(f"project_{codigo}", f"el proyecto {codigo} y todas sus perforaciones y muestras"):
-                st.session_state.projects = [p for p in st.session_state.projects if p["codigo_interno"] != codigo]
+                st.session_state.projects[:] = [p for p in st.session_state.projects if p["codigo_interno"] != codigo]
                 st.session_state.perforaciones.pop(codigo, None)
-                st.session_state.muestras = {k: v for k, v in st.session_state.muestras.items() if not k.startswith(codigo + "::")}
+                for k in [k for k in st.session_state.muestras if k.startswith(codigo + "::")]:
+                    del st.session_state.muestras[k]
                 st.session_state.bitacora_draft = {k: v for k, v in st.session_state.bitacora_draft.items() if not k.startswith(codigo + "::")}
-                st.session_state.assays = [a for a in st.session_state.assays if a["codigo_interno"] != codigo]
+                st.session_state.assays[:] = [a for a in st.session_state.assays if a["codigo_interno"] != codigo]
                 navigate("home")
 
     with st.container(border=True):
@@ -1532,7 +1653,7 @@ def render_bitacora():
                 st.session_state.perforaciones[codigo] = [p for p in st.session_state.perforaciones[codigo] if p["codigo"] != perf["codigo"]]
                 st.session_state.muestras.pop(key, None)
                 st.session_state.bitacora_draft.pop(key, None)
-                st.session_state.assays = [a for a in st.session_state.assays if not (a["codigo_interno"] == codigo and a["perforacion_codigo"] == perf["codigo"])]
+                st.session_state.assays[:] = [a for a in st.session_state.assays if not (a["codigo_interno"] == codigo and a["perforacion_codigo"] == perf["codigo"])]
                 st.rerun()
 
 
@@ -1782,6 +1903,11 @@ def generar_excel_humedad(codigo, perf_codigo, muestra, project, data):
     ws["I22"] = to_float(data.get("hum_masa_recipiente"))
     # I23 (masa seca) e I24 (% humedad) son fórmulas de la propia plantilla; no se tocan.
 
+    metodo = data.get("hum_metodo", "")
+    ws["C28"] = "MÉTODO A" if metodo == "Método A" else ("MÉTODO B" if metodo == "Método B" else "")
+    temp_horno = data.get("hum_temp_horno", "")
+    ws["E28"] = "110°C" if "110" in temp_horno else ("60°C" if "60" in temp_horno else "")
+
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
@@ -1937,9 +2063,7 @@ def render_humedad_form(data, assay_id):
             hrow[0].markdown(f'<div style="padding-top:8px;">{hlabel}</div>', unsafe_allow_html=True)
             data[hkey] = hrow[1].text_input(hlabel, key=hwidget_key, label_visibility="collapsed", placeholder="0.00")
 
-        _campo("hum_masa_agua", "Masa del agua (g)")
-        _campo("hum_masa_seca", "Masa suelo seco (g)")
-        st.caption("El % de humedad se calcula en la plantilla de Excel, no aquí.")
+        st.caption("La masa del agua y la masa de suelo seco se calculan solas (restando la masa del recipiente) — no se digitan aquí.")
 
     with st.container(border=True):
         st.markdown(card_header_html("local_fire_department", "Datos del Laboratorio"), unsafe_allow_html=True)
@@ -1950,8 +2074,9 @@ def render_humedad_form(data, assay_id):
         with c1:
             data["hum_temp_horno"] = st.selectbox("Temperatura Horno", opciones_temp, index=idx, key=f"hum_temp_horno_{assay_id}")
         with c2:
-            data["hum_tiempo_secado"] = st.text_input("Tiempo de secado", value=data.get("hum_tiempo_secado", ""),
-                                                       key=f"hum_tiempo_secado_{assay_id}", placeholder="16 hrs")
+            metodo_actual = data.get("hum_metodo", METODO_HUMEDAD[0])
+            midx = METODO_HUMEDAD.index(metodo_actual) if metodo_actual in METODO_HUMEDAD else 0
+            data["hum_metodo"] = st.selectbox("Método del Ensayo", METODO_HUMEDAD, index=midx, key=f"hum_metodo_{assay_id}")
 
 
 def render_masa_unitaria_form(data):
@@ -1970,33 +2095,64 @@ def render_masa_unitaria_form(data):
     render_norma_selector("masa-unitaria", data, "mu")
 
 
-def render_read_only_summary(tipo, data):
+def render_read_only_summary(tipo, data, laboratorista="—"):
+    """Vista de solo lectura ('Resultados de Ensayo') — la misma para el Jefe (siempre) y para
+    el auxiliar cuando el proyecto ya fue ejecutado. Sin casillas de digitación, solo tarjetas
+    y tablas con los datos ya registrados."""
     if tipo == "granulometria":
-        st.markdown(f"**Masa inicial seca (g):** {data.get('masa_inicial_seca') or '—'}")
-        rows = [{"Tamiz": label, "Retenido (g)": data.get(key, "—")} for key, label, _apert, _cell in SIEVES]
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        rows = [("Masa inicial seca (g)", fmt_num(to_float(data.get("masa_inicial_seca"))))]
+        with st.container(border=True):
+            st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
+            st.markdown(param_table_html(rows), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("grid_view", "Granulometría (Masa de Suelo Retenido)"), unsafe_allow_html=True)
+            sieve_rows = [(label, data.get(key, "—")) for key, label, _apert, _cell in SIEVES]
+            st.markdown(param_table_html(sieve_rows, header_left="TAMIZ", header_right="RETENIDO (g)"), unsafe_allow_html=True)
         equipos, norma = data.get("gran_equipos", []), data.get("gran_norma", "—")
     elif tipo == "humedad":
-        campos = [("hum_recipiente", "Recipiente no."), ("hum_masa_recipiente", "Masa del recipiente (g)"),
-                  ("hum_masa_humedo_mas_recipiente", "Masa suelo húmedo + recipiente (g)"),
-                  ("hum_seco_mas_recipiente", "Masa suelo seco + recipiente (g)"),
-                  ("hum_seco_14h", "Masa suelo seco + recipiente (g) (14 hrs)"),
-                  ("hum_seco_15h", "Masa suelo seco + recipiente (g) (15 hrs)"),
-                  ("hum_seco_16h", "Masa suelo seco + recipiente (g) (16 hrs)"),
-                  ("hum_masa_agua", "Masa del agua (g)"), ("hum_masa_seca", "Masa suelo seco (g)"),
-                  ("hum_temp_horno", "Temperatura horno"), ("hum_tiempo_secado", "Tiempo de secado")]
-        for key, label in campos:
-            st.markdown(f"**{label}:** {data.get(key) or '—'}")
+        masa_humedo = to_float(data.get("hum_masa_humedo_mas_recipiente"))
+        masa_seco = to_float(data.get("hum_seco_mas_recipiente"))
+        masa_recip = to_float(data.get("hum_masa_recipiente"))
+        masa_agua = (masa_humedo - masa_seco) if (masa_humedo is not None and masa_seco is not None) else None
+        masa_suelo_seco = (masa_seco - masa_recip) if (masa_seco is not None and masa_recip is not None) else None
+        rows = [
+            ("Recipiente no.", data.get("hum_recipiente")),
+            ("Masa del recipiente (g)", data.get("hum_masa_recipiente")),
+            ("Masa suelo húmedo + recipiente (g)", data.get("hum_masa_humedo_mas_recipiente")),
+            ("Masa suelo seco + recipiente (g) (14 hrs)", data.get("hum_seco_14h")),
+            ("Masa suelo seco + recipiente (g) (15 hrs)", data.get("hum_seco_15h")),
+            ("Masa suelo seco + recipiente (g) (16 hrs)", data.get("hum_seco_16h")),
+            ("Masa del agua (g)", fmt_num(masa_agua)),
+            ("Masa suelo seco (g)", fmt_num(masa_suelo_seco)),
+        ]
+        with st.container(border=True):
+            st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
+            st.markdown(param_table_html(rows), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("local_fire_department", "Datos del Laboratorio"), unsafe_allow_html=True)
+            lab_rows = [
+                ("Temperatura Horno", data.get("hum_temp_horno")),
+                ("Método del Ensayo", data.get("hum_metodo")),
+                ("Laboratorista", laboratorista),
+            ]
+            st.markdown(param_table_html(lab_rows, header_left="DATO", header_right="VALOR"), unsafe_allow_html=True)
         equipos, norma = data.get("hum_equipos", []), data.get("hum_norma", "—")
     else:
-        campos = [("mu_peso_aire", "Masa en el aire (g)"), ("mu_peso_aire_par", "Masa en el aire parafinado (g)"),
-                  ("mu_peso_agua_par", "Masa en el agua parafinado (g)"), ("mu_temp_agua", "Temperatura del agua (°C)"),
-                  ("mu_peso_parafina", "Masa de la parafina (g)"), ("mu_dens_parafina", "Densidad de la parafina (g/cm³)")]
-        for key, label in campos:
-            st.markdown(f"**{label}:** {data.get(key) or '—'}")
+        rows = [("Masa en el aire (g)", data.get("mu_peso_aire")), ("Masa en el aire parafinado (g)", data.get("mu_peso_aire_par")),
+                ("Masa en el agua parafinado (g)", data.get("mu_peso_agua_par")), ("Temperatura del agua (°C)", data.get("mu_temp_agua")),
+                ("Masa de la parafina (g)", data.get("mu_peso_parafina")), ("Densidad de la parafina (g/cm³)", data.get("mu_dens_parafina"))]
+        with st.container(border=True):
+            st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
+            st.markdown(param_table_html(rows), unsafe_allow_html=True)
         equipos, norma = data.get("mu_equipos", []), data.get("mu_norma", "—")
-    st.markdown(f"**Equipo utilizado:** {', '.join(equipos) if equipos else '—'}")
-    st.markdown(f"**Norma aplicada:** {norma or '—'}")
+
+    with st.container(border=True):
+        st.markdown(card_header_html("rule", "Norma Aplicada"), unsafe_allow_html=True)
+        st.markdown(f'<div style="font-weight:600;">{html.escape(norma or "—")}</div>', unsafe_allow_html=True)
+
+    with st.container(border=True):
+        st.markdown(card_header_html("construction", "Equipos Utilizados"), unsafe_allow_html=True)
+        st.markdown(equipos_readonly_html(equipos), unsafe_allow_html=True)
 
 
 def render_assay_form():
@@ -2016,7 +2172,10 @@ def render_assay_form():
     if st.button("← Atrás"):
         go_back(fallback="muestra-detail")
 
-    st.markdown(f"## Registro de Ensayo: {ASSAY_LABELS[assay['tipo']]}")
+    titulo_pagina = "Resultados de Ensayo" if read_only else f"Registro de Ensayo: {ASSAY_LABELS[assay['tipo']]}"
+    st.markdown(f"## {titulo_pagina}")
+    if read_only:
+        st.caption(f"Ensayo: {ASSAY_LABELS[assay['tipo']]}")
     st.markdown(f'<div style="margin-bottom:10px;">{status_badge_html(assay["status"])}&nbsp;&nbsp;'
                 f'<span class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(assay["lastModified"])}'
                 + (f' · {html.escape(assay["laboratorist"])}' if assay.get("laboratorist") else "") + '</span></div>',
@@ -2038,16 +2197,15 @@ def render_assay_form():
         with st.container(border=True):
             st.markdown(card_header_html("thermostat", "Condición del Ensayo"), unsafe_allow_html=True)
             st.caption("Se digita una sola vez por muestra: la inicial al empezar el ensayo y la final al terminarlo. Se comparte entre todos los ensayos de esta muestra.")
-            head = st.columns([1.4, 1, 1])
-            head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Temperatura °C</div>', unsafe_allow_html=True)
-            head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Humedad %</div>', unsafe_allow_html=True)
-            for cond_key, cond_label in (("inicial", "Inicial"), ("final", "Final")):
-                row = st.columns([1.4, 1, 1])
-                row[0].markdown(f'<div style="padding-top:8px;">{cond_label}</div>', unsafe_allow_html=True)
-                if read_only:
-                    row[1].markdown(f'<div style="padding-top:8px;">{muestra.get(f"cond_{cond_key}_temp") or "—"}</div>', unsafe_allow_html=True)
-                    row[2].markdown(f'<div style="padding-top:8px;">{muestra.get(f"cond_{cond_key}_hum") or "—"}</div>', unsafe_allow_html=True)
-                else:
+            if read_only:
+                st.markdown(condicion_table_html(muestra), unsafe_allow_html=True)
+            else:
+                head = st.columns([1.4, 1, 1])
+                head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Temperatura °C</div>', unsafe_allow_html=True)
+                head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Humedad %</div>', unsafe_allow_html=True)
+                for cond_key, cond_label in (("inicial", "Inicial"), ("final", "Final")):
+                    row = st.columns([1.4, 1, 1])
+                    row[0].markdown(f'<div style="padding-top:8px;">{cond_label}</div>', unsafe_allow_html=True)
                     muestra[f"cond_{cond_key}_temp"] = row[1].text_input(
                         f"Temperatura {cond_label}", value=muestra.get(f"cond_{cond_key}_temp", ""),
                         key=f"cond_{cond_key}_temp_{muestra_id}", label_visibility="collapsed", placeholder="0.0")
@@ -2062,11 +2220,12 @@ def render_assay_form():
             st.info("Estás viendo el ensayo en modo consulta — solo el laboratorista puede digitar estos datos.")
         else:
             st.info("Este proyecto ya fue ejecutado. Estás en modo consulta — no puedes editar estos datos.")
-        render_read_only_summary(assay["tipo"], data)
+        render_read_only_summary(assay["tipo"], data, assay.get("laboratorist") or "—")
         st.markdown('<div class="section-title">Observaciones</div>', unsafe_allow_html=True)
         st.write(assay.get("observations") or "—")
-        st.markdown('<div class="section-title">Laboratorista</div>', unsafe_allow_html=True)
-        st.write(assay.get("laboratorist") or "—")
+        if assay["tipo"] != "humedad":
+            st.markdown('<div class="section-title">Laboratorista</div>', unsafe_allow_html=True)
+            st.write(assay.get("laboratorist") or "—")
     else:
         if assay["tipo"] == "granulometria":
             render_granulometria_form(data, assay_id)
