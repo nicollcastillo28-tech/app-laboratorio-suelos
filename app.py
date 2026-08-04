@@ -518,6 +518,26 @@ def param_table_html(rows, header_left="PARÁMETRO", header_right="VALOR REGISTR
             f'</tr></thead><tbody>{body}</tbody></table>')
 
 
+def param_table_3col_html(rows, headers=("PARÁMETRO", "ANTES DEL LAVADO (g)", "DESPUÉS DEL LAVADO (g)")):
+    """Tabla de 3 columnas (etiqueta + dos valores), usada para el Pasa No. 200 de Granulometría
+    en la vista de solo lectura ('Resultados de Ensayo')."""
+    def celda(v):
+        return html.escape(str(v)) if v not in (None, "") else "—"
+    body = "".join(
+        f'<tr><td style="padding:10px 14px;border-bottom:1px solid {BORDER};color:{TEXT};">{html.escape(str(label))}</td>'
+        f'<td style="padding:10px 14px;border-bottom:1px solid {BORDER};text-align:center;font-weight:600;color:{PRIMARY};">{celda(v1)}</td>'
+        f'<td style="padding:10px 14px;border-bottom:1px solid {BORDER};text-align:center;font-weight:600;color:{PRIMARY};">{celda(v2)}</td></tr>'
+        for label, v1, v2 in rows
+    )
+    head_left, head_mid, head_right = headers
+    return (f'<table style="width:100%;border-collapse:collapse;font-size:14px;">'
+            f'<thead><tr style="background:{SECONDARY_CONTAINER};">'
+            f'<th style="padding:10px 14px;text-align:left;font-size:11px;letter-spacing:0.04em;color:{PRIMARY};">{head_left}</th>'
+            f'<th style="padding:10px 14px;text-align:center;font-size:11px;letter-spacing:0.04em;color:{PRIMARY};">{head_mid}</th>'
+            f'<th style="padding:10px 14px;text-align:center;font-size:11px;letter-spacing:0.04em;color:{PRIMARY};">{head_right}</th>'
+            f'</tr></thead><tbody>{body}</tbody></table>')
+
+
 def condicion_table_html(muestra):
     """Tabla 'CONDICIÓN / TEMPERATURA °C / HUMEDAD %' para la vista de solo lectura."""
     def fila(cond_key, label):
@@ -2100,6 +2120,12 @@ def render_read_only_summary(tipo, data, laboratorista="—"):
     el auxiliar cuando el proyecto ya fue ejecutado. Sin casillas de digitación, solo tarjetas
     y tablas con los datos ya registrados."""
     if tipo == "granulometria":
+        # Toda orden de granulometría incluye el Pasa No. 200 — se muestra tal cual se digitó,
+        # con sus dos columnas (antes/después del lavado), igual que en el formulario editable.
+        with st.container(border=True):
+            st.markdown(card_header_html("water_drop", "Determinación Pasa No. 200"), unsafe_allow_html=True)
+            pasa200_rows = [(label, data.get(f"{key}_antes"), data.get(f"{key}_despues")) for key, label in PASA_200_FILAS]
+            st.markdown(param_table_3col_html(pasa200_rows), unsafe_allow_html=True)
         # "Masa inicial seca" no se muestra en la app (ni aquí ni en el formulario editable) —
         # se deriva solo al momento de generar el Excel (ver generar_excel_granulometria), tal
         # como se llena a mano en la plantilla física: masa suelo seco + recipiente, menos recipiente.
