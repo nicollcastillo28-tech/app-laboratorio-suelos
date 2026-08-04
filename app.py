@@ -320,7 +320,7 @@ SIEVES = [
     ("s_60", "No. 60", "0.25", "E32"), ("s_100", "No. 100", "0.149", "E33"), ("s_200", "No. 200", "0.075", "E34"),
 ]
 
-ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario"}
+ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg"}
 NORMAS_ENSAYO = {
     "granulometria": ["INV-214-13", "INV.E-213-13", "INV.E 123-13"],
     "humedad": ["INV E-122", "ASTM D2216"],
@@ -356,12 +356,43 @@ EQUIPO_HUMEDAD = ["Balanza GDA-E-011", "Horno GDA-E-007"]
 # Método del ensayo de humedad (INV E-122), tal como aparece en la plantilla oficial (celda C28).
 METODO_HUMEDAD = ["Método A", "Método B"]
 
+# Equipos reales usados en el ensayo de Límites de Atterberg (Líquido + Plástico).
+EQUIPO_LIMITES = [
+    "Balanza GDA-E-012", "Balanza GDA-E-011", "Balanza GDA-E-010",
+    "Cazuela Casagrande GDA-E-081", "Cazuela Casagrande GDA-E-060", "Cazuela Casagrande GDA-E-400",
+    "Horno GDA-E-404", "Horno GDA-E-007", "Tamiz No. 40 GDA-E-054",
+]
+
+# Filas de Límite Líquido (INV. E-125-13) y Límite Plástico (INV. E-126-13), con las celdas
+# reales de la plantilla CLASIFICACION_DE_SUELOS.xlsm (sección "LIMITES DE ATTERBERG", a la
+# derecha de la tabla de Granulometría en la hoja "MUESTRA"): 3 columnas de ensayo para el
+# Líquido (S/T/U) y 2 para el Plástico (Y/Z) — el propio Excel calcula LL, LP e IP.
+LIMITE_LIQUIDO_FILAS = [
+    ("lim_ll_recipiente", "Recipiente No.", ["S20", "T20", "U20"]),
+    ("lim_ll_golpes", "No. de Golpes", ["S19", "T19", "U19"]),
+    ("lim_ll_humedo", "Masa suelo húmedo + rec. (g)", ["S21", "T21", "U21"]),
+    ("lim_ll_seco", "Masa suelo seco + rec. (g)", ["S22", "T22", "U22"]),
+    ("lim_ll_recip_masa", "Masa recipiente (g)", ["S23", "T23", "U23"]),
+]
+LIMITE_LIQUIDO_N = 3
+
+LIMITE_PLASTICO_FILAS = [
+    ("lim_lp_recipiente", "Recipiente No.", ["Y20", "Z20"]),
+    ("lim_lp_humedo", "Masa suelo húmedo + rec. (g)", ["Y21", "Z21"]),
+    ("lim_lp_seco", "Masa suelo seco + rec. (g)", ["Y22", "Z22"]),
+    ("lim_lp_recip_masa", "Masa recipiente (g)", ["Y23", "Z23"]),
+]
+LIMITE_PLASTICO_N = 2
+
 BITACORA_ENSAYOS = [
     "Granulometría", "Pasa 200", "Humedad", "Límites de Atterberg", "Límite de contracción",
     "Materia orgánica", "Proctor", "CBR", "Compresión inconfinada", "Compresión en roca",
     "Peso unitario", "Gravedad específica", "Consolidación", "Corte CD", "Corte CU", "Corte UU", "Otro",
 ]
-SUPPORTED_ASSAY_MAP = {"Granulometría": "granulometria", "Humedad": "humedad", "Peso unitario": "masa-unitaria"}
+SUPPORTED_ASSAY_MAP = {
+    "Granulometría": "granulometria", "Humedad": "humedad", "Peso unitario": "masa-unitaria",
+    "Límites de Atterberg": "limites",
+}
 
 BITACORA_BASE_COLS = ["Número", "Prof. De", "Prof. A", "Tipo de muestra"] + BITACORA_ENSAYOS + ["Observaciones"]
 
@@ -535,6 +566,26 @@ def param_table_3col_html(rows, headers=("PARÁMETRO", "ANTES DEL LAVADO (g)", "
             f'<th style="padding:10px 14px;text-align:center;font-size:11px;letter-spacing:0.04em;color:{PRIMARY};">{head_mid}</th>'
             f'<th style="padding:10px 14px;text-align:center;font-size:11px;letter-spacing:0.04em;color:{PRIMARY};">{head_right}</th>'
             f'</tr></thead><tbody>{body}</tbody></table>')
+
+
+def param_table_ncol_html(headers, rows):
+    """Tabla con cantidad arbitraria de columnas de valores (primer elemento de cada fila es la
+    etiqueta, el resto son valores) — usada para Límite Líquido/Plástico, que tienen 3 y 2
+    columnas de ensayo respectivamente."""
+    def celda(v):
+        return html.escape(str(v)) if v not in (None, "") else "—"
+    body = "".join(
+        '<tr>' + f'<td style="padding:10px 14px;border-bottom:1px solid {BORDER};color:{TEXT};">{html.escape(str(row[0]))}</td>'
+        + "".join(f'<td style="padding:10px 14px;border-bottom:1px solid {BORDER};text-align:center;font-weight:600;color:{PRIMARY};">{celda(v)}</td>' for v in row[1:])
+        + '</tr>'
+        for row in rows
+    )
+    head_cells = "".join(
+        f'<th style="padding:10px 14px;text-align:{"left" if i == 0 else "center"};font-size:11px;letter-spacing:0.04em;color:{PRIMARY};">{h}</th>'
+        for i, h in enumerate(headers)
+    )
+    return (f'<table style="width:100%;border-collapse:collapse;font-size:14px;">'
+            f'<thead><tr style="background:{SECONDARY_CONTAINER};">{head_cells}</tr></thead><tbody>{body}</tbody></table>')
 
 
 def condicion_table_html(muestra):
@@ -2053,6 +2104,34 @@ def generar_excel_humedad(codigo, perf_codigo, muestra, project, data, observaci
     return bio.getvalue()
 
 
+def generar_excel_limites(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    # Comparte la misma plantilla y hoja que Granulometría — "LIMITES DE ATTERBERG" está en las
+    # columnas de la derecha (S-U para Líquido, Y-Z para Plástico) del mismo formato físico.
+    wb = load_workbook(TEMPLATE_GRANULOMETRIA, keep_vba=True)
+    ws = wb["MUESTRA"]
+    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo)
+
+    def _escribir(filas):
+        for key, _label, cells in filas:
+            es_recipiente = key.endswith("recipiente")
+            for i, cell in enumerate(cells, start=1):
+                valor = data.get(f"{key}_{i}", "")
+                if es_recipiente:
+                    ws[cell] = valor
+                else:
+                    num = to_float(valor)
+                    if num is not None:
+                        ws[cell] = num
+
+    _escribir(LIMITE_LIQUIDO_FILAS)
+    _escribir(LIMITE_PLASTICO_FILAS)
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return bio.getvalue()
+
+
 # ════════════════════════════════════════════════════════════════════
 # FORMULARIOS DE ENSAYO (solo captura de datos, sin cálculos)
 # ════════════════════════════════════════════════════════════════════
@@ -2237,6 +2316,39 @@ def render_masa_unitaria_form(data):
     render_norma_selector("masa-unitaria", data, "mu")
 
 
+def render_limites_form(data, assay_id):
+    st.info("Estos datos se guardan tal cual y se llevan a la plantilla oficial de Excel — el Límite Líquido, el Límite Plástico y el Índice de Plasticidad los calcula el Excel, no la app.")
+
+    with st.container(border=True):
+        st.markdown(card_header_html("info", "Información de Ensayo"), unsafe_allow_html=True)
+        metodo_actual = data.get("lim_metodo", METODO_HUMEDAD[0])
+        midx = METODO_HUMEDAD.index(metodo_actual) if metodo_actual in METODO_HUMEDAD else 0
+        data["lim_metodo"] = st.radio("Método de Ensayo", METODO_HUMEDAD, index=midx, horizontal=True, key=f"lim_metodo_{assay_id}")
+
+    def _tabla_limite(icono, titulo, filas, n):
+        with st.container(border=True):
+            st.markdown(card_header_html(icono, titulo), unsafe_allow_html=True)
+            head = st.columns([2] + [1] * n)
+            head[0].markdown('<div class="cell-muted" style="font-weight:700;">Parámetro</div>', unsafe_allow_html=True)
+            for i in range(n):
+                head[i + 1].markdown(f'<div class="cell-muted" style="text-align:center;font-weight:700;">Ensayo {i + 1}</div>', unsafe_allow_html=True)
+            for key, label, _cells in filas:
+                row = st.columns([2] + [1] * n)
+                row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+                for i in range(n):
+                    field_key = f"{key}_{i + 1}"
+                    widget_key = f"{field_key}_{assay_id}"
+                    if widget_key not in st.session_state:
+                        raw = data.get(field_key, "")
+                        st.session_state[widget_key] = "" if raw in (None, "") else str(raw)
+                    data[field_key] = row[i + 1].text_input(f"{label} {i + 1}", key=widget_key, label_visibility="collapsed", placeholder="0.00")
+
+    _tabla_limite("water_drop", "Límite Líquido (INV. 125 - 13)", LIMITE_LIQUIDO_FILAS, LIMITE_LIQUIDO_N)
+    _tabla_limite("gesture", "Límite Plástico (INV. 126 - 13)", LIMITE_PLASTICO_FILAS, LIMITE_PLASTICO_N)
+
+    render_equipo(data, "lim", EQUIPO_LIMITES)
+
+
 def render_read_only_summary(tipo, data, laboratorista="—"):
     """Vista de solo lectura ('Resultados de Ensayo') — la misma para el Jefe (siempre) y para
     el auxiliar cuando el proyecto ya fue ejecutado. Sin casillas de digitación, solo tarjetas
@@ -2284,6 +2396,21 @@ def render_read_only_summary(tipo, data, laboratorista="—"):
             ]
             st.markdown(param_table_html(lab_rows, header_left="DATO", header_right="VALOR"), unsafe_allow_html=True)
         equipos, norma = data.get("hum_equipos", []), data.get("hum_norma", "—")
+    elif tipo == "limites":
+        with st.container(border=True):
+            st.markdown(card_header_html("water_drop", "Límite Líquido (INV. 125 - 13)"), unsafe_allow_html=True)
+            headers = ["PARÁMETRO"] + [f"ENSAYO {i}" for i in range(1, LIMITE_LIQUIDO_N + 1)]
+            ll_rows = [(label, *[data.get(f"{key}_{i}") for i in range(1, LIMITE_LIQUIDO_N + 1)]) for key, label, _c in LIMITE_LIQUIDO_FILAS]
+            st.markdown(param_table_ncol_html(headers, ll_rows), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("gesture", "Límite Plástico (INV. 126 - 13)"), unsafe_allow_html=True)
+            headers = ["PARÁMETRO"] + [f"ENSAYO {i}" for i in range(1, LIMITE_PLASTICO_N + 1)]
+            lp_rows = [(label, *[data.get(f"{key}_{i}") for i in range(1, LIMITE_PLASTICO_N + 1)]) for key, label, _c in LIMITE_PLASTICO_FILAS]
+            st.markdown(param_table_ncol_html(headers, lp_rows), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("info", "Información de Ensayo"), unsafe_allow_html=True)
+            st.markdown(param_table_html([("Método de Ensayo", data.get("lim_metodo"))], header_left="DATO", header_right="VALOR"), unsafe_allow_html=True)
+        equipos, norma = data.get("lim_equipos", []), "INV. E-125-13 / INV. E-126-13"
     else:
         rows = [("Masa en el aire (g)", data.get("mu_peso_aire")), ("Masa en el aire parafinado (g)", data.get("mu_peso_aire_par")),
                 ("Masa en el agua parafinado (g)", data.get("mu_peso_agua_par")), ("Temperatura del agua (°C)", data.get("mu_temp_agua")),
@@ -2375,11 +2502,19 @@ def render_assay_form():
             with st.container(border=True):
                 st.markdown(card_header_html("person", "Laboratorista"), unsafe_allow_html=True)
                 st.markdown(f'<div style="font-weight:600;">{html.escape(assay.get("laboratorist") or "—")}</div>', unsafe_allow_html=True)
+        if es_jefe and assay["status"] == "finalizado":
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("Habilitar edición para el laboratorista", icon=":material/lock_open:", use_container_width=True):
+                assay.update(status="en-proceso", lastModified=now_iso())
+                st.success("Ensayo habilitado — el laboratorista ya puede volver a digitar los datos.")
+                st.rerun()
     else:
         if assay["tipo"] == "granulometria":
             render_granulometria_form(data, assay_id)
         elif assay["tipo"] == "humedad":
             render_humedad_form(data, assay_id)
+        elif assay["tipo"] == "limites":
+            render_limites_form(data, assay_id)
         elif assay["tipo"] == "masa-unitaria":
             render_masa_unitaria_form(data)
 
@@ -2418,6 +2553,16 @@ def render_assay_form():
             "Descargar Excel (plantilla oficial de Humedad)", icon=":material/download:",
             data=excel_bytes, file_name=f"Humedad_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
+        )
+
+    if es_jefe and assay["tipo"] == "limites" and muestra:
+        st.markdown("---")
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        excel_bytes = generar_excel_limites(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
+        st.download_button(
+            "Descargar Excel (plantilla oficial de Límites de Atterberg)", icon=":material/download:",
+            data=excel_bytes, file_name=f"Limites_{muestra['id_unico']}.xlsm",
+            mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
 
