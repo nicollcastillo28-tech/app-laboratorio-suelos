@@ -698,6 +698,18 @@ def project_status(codigo):
     return "ejecucion"
 
 
+def desarchivar_proyecto(codigo):
+    """Reabre un proyecto ejecutado: revierte a 'en-proceso' todos sus ensayos finalizados,
+    para que el laboratorista pueda volver a digitar o el Jefe agregar nuevas muestras/
+    perforaciones. El estado 'ejecutado' se recalcula solo (ver project_status), así que
+    no hace falta ninguna bandera aparte — basta con que deje de estar 100% finalizado."""
+    ahora = now_iso()
+    for a in st.session_state.assays:
+        if a["codigo_interno"] == codigo and a["status"] == "finalizado":
+            a["status"] = "en-proceso"
+            a["lastModified"] = ahora
+
+
 def confirm_delete(action_key, label):
     """Botón de eliminar con confirmación en dos pasos. Devuelve True solo cuando se confirma."""
     flag = f"confirm_{action_key}"
@@ -933,7 +945,7 @@ def render_home():
                             navigate("assay-form")
 
 
-def _render_project_list(codes, empty_msg, allow_delete, mark_read_only=False):
+def _render_project_list(codes, empty_msg, allow_delete, mark_read_only=False, allow_unarchive=False):
     if not codes:
         st.info(empty_msg)
         return
@@ -966,6 +978,10 @@ def _render_project_list(codes, empty_msg, allow_delete, mark_read_only=False):
                         st.session_state.assays[:] = [a for a in st.session_state.assays if a["codigo_interno"] != codigo]
                         st.session_state.bitacora_draft = {k: v for k, v in st.session_state.bitacora_draft.items() if not k.startswith(codigo + "::")}
                         st.rerun()
+            if allow_unarchive:
+                if st.button("Desarchivar proyecto", icon=":material/unarchive:", key=f"unarchive_{p['codigo_interno']}", use_container_width=True):
+                    desarchivar_proyecto(p["codigo_interno"])
+                    st.rerun()
 
 
 def _resumen_tecnico_perforaciones(codigo):
@@ -1062,7 +1078,8 @@ def render_projects_done():
         st.info("Modo consulta: puedes ver los resultados, pero no editarlos.")
     codes = [p["codigo_interno"] for p in st.session_state.projects if project_status(p["codigo_interno"]) == "ejecutado"]
     _render_project_list(codes, "Todavía no hay proyectos completamente finalizados.",
-                          allow_delete=(st.session_state.role == "jefe"), mark_read_only=True)
+                          allow_delete=(st.session_state.role == "jefe"), mark_read_only=True,
+                          allow_unarchive=(st.session_state.role == "jefe"))
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -1394,6 +1411,12 @@ def render_project_detail():
                 st.session_state.bitacora_draft = {k: v for k, v in st.session_state.bitacora_draft.items() if not k.startswith(codigo + "::")}
                 st.session_state.assays[:] = [a for a in st.session_state.assays if a["codigo_interno"] != codigo]
                 navigate("home")
+        if project_status(codigo) == "ejecutado":
+            st.caption("Este proyecto ya está completamente ejecutado (todas sus muestras finalizadas).")
+            if st.button("Desarchivar proyecto", icon=":material/unarchive:", use_container_width=True):
+                desarchivar_proyecto(codigo)
+                st.success("Proyecto desarchivado — vuelve a aparecer en Proyectos en ejecución.")
+                st.rerun()
 
     with st.container(border=True):
         st.markdown('<div class="section-title">Progreso general (así avanzan los auxiliares)</div>', unsafe_allow_html=True)
