@@ -1995,7 +1995,7 @@ def generar_excel_bitacora_orden(project, filas, tipos_usados):
 # GENERAR EXCEL DE GRANULOMETRÍA Y HUMEDAD (plantillas reales del laboratorio,
 # ambas comparten el mismo diseño de encabezado — filas 1 a 13)
 # ════════════════════════════════════════════════════════════════════
-def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project):
+def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo=""):
     hoy = str(date.today())
     ws["D6"] = project.get("cliente", "") if project else ""  # Cliente
     ws["D7"] = project["nombre"] if project else codigo          # Proyecto
@@ -2009,14 +2009,17 @@ def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project):
     ws["H12"] = muestra["numero"]
     ws["K12"] = to_float(muestra.get("profundidad_de"))
     ws["M12"] = to_float(muestra.get("profundidad_hasta"))
-    ws["D13"] = muestra.get("observaciones") or f"Tipo de muestra: {muestra.get('tipo_muestra','')}"  # Descripción visual
+    # Descripción visual: primero lo que se digitó en "Observaciones de la muestra" (Bitácora),
+    # si no hay, lo que el laboratorista escribió en "Observaciones" del propio ensayo, y solo
+    # si ninguna de las dos existe, el tipo de muestra como último recurso.
+    ws["D13"] = muestra.get("observaciones") or observaciones_ensayo or f"Tipo de muestra: {muestra.get('tipo_muestra','')}"
 
 
-def generar_excel_granulometria(codigo, perf_codigo, muestra, project, data):
+def generar_excel_granulometria(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     wb = load_workbook(TEMPLATE_GRANULOMETRIA, keep_vba=True)
     ws = wb["MUESTRA"]
 
-    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project)
+    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo)
     ws["D17"] = to_float(data.get("masa_inicial_seca"))
 
     for key, _label, _apert, cell in SIEVES:
@@ -2028,11 +2031,11 @@ def generar_excel_granulometria(codigo, perf_codigo, muestra, project, data):
     return bio.getvalue()
 
 
-def generar_excel_humedad(codigo, perf_codigo, muestra, project, data):
+def generar_excel_humedad(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     wb = load_workbook(TEMPLATE_HUMEDAD)
     ws = wb["GUIA"]
 
-    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project)
+    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo)
     ws["I19"] = data.get("hum_recipiente", "")
     ws["I20"] = to_float(data.get("hum_masa_humedo_mas_recipiente"))
     ws["I21"] = to_float(data.get("hum_seco_mas_recipiente"))
@@ -2400,7 +2403,7 @@ def render_assay_form():
     if es_jefe and assay["tipo"] == "granulometria" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
-        excel_bytes = generar_excel_granulometria(codigo, perf_codigo, muestra, project, data)
+        excel_bytes = generar_excel_granulometria(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
             "Descargar Excel (plantilla oficial de Granulometría)", icon=":material/download:",
             data=excel_bytes, file_name=f"Granulometria_{muestra['id_unico']}.xlsm",
@@ -2410,7 +2413,7 @@ def render_assay_form():
     if es_jefe and assay["tipo"] == "humedad" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
-        excel_bytes = generar_excel_humedad(codigo, perf_codigo, muestra, project, data)
+        excel_bytes = generar_excel_humedad(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
             "Descargar Excel (plantilla oficial de Humedad)", icon=":material/download:",
             data=excel_bytes, file_name=f"Humedad_{muestra['id_unico']}.xlsx",
@@ -2513,7 +2516,9 @@ def render_search():
                                 navigate("assay-form")
                         with cols[3]:
                             if st.session_state.role == "jefe" and tipo_interno == "granulometria" and project:
-                                excel_bytes = generar_excel_granulometria(codigo, perf["codigo"], m, project, existing.get("data", {}) if existing else {})
+                                excel_bytes = generar_excel_granulometria(
+                                    codigo, perf["codigo"], m, project, existing.get("data", {}) if existing else {},
+                                    existing.get("observations", "") if existing else "")
                                 st.download_button("Excel", icon=":material/download:", data=excel_bytes, file_name=f"Granulometria_{m['id_unico']}.xlsm",
                                                     mime="application/vnd.ms-excel.sheet.macroEnabled.12",
                                                     key=f"search_dl_{m['id_unico']}", use_container_width=True)
