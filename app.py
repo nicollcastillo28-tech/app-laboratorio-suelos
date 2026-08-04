@@ -331,6 +331,9 @@ STATUS_BADGE = {"sin-iniciar": "badge-muted", "en-proceso": "badge-warning", "fi
 STATUS_ICON = {"sin-iniciar": "radio_button_unchecked", "en-proceso": "autorenew", "finalizado": "check_circle"}
 
 TIPO_PERFORACION_PREFIX = {"Sondeo": "S", "Apique": "AP", "Fuente/Cantera": "F"}
+# Texto que espera la lista desplegable de "tipo de perforación" en la plantilla
+# CLASIFICACION_DE_SUELOS.xlsm (celda D12, validada contra AG6:AG10: SONDEO/APIQUE/TRINCHERA/NQ/N.A.).
+TIPO_PERFORACION_EXCEL = {"Sondeo": "SONDEO", "Apique": "APIQUE", "Fuente/Cantera": "CANTERA"}
 TIPO_MUESTRA_OPTIONS = ["Shelby", "NQ", "SS", "N/A"]
 NORMA_PROYECTO_OPTIONS = ["IDU", "NTC", "INVIAS", "Otro"]
 
@@ -384,8 +387,11 @@ LIMITE_PLASTICO_FILAS = [
 ]
 LIMITE_PLASTICO_N = 2
 
+# "Pasa 200" no aparece como ensayo aparte: no tiene formato propio, es un apoyo que ya viene
+# incluido dentro del formulario y la plantilla de Granulometría (sección "Determinación Pasa
+# No. 200"), así que no necesita su propio espacio al asignar ensayos de una muestra.
 BITACORA_ENSAYOS = [
-    "Granulometría", "Pasa 200", "Humedad", "Límites de Atterberg", "Límite de contracción",
+    "Granulometría", "Humedad", "Límites de Atterberg", "Límite de contracción",
     "Materia orgánica", "Proctor", "CBR", "Compresión inconfinada", "Compresión en roca",
     "Peso unitario", "Gravedad específica", "Consolidación", "Corte CD", "Corte CU", "Corte UU", "Otro",
 ]
@@ -655,6 +661,10 @@ def get_muestra(codigo, perforacion_codigo, muestra_id):
         if m["id_unico"] == muestra_id:
             return m
     return None
+
+
+def get_perforacion(codigo, perforacion_codigo):
+    return next((p for p in st.session_state.perforaciones.get(codigo, []) if p["codigo"] == perforacion_codigo), None)
 
 
 def get_assay(muestra_id, tipo_interno):
@@ -1182,6 +1192,14 @@ def render_new_project():
     with c2:
         fecha_ingreso = st.date_input("Fecha de ingreso de muestra", value=date.today())
 
+    ec1, ec2, ec3 = st.columns(3)
+    with ec1:
+        fecha_recepcion = st.date_input("Fecha de recepción", value=date.today())
+    with ec2:
+        fecha_ejecucion = st.date_input("Fecha de ejecución", value=date.today())
+    with ec3:
+        fecha_emision = st.date_input("Fecha de emisión", value=date.today())
+
     st.markdown('<div class="section-title">Datos del cliente (para el encabezado de los informes — solo el Jefe los ve)</div>', unsafe_allow_html=True)
     cliente = st.text_input("Cliente", key="new_cliente", placeholder="Nombre del cliente")
     direccion_cliente = st.text_input("Dirección cliente", key="new_direccion_cliente", placeholder="Dirección del cliente")
@@ -1318,6 +1336,7 @@ def render_new_project():
                 "direccion_cliente": direccion_cliente, "telefono_contacto": telefono_contacto,
                 "nombre_contacto": nombre_contacto,
                 "fecha_inicio_proyecto": str(fecha_inicio_proyecto), "fecha_final_proyecto": str(fecha_final_proyecto),
+                "fecha_recepcion": str(fecha_recepcion), "fecha_ejecucion": str(fecha_ejecucion), "fecha_emision": str(fecha_emision),
             })
             st.session_state.perforaciones.setdefault(codigo_interno, [])
             for perf in perforaciones:
@@ -1382,6 +1401,9 @@ def render_project_detail():
             ("move_to_inbox", "Ingreso de muestras", project.get("fecha_ingreso_muestra")),
             ("event", "Fecha inicio proyecto", project.get("fecha_inicio_proyecto")),
             ("event_available", "Fecha final proyecto", project.get("fecha_final_proyecto")),
+            ("inbox", "Fecha de recepción", project.get("fecha_recepcion")),
+            ("science", "Fecha de ejecución", project.get("fecha_ejecucion")),
+            ("outbox", "Fecha de emisión", project.get("fecha_emision")),
             ("person", "Asignado a", project.get("laboratorista_asignado")),
         ]
         # Datos del cliente: solo el Jefe los ve, nunca el laboratorista.
@@ -1570,6 +1592,14 @@ def render_edit_project():
     with c2:
         fecha_ingreso = st.date_input("Fecha de ingreso de muestra", value=_parse_fecha(project.get("fecha_ingreso_muestra")))
 
+    ec1, ec2, ec3 = st.columns(3)
+    with ec1:
+        fecha_recepcion = st.date_input("Fecha de recepción", value=_parse_fecha(project.get("fecha_recepcion")))
+    with ec2:
+        fecha_ejecucion = st.date_input("Fecha de ejecución", value=_parse_fecha(project.get("fecha_ejecucion")))
+    with ec3:
+        fecha_emision = st.date_input("Fecha de emisión", value=_parse_fecha(project.get("fecha_emision")))
+
     st.markdown('<div class="section-title">Datos del cliente (para el encabezado de los informes)</div>', unsafe_allow_html=True)
     cliente = st.text_input("Cliente", key=f"edit_cliente_{codigo}")
     direccion_cliente = st.text_input("Dirección cliente", key=f"edit_direccion_cliente_{codigo}")
@@ -1616,6 +1646,9 @@ def render_edit_project():
             project["nombre_contacto"] = nombre_contacto
             project["fecha_inicio_proyecto"] = str(fecha_inicio_proyecto)
             project["fecha_final_proyecto"] = str(fecha_final_proyecto)
+            project["fecha_recepcion"] = str(fecha_recepcion)
+            project["fecha_ejecucion"] = str(fecha_ejecucion)
+            project["fecha_emision"] = str(fecha_emision)
             navigate("project-detail")
 
 
@@ -2070,16 +2103,20 @@ def generar_excel_bitacora_orden(project, filas, tipos_usados):
 # ambas comparten el mismo diseño de encabezado — filas 1 a 13)
 # ════════════════════════════════════════════════════════════════════
 def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo=""):
-    hoy = str(date.today())
     ws["D6"] = project.get("cliente", "") if project else ""  # Cliente
     ws["D7"] = project["nombre"] if project else codigo          # Proyecto
     ws["D8"] = project.get("correo_cliente", "") if project else ""  # Correo electrónico
     ws["D9"] = project.get("localizacion", "") if project else ""  # Localización
     ws["D10"] = project.get("muestra_tomada_por", "") if project else ""  # Muestra tomada por
-    ws["K6"] = project.get("fecha_ingreso_muestra", "") if project else ""  # Fecha de recepción
-    ws["K7"] = hoy  # Fecha de ejecución
-    ws["K8"] = hoy  # Fecha de emisión
-    ws["D12"] = perf_codigo
+    ws["K6"] = project.get("fecha_recepcion", "") if project else ""  # Fecha de recepción
+    ws["K7"] = project.get("fecha_ejecucion", "") if project else ""  # Fecha de ejecución
+    ws["K8"] = project.get("fecha_emision", "") if project else ""  # Fecha de emisión
+    ws["L9"] = project.get("numero", "") if project else ""  # Código interno — número (K9 ya trae "GDA")
+    ws["M9"] = project.get("anio", "") if project else ""  # Código interno — año
+
+    perf = get_perforacion(codigo, perf_codigo)
+    ws["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""  # Tipo de perforación (lista desplegable)
+    ws["F12"] = perf["consecutivo"] if perf else ""  # Número de perforación
     ws["H12"] = muestra["numero"]
     ws["K12"] = to_float(muestra.get("profundidad_de"))
     ws["M12"] = to_float(muestra.get("profundidad_hasta"))
@@ -2089,20 +2126,49 @@ def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observ
     ws["D13"] = muestra.get("observaciones") or observaciones_ensayo or f"Tipo de muestra: {muestra.get('tipo_muestra','')}"
 
 
-def generar_excel_granulometria(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+def _escribir_limites(ws, data):
+    def _escribir(filas):
+        for key, _label, cells in filas:
+            es_recipiente = key.endswith("recipiente")
+            for i, cell in enumerate(cells, start=1):
+                valor = data.get(f"{key}_{i}", "")
+                if es_recipiente:
+                    ws[cell] = valor
+                else:
+                    num = to_float(valor)
+                    if num is not None:
+                        ws[cell] = num
+    _escribir(LIMITE_LIQUIDO_FILAS)
+    _escribir(LIMITE_PLASTICO_FILAS)
+
+
+def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_data=None, lim_data=None, observaciones_ensayo=""):
+    """Granulometría y Límites de Atterberg comparten la misma plantilla y hoja ("MUESTRA") —
+    por muestra van juntos en un solo archivo, sin importar si se descarga desde el ensayo de
+    Granulometría o desde el de Límites."""
     wb = load_workbook(TEMPLATE_GRANULOMETRIA, keep_vba=True)
     ws = wb["MUESTRA"]
-
     _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo)
-    ws["D17"] = to_float(data.get("masa_inicial_seca"))
 
-    for key, _label, _apert, cell in SIEVES:
-        ws[cell] = to_float(data.get(key)) or 0
+    if gran_data is not None:
+        ws["D17"] = to_float(gran_data.get("masa_inicial_seca"))
+        for key, _label, _apert, cell in SIEVES:
+            ws[cell] = to_float(gran_data.get(key)) or 0
+
+    if lim_data is not None:
+        _escribir_limites(ws, lim_data)
 
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
     return bio.getvalue()
+
+
+def generar_excel_granulometria(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    lim_assay = get_assay(muestra["id_unico"], "limites")
+    lim_data = lim_assay.get("data", {}) if lim_assay else None
+    return _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_data=data, lim_data=lim_data,
+                                         observaciones_ensayo=observaciones_ensayo)
 
 
 def generar_excel_humedad(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
@@ -2128,31 +2194,10 @@ def generar_excel_humedad(codigo, perf_codigo, muestra, project, data, observaci
 
 
 def generar_excel_limites(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
-    # Comparte la misma plantilla y hoja que Granulometría — "LIMITES DE ATTERBERG" está en las
-    # columnas de la derecha (S-U para Líquido, Y-Z para Plástico) del mismo formato físico.
-    wb = load_workbook(TEMPLATE_GRANULOMETRIA, keep_vba=True)
-    ws = wb["MUESTRA"]
-    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo)
-
-    def _escribir(filas):
-        for key, _label, cells in filas:
-            es_recipiente = key.endswith("recipiente")
-            for i, cell in enumerate(cells, start=1):
-                valor = data.get(f"{key}_{i}", "")
-                if es_recipiente:
-                    ws[cell] = valor
-                else:
-                    num = to_float(valor)
-                    if num is not None:
-                        ws[cell] = num
-
-    _escribir(LIMITE_LIQUIDO_FILAS)
-    _escribir(LIMITE_PLASTICO_FILAS)
-
-    bio = BytesIO()
-    wb.save(bio)
-    bio.seek(0)
-    return bio.getvalue()
+    gran_assay = get_assay(muestra["id_unico"], "granulometria")
+    gran_data = gran_assay.get("data", {}) if gran_assay else None
+    return _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_data=gran_data, lim_data=data,
+                                         observaciones_ensayo=observaciones_ensayo)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -2563,8 +2608,8 @@ def render_assay_form():
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_granulometria(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
-            "Descargar Excel (plantilla oficial de Granulometría)", icon=":material/download:",
-            data=excel_bytes, file_name=f"Granulometria_{muestra['id_unico']}.xlsm",
+            "Descargar Excel (Granulometría y Límites de Atterberg — mismo archivo por muestra)", icon=":material/download:",
+            data=excel_bytes, file_name=f"Clasificacion_de_suelos_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
@@ -2583,8 +2628,8 @@ def render_assay_form():
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_limites(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
-            "Descargar Excel (plantilla oficial de Límites de Atterberg)", icon=":material/download:",
-            data=excel_bytes, file_name=f"Limites_{muestra['id_unico']}.xlsm",
+            "Descargar Excel (Granulometría y Límites de Atterberg — mismo archivo por muestra)", icon=":material/download:",
+            data=excel_bytes, file_name=f"Clasificacion_de_suelos_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
@@ -2687,7 +2732,7 @@ def render_search():
                                 excel_bytes = generar_excel_granulometria(
                                     codigo, perf["codigo"], m, project, existing.get("data", {}) if existing else {},
                                     existing.get("observations", "") if existing else "")
-                                st.download_button("Excel", icon=":material/download:", data=excel_bytes, file_name=f"Granulometria_{m['id_unico']}.xlsm",
+                                st.download_button("Excel", icon=":material/download:", data=excel_bytes, file_name=f"Clasificacion_de_suelos_{m['id_unico']}.xlsm",
                                                     mime="application/vnd.ms-excel.sheet.macroEnabled.12",
                                                     key=f"search_dl_{m['id_unico']}", use_container_width=True)
                     else:
