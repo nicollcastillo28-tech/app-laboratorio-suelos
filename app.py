@@ -2160,9 +2160,12 @@ def _escribir_limites(ws, data):
 def _reparar_graficos_perdidos(xlsm_bytes, template_path):
     """openpyxl no conserva las 'chartUserShapes' de un gráfico (las anotaciones de texto
     dibujadas a mano encima, ej. las etiquetas LÍNEA U/LÍNEA A/CH/CL-ML de la Carta de
-    Plasticidad) ni sus .rels — se pierden al guardar, aunque el gráfico y sus datos sí
-    sobreviven. Esta función copia esas partes de vuelta desde la plantilla original,
-    después de que openpyxl ya escribió los datos, para que el gráfico se vea completo."""
+    Plasticidad): se pierden tanto los archivos (drawingN.xml, chartN.xml.rels) como —esto
+    es lo que de verdad hace que no se vean— la propia referencia <c:userShapes r:id="..."/>
+    dentro del chartN.xml, que es lo que le dice a Excel que busque esas formas. El gráfico
+    y sus series/ejes sí sobreviven intactos porque no dependen de esa referencia.
+    Esta función restaura los archivos faltantes desde la plantilla original Y vuelve a
+    insertar la referencia dentro del/de los chartN.xml correspondientes."""
     with zipfile.ZipFile(template_path) as tpl:
         tpl_names = set(tpl.namelist())
         with zipfile.ZipFile(BytesIO(xlsm_bytes)) as out:
@@ -2182,11 +2185,49 @@ def _reparar_graficos_perdidos(xlsm_bytes, template_path):
                 if m and m.group(0) not in content_types_out:
                     content_types_out = content_types_out.replace("</Types>", m.group(0) + "</Types>")
 
+            # Para cada chartN.xml.rels restaurado, extraemos el rId de su relación
+            # "chartUserShapes" y lo reinsertamos dentro del chartN.xml de salida (que openpyxl
+            # ya escribió, pero sin esa referencia).
+            R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+            charts_a_parchar = {}  # "xl/charts/chartN.xml" -> rId
+            for nombre in faltantes:
+                m = re.match(r"xl/charts/_rels/(chart\d+)\.xml\.rels$", nombre)
+                if not m:
+                    continue
+                rels_xml = tpl.read(nombre).decode("utf-8")
+                rm = re.search(
+                    r'<Relationship[^>]*Type="[^"]*chartUserShapes"[^>]*Id="([^"]+)"'
+                    r'|<Relationship[^>]*Id="([^"]+)"[^>]*Type="[^"]*chartUserShapes"',
+                    rels_xml,
+                )
+                if rm:
+                    rid = rm.group(1) or rm.group(2)
+                    charts_a_parchar[f"xl/charts/{m.group(1)}.xml"] = rid
+
+            chart_bytes_parchados = {}
+            for chart_nombre, rid in charts_a_parchar.items():
+                if chart_nombre not in out_names:
+                    continue
+                chart_xml = out.read(chart_nombre).decode("utf-8")
+                if "userShapes" in chart_xml:
+                    continue  # ya la tiene, nada que hacer
+                # La etiqueta raíz puede no declarar el namespace "r:" (openpyxl no lo usa en
+                # el cuerpo del chart), así que lo agregamos si hace falta.
+                if 'xmlns:r=' not in chart_xml.split(">", 1)[0]:
+                    chart_xml = chart_xml.replace(
+                        "<chartSpace ", f'<chartSpace xmlns:r="{R_NS}" ', 1
+                    )
+                userShapes_tag = f'<userShapes r:id="{rid}"/>'
+                chart_xml = chart_xml.replace("</chartSpace>", userShapes_tag + "</chartSpace>")
+                chart_bytes_parchados[chart_nombre] = chart_xml.encode("utf-8")
+
             bio = BytesIO()
             with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as z:
                 for item in out.infolist():
                     if item.filename == "[Content_Types].xml":
                         z.writestr(item, content_types_out)
+                    elif item.filename in chart_bytes_parchados:
+                        z.writestr(item, chart_bytes_parchados[item.filename])
                     else:
                         z.writestr(item, out.read(item.filename))
                 for nombre in faltantes:
