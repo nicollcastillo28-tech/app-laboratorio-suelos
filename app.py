@@ -2147,7 +2147,10 @@ def render_granulometria_form(data, assay_id):
             row[1].markdown(f'<div style="padding-top:8px;text-align:center;">{apert}</div>', unsafe_allow_html=True)
             widget_key = f"retenido_{key}_{assay_id}"
             if widget_key not in st.session_state:
-                st.session_state[widget_key] = data.get(key, "")
+                # Ensayos guardados antes de este cambio pueden tener el valor como float
+                # (venía del st.data_editor con NumberColumn) — text_input necesita un str.
+                raw = data.get(key, "")
+                st.session_state[widget_key] = "" if raw in (None, "") else str(raw)
             data[key] = row[2].text_input(f"Retenido {label}", key=widget_key, label_visibility="collapsed", placeholder="0.00")
         st.caption("El % retenido y la clasificación USCS se calculan en la plantilla de Excel, no aquí.")
 
