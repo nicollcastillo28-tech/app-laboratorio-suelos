@@ -2100,10 +2100,9 @@ def render_read_only_summary(tipo, data, laboratorista="—"):
     el auxiliar cuando el proyecto ya fue ejecutado. Sin casillas de digitación, solo tarjetas
     y tablas con los datos ya registrados."""
     if tipo == "granulometria":
-        rows = [("Masa inicial seca (g)", fmt_num(to_float(data.get("masa_inicial_seca"))))]
-        with st.container(border=True):
-            st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
-            st.markdown(param_table_html(rows), unsafe_allow_html=True)
+        # "Masa inicial seca" no se muestra en la app (ni aquí ni en el formulario editable) —
+        # se deriva solo al momento de generar el Excel (ver generar_excel_granulometria), tal
+        # como se llena a mano en la plantilla física: masa suelo seco + recipiente, menos recipiente.
         with st.container(border=True):
             st.markdown(card_header_html("grid_view", "Granulometría (Masa de Suelo Retenido)"), unsafe_allow_html=True)
             sieve_rows = [(label, data.get(key, "—")) for key, label, _apert, _cell in SIEVES]
@@ -2221,11 +2220,13 @@ def render_assay_form():
         else:
             st.info("Este proyecto ya fue ejecutado. Estás en modo consulta — no puedes editar estos datos.")
         render_read_only_summary(assay["tipo"], data, assay.get("laboratorist") or "—")
-        st.markdown('<div class="section-title">Observaciones</div>', unsafe_allow_html=True)
-        st.write(assay.get("observations") or "—")
+        with st.container(border=True):
+            st.markdown(card_header_html("notes", "Observaciones"), unsafe_allow_html=True)
+            st.markdown(f'<div>{html.escape(assay.get("observations") or "—")}</div>', unsafe_allow_html=True)
         if assay["tipo"] != "humedad":
-            st.markdown('<div class="section-title">Laboratorista</div>', unsafe_allow_html=True)
-            st.write(assay.get("laboratorist") or "—")
+            with st.container(border=True):
+                st.markdown(card_header_html("person", "Laboratorista"), unsafe_allow_html=True)
+                st.markdown(f'<div style="font-weight:600;">{html.escape(assay.get("laboratorist") or "—")}</div>', unsafe_allow_html=True)
     else:
         if assay["tipo"] == "granulometria":
             render_granulometria_form(data, assay_id)
