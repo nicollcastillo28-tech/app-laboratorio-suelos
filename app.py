@@ -2106,15 +2106,24 @@ def generar_excel_bitacora_orden(project, filas, tipos_usados):
 # GENERAR EXCEL DE GRANULOMETRÍA Y HUMEDAD (plantillas reales del laboratorio,
 # ambas comparten el mismo diseño de encabezado — filas 1 a 13)
 # ════════════════════════════════════════════════════════════════════
+def _fecha_ddmmaaaa(iso_str):
+    """Convierte una fecha guardada en formato ISO ("AAAA-MM-DD") a DD/MM/AAAA para que
+    se vea igual que en la app al pasarla al Excel."""
+    try:
+        return date.fromisoformat(iso_str).strftime("%d/%m/%Y")
+    except (TypeError, ValueError):
+        return iso_str or ""
+
+
 def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo="", perf_numero_cell="F12"):
     ws["D6"] = project.get("cliente", "") if project else ""  # Cliente
     ws["D7"] = project["nombre"] if project else codigo          # Proyecto
     ws["D8"] = project.get("correo_cliente", "") if project else ""  # Correo electrónico
     ws["D9"] = project.get("localizacion", "") if project else ""  # Localización
     ws["D10"] = project.get("muestra_tomada_por", "") if project else ""  # Muestra tomada por
-    ws["K6"] = project.get("fecha_recepcion", "") if project else ""  # Fecha de recepción
-    ws["K7"] = project.get("fecha_ejecucion", "") if project else ""  # Fecha de ejecución
-    ws["K8"] = project.get("fecha_emision", "") if project else ""  # Fecha de emisión
+    ws["K6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""  # Fecha de recepción
+    ws["K7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""  # Fecha de ejecución
+    ws["K8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""  # Fecha de emisión
     ws["L9"] = project.get("numero", "") if project else ""  # Código interno — número (K9 ya trae "GDA")
     ws["M9"] = project.get("anio", "") if project else ""  # Código interno — año
 
