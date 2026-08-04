@@ -8,7 +8,9 @@ Cómo correrla en tu computador:
 
 import html
 import os
+import re
 import uuid
+import zipfile
 from datetime import date, datetime
 from io import BytesIO
 
@@ -2104,7 +2106,7 @@ def generar_excel_bitacora_orden(project, filas, tipos_usados):
 # GENERAR EXCEL DE GRANULOMETRÍA Y HUMEDAD (plantillas reales del laboratorio,
 # ambas comparten el mismo diseño de encabezado — filas 1 a 13)
 # ════════════════════════════════════════════════════════════════════
-def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo=""):
+def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo="", perf_numero_cell="F12"):
     ws["D6"] = project.get("cliente", "") if project else ""  # Cliente
     ws["D7"] = project["nombre"] if project else codigo          # Proyecto
     ws["D8"] = project.get("correo_cliente", "") if project else ""  # Correo electrónico
@@ -2118,7 +2120,9 @@ def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observ
 
     perf = get_perforacion(codigo, perf_codigo)
     ws["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""  # Tipo de perforación (lista desplegable)
-    ws["F12"] = perf["consecutivo"] if perf else ""  # Número de perforación
+    # El número de perforación cae en una celda distinta según la plantilla: F12 en la de
+    # Humedad (GDA-FLC-014), E12 en la de Granulometría/Límites (GDA-FLC-001, actualizada 2026).
+    ws[perf_numero_cell] = perf["consecutivo"] if perf else ""
     ws["H12"] = muestra["numero"]
     ws["K12"] = to_float(muestra.get("profundidad_de"))
     ws["M12"] = to_float(muestra.get("profundidad_hasta"))
@@ -2144,13 +2148,51 @@ def _escribir_limites(ws, data):
     _escribir(LIMITE_PLASTICO_FILAS)
 
 
+def _reparar_graficos_perdidos(xlsm_bytes, template_path):
+    """openpyxl no conserva las 'chartUserShapes' de un gráfico (las anotaciones de texto
+    dibujadas a mano encima, ej. las etiquetas LÍNEA U/LÍNEA A/CH/CL-ML de la Carta de
+    Plasticidad) ni sus .rels — se pierden al guardar, aunque el gráfico y sus datos sí
+    sobreviven. Esta función copia esas partes de vuelta desde la plantilla original,
+    después de que openpyxl ya escribió los datos, para que el gráfico se vea completo."""
+    with zipfile.ZipFile(template_path) as tpl:
+        tpl_names = set(tpl.namelist())
+        with zipfile.ZipFile(BytesIO(xlsm_bytes)) as out:
+            out_names = set(out.namelist())
+            faltantes = {n for n in tpl_names - out_names
+                         if n.startswith("xl/drawings/") or n.startswith("xl/charts/_rels/")}
+            if not faltantes:
+                return xlsm_bytes
+
+            content_types_tpl = tpl.read("[Content_Types].xml").decode("utf-8")
+            content_types_out = out.read("[Content_Types].xml").decode("utf-8")
+            for nombre in faltantes:
+                if not nombre.endswith(".xml"):
+                    continue  # los .rels usan el Default de extensión "rels", no necesitan Override
+                parte = "/" + nombre
+                m = re.search(r'<Override PartName="' + re.escape(parte) + r'"[^>]*?/>', content_types_tpl)
+                if m and m.group(0) not in content_types_out:
+                    content_types_out = content_types_out.replace("</Types>", m.group(0) + "</Types>")
+
+            bio = BytesIO()
+            with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as z:
+                for item in out.infolist():
+                    if item.filename == "[Content_Types].xml":
+                        z.writestr(item, content_types_out)
+                    else:
+                        z.writestr(item, out.read(item.filename))
+                for nombre in faltantes:
+                    z.writestr(nombre, tpl.read(nombre))
+            bio.seek(0)
+            return bio.getvalue()
+
+
 def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_data=None, lim_data=None, observaciones_ensayo=""):
-    """Granulometría y Límites de Atterberg comparten la misma plantilla y hoja ("MUESTRA") —
+    """Granulometría y Límites de Atterberg comparten la misma plantilla y hoja ("GUIA") —
     por muestra van juntos en un solo archivo, sin importar si se descarga desde el ensayo de
     Granulometría o desde el de Límites."""
     wb = load_workbook(TEMPLATE_GRANULOMETRIA, keep_vba=True)
-    ws = wb["MUESTRA"]
-    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo)
+    ws = wb["GUIA"]
+    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo, perf_numero_cell="E12")
 
     if gran_data is not None:
         ws["D17"] = to_float(gran_data.get("masa_inicial_seca"))
@@ -2163,7 +2205,7 @@ def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_dat
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return bio.getvalue()
+    return _reparar_graficos_perdidos(bio.getvalue(), TEMPLATE_GRANULOMETRIA)
 
 
 def generar_excel_granulometria(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
