@@ -28,6 +28,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_GRANULOMETRIA = os.path.join(BASE_DIR, "templates", "CLASIFICACION_DE_SUELOS.xlsm")
 TEMPLATE_BITACORA_ORDEN = os.path.join(BASE_DIR, "templates", "GDA-FL-003_bitacora_orden.xlsx")
 TEMPLATE_HUMEDAD = os.path.join(BASE_DIR, "templates", "GDA-FLC-014_humedad_natural.xlsx")
+TEMPLATE_MASA_UNITARIA = os.path.join(BASE_DIR, "templates", "GDA-FLC-004_masa_unitaria.xlsx")
 
 PASSWORDS = {"jefe": "geodelta2024", "auxiliar": "aux2024"}
 
@@ -2294,6 +2295,49 @@ def generar_excel_limites(codigo, perf_codigo, muestra, project, data, observaci
                                          observaciones_ensayo=observaciones_ensayo)
 
 
+def _llenar_encabezado_masa_unitaria(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo=""):
+    """La plantilla de Peso Unitario Parafinado (GDA-FLC-004) usa una distribución de celdas
+    de encabezado propia, distinta a la de Granulometría/Límites/Humedad."""
+    ws["C6"] = project.get("cliente", "") if project else ""  # Cliente
+    ws["C7"] = project["nombre"] if project else codigo  # Proyecto
+    ws["C8"] = project.get("correo_cliente", "") if project else ""  # Correo electrónico
+    ws["C9"] = project.get("localizacion", "") if project else ""  # Localización
+    ws["C10"] = project.get("muestra_tomada_por", "") if project else ""  # Muestra tomada por
+    ws["I6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""  # Fecha de recepción
+    ws["I7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""  # Fecha de ejecución
+    ws["I8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""  # Fecha de emisión
+    ws["J9"] = project.get("numero", "") if project else ""  # Código interno — número (I9 ya trae "GDA")
+    ws["K9"] = project.get("anio", "") if project else ""  # Código interno — año
+
+    perf = get_perforacion(codigo, perf_codigo)
+    ws["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""  # Tipo de perforación (lista desplegable)
+    ws["D12"] = perf["consecutivo"] if perf else ""  # Número de perforación
+    ws["F12"] = muestra["numero"]  # Muestra No.
+    ws["I12"] = to_float(muestra.get("profundidad_de"))
+    ws["K12"] = to_float(muestra.get("profundidad_hasta"))
+    ws["C13"] = muestra.get("observaciones") or observaciones_ensayo or f"Tipo de muestra: {muestra.get('tipo_muestra','')}"
+
+
+def generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    wb = load_workbook(TEMPLATE_MASA_UNITARIA)
+    ws = wb["GUIA"]
+    _llenar_encabezado_masa_unitaria(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo)
+
+    ws["E20"] = to_float(data.get("mu_peso_aire"))  # B = masa en el aire
+    ws["F20"] = to_float(data.get("mu_peso_aire_par"))  # C = masa en el aire parafinado
+    ws["G20"] = to_float(data.get("mu_peso_agua_par"))  # D = masa parafinada sumergida
+    dens_parafina = to_float(data.get("mu_dens_parafina"))
+    if dens_parafina:
+        ws["L24"] = dens_parafina  # densidad de la parafina (la plantilla trae 0.86 por defecto)
+    # A (masa de la cuerda, D20), humedad (G28) y temperatura del agua no tienen celda
+    # equivalente en esta plantilla — quedan para completar manualmente en el Excel.
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return bio.getvalue()
+
+
 # ════════════════════════════════════════════════════════════════════
 # FORMULARIOS DE ENSAYO (solo captura de datos, sin cálculos)
 # ════════════════════════════════════════════════════════════════════
@@ -2725,6 +2769,16 @@ def render_assay_form():
             "Descargar Excel (Granulometría y Límites de Atterberg — mismo archivo por muestra)", icon=":material/download:",
             data=excel_bytes, file_name=f"Clasificacion_de_suelos_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
+        )
+
+    if es_jefe and assay["tipo"] == "masa-unitaria" and muestra:
+        st.markdown("---")
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        excel_bytes = generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
+        st.download_button(
+            "Descargar Excel (plantilla oficial de Peso Unitario Parafinado)", icon=":material/download:",
+            data=excel_bytes, file_name=f"Peso_unitario_parafinado_{muestra['id_unico']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
 
 
