@@ -1003,7 +1003,7 @@ def _resumen_tecnico_perforaciones(codigo):
             lineas.append(f"<strong>{perf['codigo']}</strong>: sin muestras")
             continue
         ids = ", ".join(f"M-{m['numero']}" for m in muestras)
-        ensayos = sorted({e for m in muestras for e, activo in m["ensayos"].items() if activo})
+        ensayos = sorted({e for m in muestras for e, activo in m["ensayos"].items() if activo and e in BITACORA_ENSAYOS})
         linea = f"<strong>{perf['codigo']}</strong>: {ids}"
         if ensayos:
             linea += f" · {', '.join(ensayos)}"
@@ -1188,17 +1188,17 @@ def render_new_project():
 
     c1, c2 = st.columns(2)
     with c1:
-        fecha_bitacora = st.date_input("Fecha de bitácora", value=date.today())
+        fecha_bitacora = st.date_input("Fecha de bitácora", value=date.today(), format="DD/MM/YYYY")
     with c2:
-        fecha_ingreso = st.date_input("Fecha de ingreso de muestra", value=date.today())
+        fecha_ingreso = st.date_input("Fecha de ingreso de muestra", value=date.today(), format="DD/MM/YYYY")
 
     ec1, ec2, ec3 = st.columns(3)
     with ec1:
-        fecha_recepcion = st.date_input("Fecha de recepción", value=date.today())
+        fecha_recepcion = st.date_input("Fecha de recepción", value=date.today(), format="DD/MM/YYYY")
     with ec2:
-        fecha_ejecucion = st.date_input("Fecha de ejecución", value=date.today())
+        fecha_ejecucion = st.date_input("Fecha de ejecución", value=date.today(), format="DD/MM/YYYY")
     with ec3:
-        fecha_emision = st.date_input("Fecha de emisión", value=date.today())
+        fecha_emision = st.date_input("Fecha de emisión", value=date.today(), format="DD/MM/YYYY")
 
     st.markdown('<div class="section-title">Datos del cliente (para el encabezado de los informes — solo el Jefe los ve)</div>', unsafe_allow_html=True)
     cliente = st.text_input("Cliente", key="new_cliente", placeholder="Nombre del cliente")
@@ -1215,11 +1215,11 @@ def render_new_project():
     with dc3:
         if "new_fecha_inicio_proyecto" not in st.session_state:
             st.session_state["new_fecha_inicio_proyecto"] = date.today()
-        fecha_inicio_proyecto = st.date_input("Fecha inicio proyecto", key="new_fecha_inicio_proyecto")
+        fecha_inicio_proyecto = st.date_input("Fecha inicio proyecto", key="new_fecha_inicio_proyecto", format="DD/MM/YYYY")
     with dc4:
         if "new_fecha_final_proyecto" not in st.session_state:
             st.session_state["new_fecha_final_proyecto"] = date.today()
-        fecha_final_proyecto = st.date_input("Fecha final proyecto", key="new_fecha_final_proyecto")
+        fecha_final_proyecto = st.date_input("Fecha final proyecto", key="new_fecha_final_proyecto", format="DD/MM/YYYY")
 
     laboratorista_asignado = st.text_input(
         "Asignar bitácora a laboratorista (opcional)", placeholder="Nombre del laboratorista",
@@ -1588,17 +1588,17 @@ def render_edit_project():
 
     c1, c2 = st.columns(2)
     with c1:
-        fecha_bitacora = st.date_input("Fecha de bitácora", value=_parse_fecha(project.get("fecha_bitacora")))
+        fecha_bitacora = st.date_input("Fecha de bitácora", value=_parse_fecha(project.get("fecha_bitacora")), format="DD/MM/YYYY")
     with c2:
-        fecha_ingreso = st.date_input("Fecha de ingreso de muestra", value=_parse_fecha(project.get("fecha_ingreso_muestra")))
+        fecha_ingreso = st.date_input("Fecha de ingreso de muestra", value=_parse_fecha(project.get("fecha_ingreso_muestra")), format="DD/MM/YYYY")
 
     ec1, ec2, ec3 = st.columns(3)
     with ec1:
-        fecha_recepcion = st.date_input("Fecha de recepción", value=_parse_fecha(project.get("fecha_recepcion")))
+        fecha_recepcion = st.date_input("Fecha de recepción", value=_parse_fecha(project.get("fecha_recepcion")), format="DD/MM/YYYY")
     with ec2:
-        fecha_ejecucion = st.date_input("Fecha de ejecución", value=_parse_fecha(project.get("fecha_ejecucion")))
+        fecha_ejecucion = st.date_input("Fecha de ejecución", value=_parse_fecha(project.get("fecha_ejecucion")), format="DD/MM/YYYY")
     with ec3:
-        fecha_emision = st.date_input("Fecha de emisión", value=_parse_fecha(project.get("fecha_emision")))
+        fecha_emision = st.date_input("Fecha de emisión", value=_parse_fecha(project.get("fecha_emision")), format="DD/MM/YYYY")
 
     st.markdown('<div class="section-title">Datos del cliente (para el encabezado de los informes)</div>', unsafe_allow_html=True)
     cliente = st.text_input("Cliente", key=f"edit_cliente_{codigo}")
@@ -1618,9 +1618,9 @@ def render_edit_project():
 
     dc3, dc4 = st.columns(2)
     with dc3:
-        fecha_inicio_proyecto = st.date_input("Fecha inicio proyecto", key=f"edit_fecha_inicio_proyecto_{codigo}")
+        fecha_inicio_proyecto = st.date_input("Fecha inicio proyecto", key=f"edit_fecha_inicio_proyecto_{codigo}", format="DD/MM/YYYY")
     with dc4:
-        fecha_final_proyecto = st.date_input("Fecha final proyecto", key=f"edit_fecha_final_proyecto_{codigo}")
+        fecha_final_proyecto = st.date_input("Fecha final proyecto", key=f"edit_fecha_final_proyecto_{codigo}", format="DD/MM/YYYY")
 
     laboratorista_asignado = st.text_input(
         "Asignar bitácora a laboratorista (opcional)", value=project.get("laboratorista_asignado", ""))
@@ -1660,7 +1660,7 @@ def _perforacion_ensayos_progress(codigo, perf_codigo):
     total_ensayos, completados = 0, 0
     for m in muestras:
         for label, activo in m["ensayos"].items():
-            if not activo:
+            if not activo or label not in BITACORA_ENSAYOS:
                 continue
             total_ensayos += 1
             tipo_interno = SUPPORTED_ASSAY_MAP.get(label)
@@ -1747,7 +1747,7 @@ def render_perforacion_detail():
                 cols[0].markdown(f'<span class="cell-id">M-{html.escape(str(m["numero"]))}</span>', unsafe_allow_html=True)
                 cols[1].markdown(f'<span class="cell-muted">{html.escape(m["tipo_muestra"])}</span>', unsafe_allow_html=True)
                 cols[2].markdown(f'<span class="cell-muted">{m["profundidad_de"]}–{m["profundidad_hasta"]} m</span>', unsafe_allow_html=True)
-                ensayos_sol = [e for e, v in m["ensayos"].items() if v]
+                ensayos_sol = [e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS]
                 chips = "".join(f'<span class="assigned-chip" style="margin-right:4px;">{html.escape(e)}</span>' for e in ensayos_sol) \
                     or '<span class="cell-muted">—</span>'
                 cols[3].markdown(chips, unsafe_allow_html=True)
@@ -1977,7 +1977,9 @@ def render_muestra_detail():
             muestra["observaciones"] = observacion
             st.success("Observación guardada.")
 
-    solicitados = [e for e, v in muestra["ensayos"].items() if v]
+    # Filtra por si la muestra guarda un ensayo que ya no es seleccionable (p. ej. "Pasa 200",
+    # que quedó incluido dentro de Granulometría) — no se muestra aunque quede marcado en datos viejos.
+    solicitados = [e for e, v in muestra["ensayos"].items() if v and e in BITACORA_ENSAYOS]
     finalizados = sum(
         1 for e in solicitados
         if SUPPORTED_ASSAY_MAP.get(e) and (get_assay(muestra_id, SUPPORTED_ASSAY_MAP[e]) or {}).get("status") == "finalizado"
@@ -2692,7 +2694,7 @@ def render_search():
     for perf in perfs_to_show:
         muestras = st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", [])
         for m in muestras:
-            solicitados = [e for e, v in m["ensayos"].items() if v]
+            solicitados = [e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS]
             if f_type != "(todos)":
                 solicitados = [e for e in solicitados if ASSAY_LABELS.get(SUPPORTED_ASSAY_MAP.get(e), None) == f_type]
             if not solicitados:
