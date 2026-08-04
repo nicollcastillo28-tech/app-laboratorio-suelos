@@ -431,7 +431,6 @@ def init_state():
 
     st.session_state.nav_stack = []
     st.session_state.bitacora_draft = {}
-    st.session_state.sieve_draft = {}
     st.session_state.selected_codigo = ""
     st.session_state.selected_perforacion = ""
     st.session_state.selected_muestra_id = ""
@@ -1440,17 +1439,56 @@ def render_edit_project():
     st.markdown(f'<span class="code-badge">{html.escape(codigo)}</span>', unsafe_allow_html=True)
     st.caption("El código interno no se puede modificar.")
 
-    nombre = st.text_input("Nombre del proyecto", value=project.get("nombre", ""))
-    localizacion = st.text_input("Localización", value=project.get("localizacion", ""))
-    norma_actual = project.get("norma")
-    idx = NORMA_PROYECTO_OPTIONS.index(norma_actual) if norma_actual in NORMA_PROYECTO_OPTIONS else 0
-    norma = st.radio("Norma", NORMA_PROYECTO_OPTIONS, index=idx, horizontal=True)
-
     def _parse_fecha(valor):
         try:
             return date.fromisoformat(valor)
         except (TypeError, ValueError):
             return date.today()
+
+    # Campos con `key=` (namespaded por código de proyecto) para poder precargarlos desde el
+    # Excel del cliente sin pisar los de otro proyecto que se haya editado en la misma sesión.
+    for campo, valor_defecto in (
+        ("nombre", project.get("nombre", "")), ("localizacion", project.get("localizacion", "")),
+        ("cliente", project.get("cliente", "")), ("direccion_cliente", project.get("direccion_cliente", "")),
+        ("telefono_contacto", project.get("telefono_contacto", "")), ("correo_cliente", project.get("correo_cliente", "")),
+        ("nombre_contacto", project.get("nombre_contacto", "")),
+    ):
+        wkey = f"edit_{campo}_{codigo}"
+        if wkey not in st.session_state:
+            st.session_state[wkey] = valor_defecto
+
+    st.markdown('<div class="section-title">Cargar bitácora de proyecto del cliente (opcional)</div>', unsafe_allow_html=True)
+    uploaded_cliente_xlsx_edit = st.file_uploader(
+        "Bitácora de proyecto del cliente (Excel)", type=["xlsx"], key=f"cliente_xlsx_uploader_edit_{codigo}",
+        help="Si el cliente te envió el formato GDA-FL-021 (Bitácora de Proyecto), súbelo aquí para "
+             "precargar Cliente, Nombre del proyecto, Localización, Dirección, Teléfono, Correo, "
+             "Nombre de contacto y fechas de inicio/fin del proyecto.",
+    )
+    guard_key = f"_cliente_xlsx_last_edit_{codigo}"
+    if uploaded_cliente_xlsx_edit is not None and st.session_state.get(guard_key) != uploaded_cliente_xlsx_edit.name:
+        try:
+            datos_cliente = _leer_bitacora_cliente_xlsx(uploaded_cliente_xlsx_edit)
+            st.session_state[f"edit_nombre_{codigo}"] = datos_cliente["nombre"]
+            st.session_state[f"edit_localizacion_{codigo}"] = datos_cliente["localizacion"]
+            st.session_state[f"edit_cliente_{codigo}"] = datos_cliente["cliente"]
+            st.session_state[f"edit_correo_cliente_{codigo}"] = datos_cliente["correo_cliente"]
+            st.session_state[f"edit_direccion_cliente_{codigo}"] = datos_cliente["direccion_cliente"]
+            st.session_state[f"edit_telefono_contacto_{codigo}"] = datos_cliente["telefono_contacto"]
+            st.session_state[f"edit_nombre_contacto_{codigo}"] = datos_cliente["nombre_contacto"]
+            if datos_cliente["fecha_inicio_proyecto"]:
+                st.session_state[f"edit_fecha_inicio_proyecto_{codigo}"] = datos_cliente["fecha_inicio_proyecto"]
+            if datos_cliente["fecha_final_proyecto"]:
+                st.session_state[f"edit_fecha_final_proyecto_{codigo}"] = datos_cliente["fecha_final_proyecto"]
+            st.session_state[guard_key] = uploaded_cliente_xlsx_edit.name
+            st.success("Datos del cliente cargados desde el Excel. Revísalos abajo antes de guardar.")
+        except Exception:
+            st.error("No se pudo leer el archivo. Verifica que sea el formato GDA-FL-021 (Bitácora de Proyecto).")
+
+    nombre = st.text_input("Nombre del proyecto", key=f"edit_nombre_{codigo}")
+    localizacion = st.text_input("Localización", key=f"edit_localizacion_{codigo}")
+    norma_actual = project.get("norma")
+    idx = NORMA_PROYECTO_OPTIONS.index(norma_actual) if norma_actual in NORMA_PROYECTO_OPTIONS else 0
+    norma = st.radio("Norma", NORMA_PROYECTO_OPTIONS, index=idx, horizontal=True)
 
     c1, c2 = st.columns(2)
     with c1:
@@ -1459,21 +1497,26 @@ def render_edit_project():
         fecha_ingreso = st.date_input("Fecha de ingreso de muestra", value=_parse_fecha(project.get("fecha_ingreso_muestra")))
 
     st.markdown('<div class="section-title">Datos del cliente (para el encabezado de los informes)</div>', unsafe_allow_html=True)
-    cliente = st.text_input("Cliente", value=project.get("cliente", ""))
-    direccion_cliente = st.text_input("Dirección cliente", value=project.get("direccion_cliente", ""))
+    cliente = st.text_input("Cliente", key=f"edit_cliente_{codigo}")
+    direccion_cliente = st.text_input("Dirección cliente", key=f"edit_direccion_cliente_{codigo}")
     dc1, dc2 = st.columns(2)
     with dc1:
-        telefono_contacto = st.text_input("Teléfono de contacto", value=project.get("telefono_contacto", ""))
+        telefono_contacto = st.text_input("Teléfono de contacto", key=f"edit_telefono_contacto_{codigo}")
     with dc2:
-        correo_cliente = st.text_input("Correo electrónico", value=project.get("correo_cliente", ""))
-    nombre_contacto = st.text_input("Nombre de contacto", value=project.get("nombre_contacto", ""))
+        correo_cliente = st.text_input("Correo electrónico", key=f"edit_correo_cliente_{codigo}")
+    nombre_contacto = st.text_input("Nombre de contacto", key=f"edit_nombre_contacto_{codigo}")
     muestra_tomada_por = st.text_input("Muestra tomada por", value=project.get("muestra_tomada_por", ""))
+
+    if f"edit_fecha_inicio_proyecto_{codigo}" not in st.session_state:
+        st.session_state[f"edit_fecha_inicio_proyecto_{codigo}"] = _parse_fecha(project.get("fecha_inicio_proyecto"))
+    if f"edit_fecha_final_proyecto_{codigo}" not in st.session_state:
+        st.session_state[f"edit_fecha_final_proyecto_{codigo}"] = _parse_fecha(project.get("fecha_final_proyecto"))
 
     dc3, dc4 = st.columns(2)
     with dc3:
-        fecha_inicio_proyecto = st.date_input("Fecha inicio proyecto", value=_parse_fecha(project.get("fecha_inicio_proyecto")))
+        fecha_inicio_proyecto = st.date_input("Fecha inicio proyecto", key=f"edit_fecha_inicio_proyecto_{codigo}")
     with dc4:
-        fecha_final_proyecto = st.date_input("Fecha final proyecto", value=_parse_fecha(project.get("fecha_final_proyecto")))
+        fecha_final_proyecto = st.date_input("Fecha final proyecto", key=f"edit_fecha_final_proyecto_{codigo}")
 
     laboratorista_asignado = st.text_input(
         "Asignar bitácora a laboratorista (opcional)", value=project.get("laboratorista_asignado", ""))
@@ -2091,21 +2134,21 @@ def render_granulometria_form(data, assay_id):
 
     with st.container(border=True):
         st.markdown(card_header_html("grid_view", "Granulometría (Masa de Suelo Retenido)"), unsafe_allow_html=True)
-        # Igual que en la Bitácora: la fuente que se le pasa a st.data_editor debe permanecer estable
-        # entre reruns (si no, el editor descarta la primera edición y toca digitar dos veces). Por eso
-        # se arma una sola vez por ensayo y se cachea en session_state.
-        sieve_key = f"sieve_{assay_id}"
-        if sieve_key not in st.session_state.sieve_draft:
-            rows = [{"Tamiz": label, "Abertura (mm)": apert, "Retenido (g)": to_float(data.get(key), 0.0)} for key, label, apert, _cell in SIEVES]
-            st.session_state.sieve_draft[sieve_key] = pd.DataFrame(rows)
-        df_source = st.session_state.sieve_draft[sieve_key]
-        edited = st.data_editor(
-            df_source, hide_index=True, use_container_width=True, disabled=["Tamiz", "Abertura (mm)"],
-            column_config={"Retenido (g)": st.column_config.NumberColumn(step=0.1, default=0.0)},
-            key=f"gran_sieve_editor_{assay_id}",
-        )
-        for i, (key, _label, _apert, _cell) in enumerate(SIEVES):
-            data[key] = edited.iloc[i]["Retenido (g)"]
+        # Campos de texto libre (no st.data_editor con NumberColumn) porque el editor de tabla
+        # de Streamlit borra el punto decimal apenas se escribe más de un dígito después de él
+        # — el mismo patrón confiable que ya se usa en Pasa No. 200 y en Humedad.
+        head = st.columns([1.2, 1, 1.4])
+        head[0].markdown('<div class="cell-muted" style="font-weight:700;">Tamiz</div>', unsafe_allow_html=True)
+        head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Abertura (mm)</div>', unsafe_allow_html=True)
+        head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Retenido (g)</div>', unsafe_allow_html=True)
+        for key, label, apert, _cell in SIEVES:
+            row = st.columns([1.2, 1, 1.4])
+            row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+            row[1].markdown(f'<div style="padding-top:8px;text-align:center;">{apert}</div>', unsafe_allow_html=True)
+            widget_key = f"retenido_{key}_{assay_id}"
+            if widget_key not in st.session_state:
+                st.session_state[widget_key] = data.get(key, "")
+            data[key] = row[2].text_input(f"Retenido {label}", key=widget_key, label_visibility="collapsed", placeholder="0.00")
         st.caption("El % retenido y la clasificación USCS se calculan en la plantilla de Excel, no aquí.")
 
 
