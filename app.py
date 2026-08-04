@@ -1018,16 +1018,39 @@ def render_projects_done():
 # ════════════════════════════════════════════════════════════════════
 # NUEVO PROYECTO (solo Jefe)
 # ════════════════════════════════════════════════════════════════════
+def _str_excel(v):
+    """str() de una celda de Excel, sin el '.0' feo que deja Python en números enteros
+    guardados como float (típico en teléfonos digitados en una celda numérica)."""
+    if isinstance(v, float) and v == int(v):
+        return str(int(v))
+    return str(v or "").strip()
+
+
+def _fecha_excel(v):
+    """Convierte el valor de una celda de fecha de Excel a un date de Python, o None si
+    no se pudo leer como fecha (celda vacía, texto libre, etc.)."""
+    if isinstance(v, datetime):
+        return v.date()
+    if isinstance(v, date):
+        return v
+    return None
+
+
 def _leer_bitacora_cliente_xlsx(file_obj):
     """Lee el formato GDA-FL-021 (Bitácora de Proyecto) que envía el cliente y devuelve
     los campos que sirven para precargar Nuevo Proyecto."""
     wb = load_workbook(file_obj, data_only=True)
     ws = wb["HOJA1"] if "HOJA1" in wb.sheetnames else wb.active
     return {
-        "cliente": str(ws["E11"].value or "").strip(),
-        "nombre": str(ws["E12"].value or "").strip(),
-        "localizacion": str(ws["E13"].value or "").strip(),
-        "correo_cliente": str(ws["Q15"].value or "").strip(),
+        "cliente": _str_excel(ws["E11"].value),
+        "nombre": _str_excel(ws["E12"].value),
+        "localizacion": _str_excel(ws["E13"].value),
+        "direccion_cliente": _str_excel(ws["E14"].value),
+        "telefono_contacto": _str_excel(ws["E15"].value),
+        "correo_cliente": _str_excel(ws["Q15"].value),
+        "nombre_contacto": _str_excel(ws["E16"].value),
+        "fecha_inicio_proyecto": _fecha_excel(ws["E17"].value),
+        "fecha_final_proyecto": _fecha_excel(ws["Q17"].value),
     }
 
 
@@ -1059,7 +1082,8 @@ def render_new_project():
     uploaded_cliente_xlsx = st.file_uploader(
         "Bitácora de proyecto del cliente (Excel)", type=["xlsx"], key="cliente_xlsx_uploader",
         help="Si el cliente te envió el formato GDA-FL-021 (Bitácora de Proyecto), súbelo aquí para "
-             "precargar Cliente, Nombre del proyecto, Localización y Correo electrónico.",
+             "precargar Cliente, Nombre del proyecto, Localización, Dirección, Teléfono, Correo, "
+             "Nombre de contacto y fechas de inicio/fin del proyecto.",
     )
     if uploaded_cliente_xlsx is not None and st.session_state.get("_cliente_xlsx_last") != uploaded_cliente_xlsx.name:
         try:
@@ -1068,6 +1092,13 @@ def render_new_project():
             st.session_state["new_localizacion"] = datos_cliente["localizacion"]
             st.session_state["new_cliente"] = datos_cliente["cliente"]
             st.session_state["new_correo_cliente"] = datos_cliente["correo_cliente"]
+            st.session_state["new_direccion_cliente"] = datos_cliente["direccion_cliente"]
+            st.session_state["new_telefono_contacto"] = datos_cliente["telefono_contacto"]
+            st.session_state["new_nombre_contacto"] = datos_cliente["nombre_contacto"]
+            if datos_cliente["fecha_inicio_proyecto"]:
+                st.session_state["new_fecha_inicio_proyecto"] = datos_cliente["fecha_inicio_proyecto"]
+            if datos_cliente["fecha_final_proyecto"]:
+                st.session_state["new_fecha_final_proyecto"] = datos_cliente["fecha_final_proyecto"]
             st.session_state["_cliente_xlsx_last"] = uploaded_cliente_xlsx.name
             st.success("Datos del cliente cargados desde el Excel. Revísalos abajo antes de guardar.")
         except Exception:
@@ -1086,8 +1117,24 @@ def render_new_project():
 
     st.markdown('<div class="section-title">Datos del cliente (para el encabezado de los informes — solo el Jefe los ve)</div>', unsafe_allow_html=True)
     cliente = st.text_input("Cliente", key="new_cliente", placeholder="Nombre del cliente")
-    correo_cliente = st.text_input("Correo electrónico", key="new_correo_cliente", placeholder="correo@cliente.com")
+    direccion_cliente = st.text_input("Dirección cliente", key="new_direccion_cliente", placeholder="Dirección del cliente")
+    dc1, dc2 = st.columns(2)
+    with dc1:
+        telefono_contacto = st.text_input("Teléfono de contacto", key="new_telefono_contacto", placeholder="300 000 0000")
+    with dc2:
+        correo_cliente = st.text_input("Correo electrónico", key="new_correo_cliente", placeholder="correo@cliente.com")
+    nombre_contacto = st.text_input("Nombre de contacto", key="new_nombre_contacto", placeholder="Nombre de quien coordina con el cliente")
     muestra_tomada_por = st.text_input("Muestra tomada por", placeholder="Nombre de quien tomó la muestra")
+
+    dc3, dc4 = st.columns(2)
+    with dc3:
+        if "new_fecha_inicio_proyecto" not in st.session_state:
+            st.session_state["new_fecha_inicio_proyecto"] = date.today()
+        fecha_inicio_proyecto = st.date_input("Fecha inicio proyecto", key="new_fecha_inicio_proyecto")
+    with dc4:
+        if "new_fecha_final_proyecto" not in st.session_state:
+            st.session_state["new_fecha_final_proyecto"] = date.today()
+        fecha_final_proyecto = st.date_input("Fecha final proyecto", key="new_fecha_final_proyecto")
 
     laboratorista_asignado = st.text_input(
         "Asignar bitácora a laboratorista (opcional)", placeholder="Nombre del laboratorista",
@@ -1201,6 +1248,9 @@ def render_new_project():
                 "fecha_bitacora": str(fecha_bitacora), "fecha_ingreso_muestra": str(fecha_ingreso),
                 "laboratorista_asignado": laboratorista_asignado,
                 "cliente": cliente, "correo_cliente": correo_cliente, "muestra_tomada_por": muestra_tomada_por,
+                "direccion_cliente": direccion_cliente, "telefono_contacto": telefono_contacto,
+                "nombre_contacto": nombre_contacto,
+                "fecha_inicio_proyecto": str(fecha_inicio_proyecto), "fecha_final_proyecto": str(fecha_final_proyecto),
             })
             st.session_state.perforaciones.setdefault(codigo_interno, [])
             for perf in perforaciones:
@@ -1263,11 +1313,17 @@ def render_project_detail():
             ("rule", "Norma", project.get("norma")),
             ("calendar_month", "Fecha de orden", project.get("fecha_bitacora")),
             ("move_to_inbox", "Ingreso de muestras", project.get("fecha_ingreso_muestra")),
+            ("event", "Fecha inicio proyecto", project.get("fecha_inicio_proyecto")),
+            ("event_available", "Fecha final proyecto", project.get("fecha_final_proyecto")),
             ("person", "Asignado a", project.get("laboratorista_asignado")),
         ]
         # Datos del cliente: solo el Jefe los ve, nunca el laboratorista.
         if st.session_state.role == "jefe":
             info_rows.insert(1, ("badge", "Cliente", project.get("cliente")))
+            info_rows.insert(2, ("mail", "Correo electrónico", project.get("correo_cliente")))
+            info_rows.insert(3, ("home_pin", "Dirección cliente", project.get("direccion_cliente")))
+            info_rows.insert(4, ("call", "Teléfono de contacto", project.get("telefono_contacto")))
+            info_rows.insert(5, ("contact_page", "Nombre de contacto", project.get("nombre_contacto")))
         for i, (icono, label, valor) in enumerate(info_rows):
             margen = "margin-top:14px;" if i else ""
             st.markdown(f'<div class="cell-muted" style="{margen}text-transform:uppercase;letter-spacing:0.04em;font-size:11px;">'
@@ -1404,8 +1460,20 @@ def render_edit_project():
 
     st.markdown('<div class="section-title">Datos del cliente (para el encabezado de los informes)</div>', unsafe_allow_html=True)
     cliente = st.text_input("Cliente", value=project.get("cliente", ""))
-    correo_cliente = st.text_input("Correo electrónico", value=project.get("correo_cliente", ""))
+    direccion_cliente = st.text_input("Dirección cliente", value=project.get("direccion_cliente", ""))
+    dc1, dc2 = st.columns(2)
+    with dc1:
+        telefono_contacto = st.text_input("Teléfono de contacto", value=project.get("telefono_contacto", ""))
+    with dc2:
+        correo_cliente = st.text_input("Correo electrónico", value=project.get("correo_cliente", ""))
+    nombre_contacto = st.text_input("Nombre de contacto", value=project.get("nombre_contacto", ""))
     muestra_tomada_por = st.text_input("Muestra tomada por", value=project.get("muestra_tomada_por", ""))
+
+    dc3, dc4 = st.columns(2)
+    with dc3:
+        fecha_inicio_proyecto = st.date_input("Fecha inicio proyecto", value=_parse_fecha(project.get("fecha_inicio_proyecto")))
+    with dc4:
+        fecha_final_proyecto = st.date_input("Fecha final proyecto", value=_parse_fecha(project.get("fecha_final_proyecto")))
 
     laboratorista_asignado = st.text_input(
         "Asignar bitácora a laboratorista (opcional)", value=project.get("laboratorista_asignado", ""))
@@ -1426,6 +1494,11 @@ def render_edit_project():
             project["cliente"] = cliente
             project["correo_cliente"] = correo_cliente
             project["muestra_tomada_por"] = muestra_tomada_por
+            project["direccion_cliente"] = direccion_cliente
+            project["telefono_contacto"] = telefono_contacto
+            project["nombre_contacto"] = nombre_contacto
+            project["fecha_inicio_proyecto"] = str(fecha_inicio_proyecto)
+            project["fecha_final_proyecto"] = str(fecha_final_proyecto)
             navigate("project-detail")
 
 
