@@ -514,6 +514,21 @@ def fmt_num(v, decimals=3):
     return s if s not in ("", "-") else "0"
 
 
+def calcular_humedad_pct(data):
+    """% de humedad a partir de los datos digitados en el ensayo de Humedad, con la misma
+    fórmula que trae la plantilla oficial (GDA-FLC-014, celda I24):
+    (masa húmeda - masa seca) / (masa seca - masa recipiente) * 100."""
+    masa_humedo = to_float(data.get("hum_masa_humedo_mas_recipiente"))
+    masa_seco = to_float(data.get("hum_seco_mas_recipiente"))
+    masa_recip = to_float(data.get("hum_masa_recipiente"))
+    if masa_humedo is None or masa_seco is None or masa_recip is None:
+        return None
+    masa_suelo_seco = masa_seco - masa_recip
+    if not masa_suelo_seco:
+        return None
+    return (masa_humedo - masa_seco) / masa_suelo_seco * 100
+
+
 def icon(name, size=18, fill=False, color=None):
     """Ícono de Material Symbols para insertar dentro de HTML propio (st.markdown con unsafe_allow_html)."""
     cls = "material-symbols-outlined msi-fill" if fill else "material-symbols-outlined"
@@ -2329,8 +2344,16 @@ def generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, obs
     dens_parafina = to_float(data.get("mu_dens_parafina"))
     if dens_parafina:
         ws["L24"] = dens_parafina  # densidad de la parafina (la plantilla trae 0.86 por defecto)
-    # A (masa de la cuerda, D20), humedad (G28) y temperatura del agua no tienen celda
-    # equivalente en esta plantilla — quedan para completar manualmente en el Excel.
+
+    # La humedad (G28) la necesita la fórmula de "densidad seca" pero esta plantilla no la
+    # digita — se toma del ensayo de Humedad de la misma muestra, igual que Granulometría y
+    # Límites comparten datos entre sí.
+    hum_assay = get_assay(muestra["id_unico"], "humedad")
+    humedad_pct = calcular_humedad_pct(hum_assay.get("data", {})) if hum_assay else None
+    if humedad_pct is not None:
+        ws["G28"] = humedad_pct
+    # A (masa de la cuerda, D20) y temperatura del agua no tienen celda equivalente en esta
+    # plantilla — quedan para completar manualmente en el Excel.
 
     bio = BytesIO()
     wb.save(bio)
@@ -2580,6 +2603,7 @@ def render_read_only_summary(tipo, data, laboratorista="—"):
         masa_recip = to_float(data.get("hum_masa_recipiente"))
         masa_agua = (masa_humedo - masa_seco) if (masa_humedo is not None and masa_seco is not None) else None
         masa_suelo_seco = (masa_seco - masa_recip) if (masa_seco is not None and masa_recip is not None) else None
+        humedad_pct = calcular_humedad_pct(data)
         rows = [
             ("Recipiente no.", data.get("hum_recipiente")),
             ("Masa del recipiente (g)", data.get("hum_masa_recipiente")),
@@ -2589,6 +2613,7 @@ def render_read_only_summary(tipo, data, laboratorista="—"):
             ("Masa suelo seco + recipiente (g) (16 hrs)", data.get("hum_seco_16h")),
             ("Masa del agua (g)", fmt_num(masa_agua)),
             ("Masa suelo seco (g)", fmt_num(masa_suelo_seco)),
+            ("Humedad (%)", fmt_num(humedad_pct, decimals=2)),
         ]
         with st.container(border=True):
             st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
@@ -2652,10 +2677,8 @@ def render_assay_form():
     if st.button("← Atrás"):
         go_back(fallback="muestra-detail")
 
-    titulo_pagina = "Resultados de Ensayo" if read_only else f"Registro de Ensayo: {ASSAY_LABELS[assay['tipo']]}"
-    st.markdown(f"## {titulo_pagina}")
-    if read_only:
-        st.caption(f"Ensayo: {ASSAY_LABELS[assay['tipo']]}")
+    st.markdown(f"## {ASSAY_LABELS[assay['tipo']]}")
+    st.caption("Resultados de Ensayo" if read_only else "Registro de Ensayo")
     st.markdown(f'<div style="margin-bottom:10px;">{status_badge_html(assay["status"])}&nbsp;&nbsp;'
                 f'<span class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(assay["lastModified"])}'
                 + (f' · {html.escape(assay["laboratorist"])}' if assay.get("laboratorist") else "") + '</span></div>',
