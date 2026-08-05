@@ -142,6 +142,9 @@ st.markdown(f"""
     /* Tarjeta con acento a la izquierda, para encabezados de detalle (ej. Detalle de Muestra) */
     .st-key-muestra-header-card {{ border-left: 4px solid {PRIMARY} !important; }}
     .st-key-muestra-obs-box .stTextArea textarea {{ background-color: {SECONDARY_CONTAINER} !important; }}
+    /* El laboratorista puede escribir en minúscula — se ve en mayúscula de una vez (el texto
+       que se guarda también se normaliza a mayúscula al hacer clic en "Guardar"). */
+    .st-key-muestra-desc-visual-box .stTextArea textarea {{ text-transform: uppercase; }}
     .role-pill {{
         display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 11px;
         font-family: 'JetBrains Mono', monospace; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
