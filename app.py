@@ -30,7 +30,9 @@ TEMPLATE_BITACORA_ORDEN = os.path.join(BASE_DIR, "templates", "GDA-FL-003_bitaco
 TEMPLATE_HUMEDAD = os.path.join(BASE_DIR, "templates", "GDA-FLC-014_humedad_natural.xlsx")
 TEMPLATE_MASA_UNITARIA = os.path.join(BASE_DIR, "templates", "GDA-FLC-004_masa_unitaria.xlsx")
 
-PASSWORDS = {"jefe": "geodelta2024", "auxiliar": "aux2024"}
+PASSWORDS = {"jefe": "geodelta2024", "auxiliar": "aux2024", "ingeniero": "ing2024"}
+ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "auxiliar": "Auxiliar", "ingeniero": "Ingeniero"}
+ROLE_INICIALES = {"jefe": "JL", "auxiliar": "AX", "ingeniero": "ING"}
 
 # ════════════════════════════════════════════════════════════════════
 # ESTILOS — paleta del brief SoilLab Pro (Primary #1B365D · Secondary #4A6278 · Tertiary #005EB8 · Neutral #64748B)
@@ -41,6 +43,7 @@ TERTIARY = "#005EB8"
 NEUTRAL = "#64748B"
 SUCCESS, SUCCESS_LIGHT = "#16A34A", "#DCFCE7"
 WARNING, WARNING_LIGHT = "#D97706", "#FEF3C7"
+DANGER, DANGER_LIGHT = "#DC2626", "#FEE2E2"
 SURFACE, BG, BORDER, TEXT = "#FFFFFF", "#F8F9FF", "#C4C6CF", "#0B1C30"
 MUTED = NEUTRAL
 
@@ -130,6 +133,7 @@ st.markdown(f"""
     }}
     .badge-success {{ background: {SUCCESS_LIGHT}; color: {SUCCESS}; }}
     .badge-warning {{ background: {WARNING_LIGHT}; color: {WARNING}; }}
+    .badge-danger {{ background: {DANGER_LIGHT}; color: {DANGER}; }}
     .badge-muted {{ background: #EEF1F5; color: {MUTED}; }}
     .status-circle {{
         display: inline-flex; align-items: center; justify-content: center;
@@ -137,6 +141,7 @@ st.markdown(f"""
     }}
     .status-circle-success {{ background: {SUCCESS_LIGHT}; color: {SUCCESS}; }}
     .status-circle-warning {{ background: {WARNING_LIGHT}; color: {WARNING}; }}
+    .status-circle-danger {{ background: {DANGER_LIGHT}; color: {DANGER}; }}
     .status-circle-muted {{ background: #EEF1F5; color: {MUTED}; }}
 
     /* Tarjeta con acento a la izquierda, para encabezados de detalle (ej. Detalle de Muestra) */
@@ -333,7 +338,7 @@ NORMAS_ENSAYO = {
     "masa-unitaria": ["INV E-202", "ASTM D1188"],
 }
 STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado"}
-STATUS_BADGE = {"sin-iniciar": "badge-muted", "en-proceso": "badge-warning", "finalizado": "badge-success"}
+STATUS_BADGE = {"sin-iniciar": "badge-success", "en-proceso": "badge-warning", "finalizado": "badge-danger"}
 STATUS_ICON = {"sin-iniciar": "radio_button_unchecked", "en-proceso": "autorenew", "finalizado": "check_circle"}
 
 TIPO_PERFORACION_PREFIX = {"Sondeo": "S", "Apique": "AP", "Fuente/Cantera": "F"}
@@ -465,6 +470,7 @@ def get_shared_store():
             "codigo_interno": codigo_demo, "perforacion_codigo": "S1", "muestra_numero": "1",
             "lastModified": datetime.now().isoformat(), "createdAt": datetime.now().isoformat(),
         }],
+        "notifications": [],
     }
 
 
@@ -501,6 +507,7 @@ def init_state():
     st.session_state.perforaciones = store["perforaciones"]
     st.session_state.muestras = store["muestras"]
     st.session_state.assays = store["assays"]
+    st.session_state.notifications = store["notifications"]
 
     st.session_state.nav_stack = []
     st.session_state.bitacora_draft = {}
@@ -701,6 +708,15 @@ def now_iso():
     return datetime.now().isoformat()
 
 
+def add_notification(role, mensaje, codigo=None, perf=None, muestra_id=None):
+    """Notificación compartida entre todas las sesiones logueadas con `role` (ver
+    get_shared_store: notifications vive en el mismo store con @st.cache_resource)."""
+    st.session_state.notifications.append({
+        "id": f"n-{uuid.uuid4().hex[:8]}", "role": role, "mensaje": mensaje, "leida": False,
+        "fecha": now_iso(), "codigo_interno": codigo, "perforacion_codigo": perf, "muestra_id": muestra_id,
+    })
+
+
 def format_dt(iso_str):
     try:
         return datetime.fromisoformat(iso_str).strftime("%d/%m/%Y %H:%M")
@@ -764,24 +780,36 @@ def project_progress(codigo):
 
 
 def project_status(codigo):
-    """'ejecutado' solo si el proyecto tiene al menos una muestra y TODAS están finalizadas."""
+    """'ejecutado' solo si el proyecto tiene al menos una muestra, TODAS están finalizadas
+    (el laboratorista terminó) Y TODAS tienen el visto bueno final del Ingeniero — no basta
+    con que el laboratorio haya terminado, tiene que estar aprobado para poder entregarse."""
     counts = project_progress(codigo)
     total = sum(counts.values())
-    if total > 0 and counts["finalizado"] == total:
-        return "ejecutado"
-    return "ejecucion"
+    if total == 0 or counts["finalizado"] != total:
+        return "ejecucion"
+    for perf in st.session_state.perforaciones.get(codigo, []):
+        for m in st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", []):
+            if m.get("etapa_revision") != "aprobado":
+                return "ejecucion"
+    return "ejecutado"
 
 
 def desarchivar_proyecto(codigo):
     """Reabre un proyecto ejecutado: revierte a 'en-proceso' todos sus ensayos finalizados,
     para que el laboratorista pueda volver a digitar o el Jefe agregar nuevas muestras/
-    perforaciones. El estado 'ejecutado' se recalcula solo (ver project_status), así que
-    no hace falta ninguna bandera aparte — basta con que deje de estar 100% finalizado."""
+    perforaciones. También limpia la aprobación de cada muestra (etapa_revision y demás) —
+    si se reabre, tiene que volver a pasar por Jefe e Ingeniero antes de poder archivarse de
+    nuevo. El estado 'ejecutado' se recalcula solo (ver project_status)."""
     ahora = now_iso()
     for a in st.session_state.assays:
         if a["codigo_interno"] == codigo and a["status"] == "finalizado":
             a["status"] = "en-proceso"
             a["lastModified"] = ahora
+    for perf in st.session_state.perforaciones.get(codigo, []):
+        for m in st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", []):
+            for campo in ("etapa_revision", "confirmado_por_jefe", "confirmado_por_jefe_fecha",
+                          "aprobado_por_ing", "aprobado_por_ing_fecha", "motivo_rechazo", "rechazado_por"):
+                m.pop(campo, None)
 
 
 def confirm_delete(action_key, label):
@@ -817,11 +845,11 @@ def render_login():
         with st.container(border=True, key="login-card"):
             st.markdown("#### Bienvenido de nuevo")
             st.caption("Ingresa tus credenciales para acceder al sistema.")
-            role_choice = st.radio("Tipo de usuario", ["Auxiliar", "Jefe"], horizontal=True)
+            role_choice = st.radio("Tipo de usuario", ["Auxiliar", "Jefe", "Ingeniero"], horizontal=True)
             password = st.text_input("Clave de acceso", type="password", placeholder="••••••••")
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("INGRESAR", type="primary", use_container_width=True):
-                role_key = "jefe" if role_choice == "Jefe" else "auxiliar"
+                role_key = {"Jefe": "jefe", "Ingeniero": "ingeniero"}.get(role_choice, "auxiliar")
                 if password == PASSWORDS[role_key]:
                     st.session_state.role = role_key
                     st.session_state.nav_stack = []
@@ -853,7 +881,7 @@ ACTIVE_MAP = {
 def render_topbar():
     active = ACTIVE_MAP.get(st.session_state.screen)
     with st.container(key="topbar"):
-        c_brand, c_nav, c_avatar, c_logout = st.columns([2.4, 4.6, 0.7, 0.7])
+        c_brand, c_nav, c_bell, c_avatar, c_logout = st.columns([2.2, 4.2, 0.7, 0.7, 0.7])
         with c_brand:
             st.markdown(f'<div class="topbar-brand">{icon("biotech", size=24)}'
                         f'<span class="brand-title">Geodelta Lab</span></div>', unsafe_allow_html=True)
@@ -865,8 +893,33 @@ def render_topbar():
                         if st.button(label, key=f"nav_{key}", use_container_width=True, icon=f":material/{icono}:",
                                      type="primary" if active == key else "secondary"):
                             navigate(key)
+        with c_bell:
+            mis_notifs = sorted(
+                (n for n in st.session_state.notifications if n["role"] == st.session_state.role),
+                key=lambda n: n["fecha"], reverse=True)
+            no_leidas = sum(1 for n in mis_notifs if not n["leida"])
+            with st.popover(str(no_leidas) if no_leidas else "", icon=":material/notifications:", use_container_width=True):
+                st.markdown("**Notificaciones**")
+                if not mis_notifs:
+                    st.caption("No tienes notificaciones.")
+                else:
+                    if no_leidas and st.button("Marcar todas como leídas", key="notif_marcar_todas", use_container_width=True):
+                        for n in mis_notifs:
+                            n["leida"] = True
+                        st.rerun()
+                    for n in mis_notifs[:15]:
+                        with st.container(border=True):
+                            peso = "font-weight:700;" if not n["leida"] else ""
+                            st.markdown(f'<div style="{peso}">{html.escape(n["mensaje"])}</div>'
+                                        f'<div class="timestamp-caption">{format_dt(n["fecha"])}</div>', unsafe_allow_html=True)
+                            if n.get("muestra_id") and st.button("Ir a la muestra →", key=f"notif_go_{n['id']}", use_container_width=True):
+                                n["leida"] = True
+                                st.session_state.selected_codigo = n["codigo_interno"]
+                                st.session_state.selected_perforacion = n["perforacion_codigo"]
+                                st.session_state.selected_muestra_id = n["muestra_id"]
+                                navigate("muestra-detail")
         with c_avatar:
-            iniciales = "JL" if st.session_state.role == "jefe" else "AX"
+            iniciales = ROLE_INICIALES.get(st.session_state.role, "AX")
             st.markdown(f'<div class="topbar-avatar">{iniciales}</div>', unsafe_allow_html=True)
         with c_logout:
             if st.button("", key="logout_top", help="Cerrar sesión", use_container_width=True, icon=":material/logout:"):
@@ -889,11 +942,29 @@ def render_bottomnav():
 # ════════════════════════════════════════════════════════════════════
 # INICIO
 # ════════════════════════════════════════════════════════════════════
+def _muestras_pendientes_ing():
+    """Muestras ya finalizadas por el laboratorista, confirmadas por el Jefe y esperando el
+    visto bueno del Ingeniero. Devuelve tuplas (codigo, perf_codigo, muestra)."""
+    pendientes = []
+    for p in st.session_state.projects:
+        codigo = p["codigo_interno"]
+        for perf in st.session_state.perforaciones.get(codigo, []):
+            for m in st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", []):
+                if compute_muestra_estado(m) == "finalizado" and m.get("etapa_revision") == "pendiente_ing":
+                    pendientes.append((codigo, perf["codigo"], m))
+    return pendientes
+
+
 def render_home():
     es_jefe = st.session_state.role == "jefe"
+    es_ingeniero = st.session_state.role == "ingeniero"
+    es_supervisor = es_jefe or es_ingeniero
     if es_jefe:
         st.markdown("## Bienvenido, Jefe de Laboratorio")
         st.caption("Resumen de operaciones y control de calidad geotécnica para hoy.")
+    elif es_ingeniero:
+        st.markdown("## Bienvenido, Ingeniero")
+        st.caption("Revisión final y aprobación de muestras antes de entregarlas al cliente.")
     else:
         st.markdown("## Panel de Auxiliar")
         st.caption("Gestiona tus proyectos asignados y registra los resultados de los ensayos de suelo.")
@@ -921,6 +992,37 @@ def render_home():
                              unsafe_allow_html=True)
                 if st.button("Explorar archivo →", key="cta_done", use_container_width=True):
                     navigate("projects-done")
+        elif es_ingeniero:
+            pendientes_ing = _muestras_pendientes_ing()
+            c1, c2 = st.columns([2, 1])
+            with c1:
+                st.markdown(f'<div class="bento-primary"><div class="bento-icon">{icon("fact_check")}</div>'
+                             f'<div><span class="bento-eyebrow">Tareas prioritarias</span>'
+                             f'<h3>Muestras pendientes de tu aprobación</h3><p>{len(pendientes_ing)} muestra(s) '
+                             f'confirmadas por el Jefe de Laboratorio, esperando tu visto bueno final.</p></div></div>',
+                             unsafe_allow_html=True)
+            with c2:
+                st.markdown(f'<div class="bento-light"><div class="bento-icon">{icon("archive")}</div>'
+                             '<div><h3>Proyectos ejecutados</h3><p>Consulta el historial certificado.</p></div></div>',
+                             unsafe_allow_html=True)
+                if st.button("Explorar archivo →", key="cta_done_ing", use_container_width=True):
+                    navigate("projects-done")
+            if pendientes_ing:
+                st.markdown("<br>", unsafe_allow_html=True)
+                for codigo, perf_codigo, m in pendientes_ing[:5]:
+                    proyecto = get_project(codigo)
+                    with st.container(border=True):
+                        cols = st.columns([3, 1])
+                        cols[0].markdown(
+                            f'<div class="cell-title">{html.escape(proyecto["nombre"] if proyecto else codigo)}</div>'
+                            f'<div class="cell-sub">{html.escape(codigo)} · {html.escape(perf_codigo)} · Muestra {m["numero"]}</div>',
+                            unsafe_allow_html=True)
+                        with cols[1]:
+                            if st.button("Revisar →", key=f"revisar_ing_{m['id_unico']}", use_container_width=True):
+                                st.session_state.selected_codigo = codigo
+                                st.session_state.selected_perforacion = perf_codigo
+                                st.session_state.selected_muestra_id = m["id_unico"]
+                                navigate("muestra-detail")
         else:
             c1, c2 = st.columns([2, 1])
             with c1:
@@ -941,7 +1043,7 @@ def render_home():
     st.markdown("<br>", unsafe_allow_html=True)
     todos_los_ensayos = sorted(st.session_state.assays, key=lambda a: a["lastModified"], reverse=True)
 
-    if es_jefe:
+    if es_supervisor:
         recientes = todos_los_ensayos[:5]
         with st.container(border=True):
             h1, h2 = st.columns([4, 1])
@@ -1464,8 +1566,8 @@ def render_project_detail():
             ("outbox", "Fecha de emisión", project.get("fecha_emision")),
             ("person", "Asignado a", project.get("laboratorista_asignado")),
         ]
-        # Datos del cliente: solo el Jefe los ve, nunca el laboratorista.
-        if st.session_state.role == "jefe":
+        # Datos del cliente: los ven Jefe e Ingeniero (roles de consulta/revisión), nunca el laboratorista.
+        if st.session_state.role in ("jefe", "ingeniero"):
             info_rows.insert(1, ("badge", "Cliente", project.get("cliente")))
             info_rows.insert(2, ("mail", "Correo electrónico", project.get("correo_cliente")))
             info_rows.insert(3, ("home_pin", "Dirección cliente", project.get("direccion_cliente")))
@@ -2114,6 +2216,94 @@ def render_muestra_detail():
                     st.markdown(f'<div class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(existing["lastModified"])}</div>', unsafe_allow_html=True)
             else:
                 cols[2].markdown('<span class="badge badge-muted">Sin formulario aún</span>', unsafe_allow_html=True)
+
+    if estado == "finalizado":
+        st.markdown('<div class="section-title">Aprobación de la muestra</div>', unsafe_allow_html=True)
+        etapa = muestra.get("etapa_revision")
+        motivo = muestra.get("motivo_rechazo")
+        if motivo:
+            quien = "el Jefe de Laboratorio" if muestra.get("rechazado_por") == "jefe" else "el Ingeniero"
+            st.warning(f"Devuelto por {quien}: {motivo}")
+
+        with st.container(border=True):
+            if etapa == "aprobado":
+                st.markdown(card_header_html("verified", "Aprobado — listo para entregar al cliente"), unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="cell-muted">Confirmado por Jefe</div><div style="font-weight:600;">'
+                    f'{html.escape(muestra.get("confirmado_por_jefe") or "—")} · {format_dt(muestra.get("confirmado_por_jefe_fecha"))}</div>'
+                    f'<div class="cell-muted" style="margin-top:10px;">Aprobado por Ingeniero</div><div style="font-weight:600;">'
+                    f'{html.escape(muestra.get("aprobado_por_ing") or "—")} · {format_dt(muestra.get("aprobado_por_ing_fecha"))}</div>',
+                    unsafe_allow_html=True)
+            elif etapa == "pendiente_ing":
+                st.markdown(card_header_html("hourglass_top", "Enviado al Ingeniero — esperando revisión"), unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="cell-muted">Confirmado por Jefe</div><div style="font-weight:600;">'
+                    f'{html.escape(muestra.get("confirmado_por_jefe") or "—")} · {format_dt(muestra.get("confirmado_por_jefe_fecha"))}</div>',
+                    unsafe_allow_html=True)
+                if st.session_state.role == "ingeniero":
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    nombre_ing = st.text_input("Tu nombre", key=f"ing_nombre_{muestra_id}", placeholder="Nombre completo")
+                    if st.button("Dar visto bueno final", type="primary", icon=":material/check_circle:",
+                                 use_container_width=True, key=f"ing_aprobar_{muestra_id}"):
+                        muestra["etapa_revision"] = "aprobado"
+                        muestra["aprobado_por_ing"] = nombre_ing
+                        muestra["aprobado_por_ing_fecha"] = now_iso()
+                        muestra["motivo_rechazo"] = ""
+                        muestra["rechazado_por"] = ""
+                        add_notification("jefe", f"El Ingeniero aprobó la Muestra {muestra['numero']} de {codigo} "
+                                                  f"— ya se puede entregar al cliente.", codigo, perf_codigo, muestra_id)
+                        st.success("Aprobado.")
+                        st.rerun()
+                    motivo_ing = st.text_area("Motivo si vas a devolver al Jefe", key=f"ing_motivo_{muestra_id}",
+                                               placeholder="Qué hay que corregir...")
+                    if st.button("Devolver al Jefe", icon=":material/undo:", use_container_width=True, key=f"ing_devolver_{muestra_id}"):
+                        if motivo_ing.strip():
+                            muestra["etapa_revision"] = None
+                            muestra["motivo_rechazo"] = motivo_ing
+                            muestra["rechazado_por"] = "ing"
+                            add_notification("jefe", f"El Ingeniero devolvió la Muestra {muestra['numero']} de {codigo}: "
+                                                      f"{motivo_ing}", codigo, perf_codigo, muestra_id)
+                            st.success("Devuelto al Jefe.")
+                            st.rerun()
+                        else:
+                            st.error("Escribe el motivo antes de devolver.")
+            else:
+                st.markdown(card_header_html("fact_check", "Pendiente de confirmación del Jefe de Laboratorio"), unsafe_allow_html=True)
+                if st.session_state.role == "jefe":
+                    nombre_jefe = st.text_input("Tu nombre", key=f"jefe_nombre_{muestra_id}", placeholder="Nombre completo")
+                    if st.button("Confirmar y enviar al Ingeniero", type="primary", icon=":material/check_circle:",
+                                 use_container_width=True, key=f"jefe_confirmar_{muestra_id}"):
+                        muestra["etapa_revision"] = "pendiente_ing"
+                        muestra["confirmado_por_jefe"] = nombre_jefe
+                        muestra["confirmado_por_jefe_fecha"] = now_iso()
+                        muestra["motivo_rechazo"] = ""
+                        muestra["rechazado_por"] = ""
+                        add_notification("ingeniero", f"El Jefe de Laboratorio envió la Muestra {muestra['numero']} de "
+                                                       f"{codigo} para tu revisión final.", codigo, perf_codigo, muestra_id)
+                        st.success("Enviado al Ingeniero.")
+                        st.rerun()
+                    motivo_jefe = st.text_area("Motivo si vas a devolver al laboratorista", key=f"jefe_motivo_{muestra_id}",
+                                                placeholder="Qué hay que corregir...")
+                    if st.button("Devolver al laboratorista", icon=":material/undo:", use_container_width=True, key=f"jefe_devolver_{muestra_id}"):
+                        if motivo_jefe.strip():
+                            ahora = now_iso()
+                            for e in solicitados:
+                                tipo_i = SUPPORTED_ASSAY_MAP.get(e)
+                                a = get_assay(muestra_id, tipo_i) if tipo_i else None
+                                if a and a["status"] == "finalizado":
+                                    a["status"] = "en-proceso"
+                                    a["lastModified"] = ahora
+                            muestra["etapa_revision"] = None
+                            muestra["motivo_rechazo"] = motivo_jefe
+                            muestra["rechazado_por"] = "jefe"
+                            add_notification("auxiliar", f"El Jefe de Laboratorio devolvió la Muestra {muestra['numero']} "
+                                                          f"de {codigo}: {motivo_jefe}", codigo, perf_codigo, muestra_id)
+                            st.success("Devuelto al laboratorista.")
+                            st.rerun()
+                        else:
+                            st.error("Escribe el motivo antes de devolver.")
+                else:
+                    st.caption("El Jefe de Laboratorio debe confirmar esta muestra antes de enviarla al Ingeniero.")
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -2788,8 +2978,9 @@ def render_assay_form():
     project = get_project(codigo)
     muestra = get_muestra(codigo, perf_codigo, muestra_id)
     es_jefe = st.session_state.role == "jefe"
-    # El Jefe solo consulta los ensayos — quien digita los datos de laboratorio es el laboratorista.
-    read_only = es_jefe or (st.session_state.role == "auxiliar" and project_status(codigo) == "ejecutado")
+    es_supervisor = st.session_state.role in ("jefe", "ingeniero")
+    # El Jefe y el Ingeniero solo consultan los ensayos — quien digita los datos de laboratorio es el laboratorista.
+    read_only = es_supervisor or (st.session_state.role == "auxiliar" and project_status(codigo) == "ejecutado")
 
     if st.button("← Atrás"):
         go_back(fallback="muestra-detail")
@@ -2842,7 +3033,7 @@ def render_assay_form():
     data = dict(pasa200_gran_sibling["data"]) if pasa200_gran_sibling else dict(assay.get("data", {}))
 
     if read_only:
-        if es_jefe:
+        if es_supervisor:
             st.info("Estás viendo el ensayo en modo consulta — solo el laboratorista puede digitar estos datos.")
         else:
             st.info("Este proyecto ya fue ejecutado. Estás en modo consulta — no puedes editar estos datos.")
@@ -2887,13 +3078,13 @@ def render_assay_form():
                     pasa200_gran_sibling["data"] = data
                 navigate("muestra-detail")
         with col2:
-            if st.button("Finalizar ensayo", type="primary", use_container_width=True, icon=":material/check_circle:"):
+            if st.button("Enviar a revisión", type="primary", use_container_width=True, icon=":material/send:"):
                 assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado", lastModified=now_iso())
                 if pasa200_gran_sibling:
                     pasa200_gran_sibling["data"] = data
                 navigate("muestra-detail")
 
-    if es_jefe and assay["tipo"] == "granulometria" and muestra:
+    if es_supervisor and assay["tipo"] == "granulometria" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_granulometria(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -2903,7 +3094,7 @@ def render_assay_form():
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
-    if es_jefe and assay["tipo"] == "pasa200" and muestra:
+    if es_supervisor and assay["tipo"] == "pasa200" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_pasa200(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -2913,7 +3104,7 @@ def render_assay_form():
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
-    if es_jefe and assay["tipo"] == "humedad" and muestra:
+    if es_supervisor and assay["tipo"] == "humedad" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_humedad(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -2923,7 +3114,7 @@ def render_assay_form():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
 
-    if es_jefe and assay["tipo"] == "limites" and muestra:
+    if es_supervisor and assay["tipo"] == "limites" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_limites(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -2933,7 +3124,7 @@ def render_assay_form():
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
-    if es_jefe and assay["tipo"] == "masa-unitaria" and muestra:
+    if es_supervisor and assay["tipo"] == "masa-unitaria" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -3038,7 +3229,7 @@ def render_search():
                                 st.session_state.selected_assay_type = tipo_interno
                                 navigate("assay-form")
                         with cols[3]:
-                            if st.session_state.role == "jefe" and tipo_interno == "granulometria" and project:
+                            if st.session_state.role in ("jefe", "ingeniero") and tipo_interno == "granulometria" and project:
                                 excel_bytes = generar_excel_granulometria(
                                     codigo, perf["codigo"], m, project, existing.get("data", {}) if existing else {},
                                     existing.get("observations", "") if existing else "")
