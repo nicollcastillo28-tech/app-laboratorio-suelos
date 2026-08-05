@@ -381,6 +381,11 @@ LIMITE_LIQUIDO_FILAS = [
     ("lim_ll_golpes", "No. de Golpes", ["S19", "T19", "U19"]),
     ("lim_ll_humedo", "Masa suelo húmedo + rec. (g)", ["S21", "T21", "U21"]),
     ("lim_ll_seco", "Masa suelo seco + rec. (g)", ["S22", "T22", "U22"]),
+    # Las lecturas a 14/15/16 horas son solo un dato de apoyo/verificación del laboratorista —
+    # no tienen celda propia en el Excel (la plantilla solo usa "lim_ll_seco").
+    ("lim_ll_seco_14h", "Masa suelo seco + rec. (g) (14 hrs)", []),
+    ("lim_ll_seco_15h", "Masa suelo seco + rec. (g) (15 hrs)", []),
+    ("lim_ll_seco_16h", "Masa suelo seco + rec. (g) (16 hrs)", []),
     ("lim_ll_recip_masa", "Masa recipiente (g)", ["S23", "T23", "U23"]),
 ]
 LIMITE_LIQUIDO_N = 3
@@ -389,6 +394,9 @@ LIMITE_PLASTICO_FILAS = [
     ("lim_lp_recipiente", "Recipiente No.", ["Y20", "Z20"]),
     ("lim_lp_humedo", "Masa suelo húmedo + rec. (g)", ["Y21", "Z21"]),
     ("lim_lp_seco", "Masa suelo seco + rec. (g)", ["Y22", "Z22"]),
+    ("lim_lp_seco_14h", "Masa suelo seco + rec. (g) (14 hrs)", []),
+    ("lim_lp_seco_15h", "Masa suelo seco + rec. (g) (15 hrs)", []),
+    ("lim_lp_seco_16h", "Masa suelo seco + rec. (g) (16 hrs)", []),
     ("lim_lp_recip_masa", "Masa recipiente (g)", ["Y23", "Z23"]),
 ]
 LIMITE_PLASTICO_N = 2
@@ -2625,6 +2633,22 @@ def render_limites_form(data, assay_id):
                         raw = data.get(field_key, "")
                         st.session_state[widget_key] = "" if raw in (None, "") else str(raw)
                     data[field_key] = row[i + 1].text_input(f"{label} {i + 1}", key=widget_key, label_visibility="collapsed", placeholder="0.00")
+
+                if key.endswith("_seco"):
+                    # "Masa suelo seco + rec." se autocompleta en las lecturas de 14/15/16 horas
+                    # de cada columna, igual que en Humedad y Pasa No. 200 — si el laboratorista
+                    # cambia una lectura a mano, no se vuelve a pisar hasta que el valor de
+                    # origen vuelva a cambiar.
+                    for i in range(n):
+                        field_key = f"{key}_{i + 1}"
+                        current_val = data[field_key]
+                        lastsync_key = f"{field_key}_lastsync"
+                        if data.get(lastsync_key) != current_val:
+                            for suffix in ("14h", "15h", "16h"):
+                                hkey = f"{key}_{suffix}_{i + 1}"
+                                st.session_state[f"{hkey}_{assay_id}"] = current_val
+                                data[hkey] = current_val
+                            data[lastsync_key] = current_val
 
     _tabla_limite("water_drop", "Límite Líquido (INV. 125 - 13)", LIMITE_LIQUIDO_FILAS, LIMITE_LIQUIDO_N)
     _tabla_limite("gesture", "Límite Plástico (INV. 126 - 13)", LIMITE_PLASTICO_FILAS, LIMITE_PLASTICO_N)
