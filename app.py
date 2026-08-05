@@ -3215,11 +3215,15 @@ def render_search():
         perf_choice = st.selectbox("Perforación", perf_options)
 
         perfs_to_show = perforaciones if perf_choice == "(todas)" else [p for p in perforaciones if p["codigo"] == perf_choice]
-        muestras_disponibles = [
-            m for perf in perfs_to_show for m in st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", [])
-        ]
-        muestra_options = ["(todas)"] + [m["id_unico"] for m in muestras_disponibles]
-        muestra_choice = st.selectbox("Muestra", muestra_options)
+        # El código del proyecto ya se eligió arriba — en este desplegable solo hace falta la
+        # perforación y el número de muestra, no el id_unico completo repitiendo el proyecto.
+        muestra_label_by_id = {
+            m["id_unico"]: f"{perf['codigo']} · Muestra {m['numero']}"
+            for perf in perfs_to_show for m in st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", [])
+        }
+        muestra_options = ["(todas)"] + list(muestra_label_by_id.keys())
+        muestra_choice = st.selectbox("Muestra", muestra_options,
+                                       format_func=lambda v: "(todas)" if v == "(todas)" else muestra_label_by_id[v])
 
         f_type = st.selectbox("Tipo de ensayo", ["(todos)"] + list(ASSAY_LABELS.values()))
 
