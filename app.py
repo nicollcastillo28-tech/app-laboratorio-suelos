@@ -1276,13 +1276,7 @@ def render_new_project():
             key = f"{codigo_interno}::{perf['codigo']}"
             muestras = st.session_state.muestras.setdefault(key, [])
             with st.expander(f"**{perf['codigo']}** — {perf['tipo']}  ·  {len(muestras)} muestra(s)", expanded=True):
-                if key not in st.session_state.bitacora_draft:
-                    df_init = pd.DataFrame(_muestras_to_rows(muestras))
-                    for col in BITACORA_BASE_COLS:
-                        if col not in df_init.columns:
-                            df_init[col] = _bitacora_row_defaults()[col]
-                    st.session_state.bitacora_draft[key] = df_init[BITACORA_BASE_COLS]
-                df_source = st.session_state.bitacora_draft[key]
+                df_source = _bitacora_draft_df(key, muestras)
 
                 column_config = {
                     "Número": st.column_config.TextColumn(default=""),
@@ -1802,6 +1796,22 @@ def _muestras_to_rows(muestras):
     return rows or [_bitacora_row_defaults()]
 
 
+def _bitacora_draft_df(key, muestras):
+    """Inicializa (o repara) el borrador de bitácora de esta perforación en session_state,
+    agregando cualquier columna de BITACORA_BASE_COLS que falte —por ejemplo un ensayo nuevo
+    que se agregó a BITACORA_ENSAYOS después de que este borrador ya existía en la sesión—
+    sin perder lo que el usuario ya haya digitado."""
+    if key not in st.session_state.bitacora_draft:
+        df = pd.DataFrame(_muestras_to_rows(muestras))
+    else:
+        df = st.session_state.bitacora_draft[key]
+    for col in BITACORA_BASE_COLS:
+        if col not in df.columns:
+            df[col] = _bitacora_row_defaults()[col]
+    st.session_state.bitacora_draft[key] = df[BITACORA_BASE_COLS]
+    return st.session_state.bitacora_draft[key]
+
+
 def render_bitacora():
     if st.button("← Atrás"):
         go_back()
@@ -1852,14 +1862,7 @@ def render_bitacora():
             # OJO: el DataFrame se crea UNA sola vez y se reutiliza el mismo objeto en cada rerun.
             # Reconstruirlo desde cero (dict -> DataFrame) en cada actualización es lo que causaba
             # que la primera edición se perdiera y tocara escribir dos veces.
-            if key not in st.session_state.bitacora_draft:
-                df_init = pd.DataFrame(_muestras_to_rows(muestras))
-                for col in BITACORA_BASE_COLS:
-                    if col not in df_init.columns:
-                        df_init[col] = _bitacora_row_defaults()[col]
-                st.session_state.bitacora_draft[key] = df_init[BITACORA_BASE_COLS]
-
-            df_source = st.session_state.bitacora_draft[key]
+            df_source = _bitacora_draft_df(key, muestras)
 
             column_config = {
                 "Número": st.column_config.TextColumn(default=""),
