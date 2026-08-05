@@ -357,7 +357,7 @@ EQUIPO_GRANULOMETRIA = [
 ]
 
 # Equipos reales usados en el ensayo de Contenido de Humedad Natural.
-EQUIPO_HUMEDAD = ["Balanza GDA-E-011", "Horno GDA-E-007"]
+EQUIPO_HUMEDAD = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Balanza GDA-E-014", "Horno GDA-E-007", "Horno GDA-E-404"]
 
 # Método del ensayo de humedad (INV E-122), tal como aparece en la plantilla oficial (celda C28).
 METODO_HUMEDAD = ["Método A", "Método B"]
@@ -368,6 +368,9 @@ EQUIPO_LIMITES = [
     "Cazuela Casagrande GDA-E-081", "Cazuela Casagrande GDA-E-060", "Cazuela Casagrande GDA-E-400",
     "Horno GDA-E-404", "Horno GDA-E-007", "Tamiz No. 40 GDA-E-054",
 ]
+
+# Equipos reales usados en el ensayo de Peso Unitario Parafinado.
+EQUIPO_MASA_UNITARIA = ["Balanza GDA-E-011", "Termómetro GDA-E-126"]
 
 # Filas de Límite Líquido (INV. E-125-13) y Límite Plástico (INV. E-126-13), con las celdas
 # reales de la plantilla CLASIFICACION_DE_SUELOS.xlsm (sección "LIMITES DE ATTERBERG", a la
@@ -1992,7 +1995,7 @@ def render_muestra_detail():
                 placeholder="Ej: Muestra con humedad visible, sin alteraciones aparentes...", key=f"obs_{muestra_id}",
             )
         if st.button("Guardar observación", icon=":material/save:", key=f"obs_save_{muestra_id}"):
-            muestra["observaciones"] = observacion
+            muestra["observaciones"] = observacion.upper()
             st.success("Observación guardada.")
 
     # Filtra por si la muestra guarda un ensayo que ya no es seleccionable (p. ej. "Pasa 200",
@@ -2541,7 +2544,7 @@ def render_masa_unitaria_form(data):
         data["mu_temp_agua"] = st.text_input("Temperatura del agua (°C)", value=data.get("mu_temp_agua", ""), placeholder="22.0")
         data["mu_dens_parafina"] = st.text_input("Densidad de la parafina (g/cm³)", value=data.get("mu_dens_parafina", ""), placeholder="0.90")
 
-    render_equipo(data, "mu")
+    render_equipo(data, "mu", EQUIPO_MASA_UNITARIA)
     render_norma_selector("masa-unitaria", data, "mu")
 
 
