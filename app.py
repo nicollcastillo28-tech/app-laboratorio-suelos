@@ -1986,16 +1986,31 @@ def render_muestra_detail():
                     unsafe_allow_html=True)
 
     with st.container(border=True):
-        st.markdown('<div class="section-title">Observaciones de la muestra</div>', unsafe_allow_html=True)
-        st.caption("Cómo llegó la muestra, o cualquier condición que impida continuar con el ensayo. "
-                   "Se guarda para todos los ensayos de esta muestra y la puede editar tanto el Jefe como el laboratorista.")
+        st.markdown('<div class="section-title">Descripción visual de la muestra</div>', unsafe_allow_html=True)
+        st.caption("Cómo se ve físicamente la muestra (color, textura, humedad, etc.). Esta es la que se lleva "
+                   "al campo \"DESCRIPCIÓN VISUAL\" del Excel oficial — es independiente de las observaciones.")
+        with st.container(key="muestra-desc-visual-box"):
+            descripcion_visual = st.text_area(
+                "Descripción visual de la muestra", value=muestra.get("descripcion_visual", ""), label_visibility="collapsed",
+                placeholder="Ej: Suelo arcilloso color gris, humedad media, sin fragmentos de roca...", key=f"desc_visual_{muestra_id}",
+            )
+        if st.button("Guardar descripción visual", icon=":material/save:", key=f"desc_visual_save_{muestra_id}"):
+            muestra["descripcion_visual"] = descripcion_visual.upper()
+            st.success("Descripción visual guardada.")
+
+    with st.container(border=True):
+        st.markdown('<div class="section-title">Observaciones</div>', unsafe_allow_html=True)
+        st.caption("El Jefe la digita antes de que el laboratorista inicie el ensayo (instrucciones, contexto del "
+                   "cliente, etc.); el laboratorista la digita si la muestra presenta fisuras o no se puede "
+                   "realizar el ensayo por alguna razón. Se guarda para todos los ensayos de esta muestra y la "
+                   "puede editar tanto el Jefe como el laboratorista.")
         with st.container(key="muestra-obs-box"):
             observacion = st.text_area(
-                "Observaciones de la muestra", value=muestra.get("observaciones", ""), label_visibility="collapsed",
-                placeholder="Ej: Muestra con humedad visible, sin alteraciones aparentes...", key=f"obs_{muestra_id}",
+                "Observaciones", value=muestra.get("observaciones", ""), label_visibility="collapsed",
+                placeholder="Ej: Muestra con fisuras visibles, no fue posible completar el ensayo...", key=f"obs_{muestra_id}",
             )
         if st.button("Guardar observación", icon=":material/save:", key=f"obs_save_{muestra_id}"):
-            muestra["observaciones"] = observacion.upper()
+            muestra["observaciones"] = observacion
             st.success("Observación guardada.")
 
     # Filtra por si la muestra guarda un ensayo que ya no es seleccionable (p. ej. "Pasa 200",
@@ -2154,10 +2169,11 @@ def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observ
     ws["H12"] = muestra["numero"]
     ws["K12"] = to_float(muestra.get("profundidad_de"))
     ws["M12"] = to_float(muestra.get("profundidad_hasta"))
-    # Descripción visual: primero lo que se digitó en "Observaciones de la muestra" (Bitácora),
-    # si no hay, lo que el laboratorista escribió en "Observaciones" del propio ensayo, y solo
-    # si ninguna de las dos existe, el tipo de muestra como último recurso.
-    ws["D13"] = muestra.get("observaciones") or observaciones_ensayo or f"Tipo de muestra: {muestra.get('tipo_muestra','')}"
+    # Descripción visual: primero lo que se digitó en "Descripción visual de la muestra" (Bitácora)
+    # —independiente de las Observaciones—, si no hay, lo que el laboratorista escribió en
+    # "Observaciones" del propio ensayo, y solo si ninguna de las dos existe, el tipo de muestra
+    # como último recurso.
+    ws["D13"] = muestra.get("descripcion_visual") or observaciones_ensayo or f"Tipo de muestra: {muestra.get('tipo_muestra','')}"
 
 
 def _escribir_limites(ws, data):
@@ -2333,7 +2349,7 @@ def _llenar_encabezado_masa_unitaria(ws, codigo, perf_codigo, muestra, project, 
     ws["F12"] = muestra["numero"]  # Muestra No.
     ws["I12"] = to_float(muestra.get("profundidad_de"))
     ws["K12"] = to_float(muestra.get("profundidad_hasta"))
-    ws["C13"] = muestra.get("observaciones") or observaciones_ensayo or f"Tipo de muestra: {muestra.get('tipo_muestra','')}"
+    ws["C13"] = muestra.get("descripcion_visual") or observaciones_ensayo or f"Tipo de muestra: {muestra.get('tipo_muestra','')}"
 
 
 def generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
