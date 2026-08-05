@@ -471,6 +471,24 @@ def get_shared_store():
 # ════════════════════════════════════════════════════════════════════
 # ESTADO INICIAL
 # ════════════════════════════════════════════════════════════════════
+def _sync_query_params():
+    """Guarda el rol y la pantalla actual en la URL. Si la conexión se corta (celular que se
+    bloquea, wifi inestable) y el navegador reconecta, Streamlit abre una sesión nueva pero
+    puede restaurar dónde estaba el usuario leyendo esto — sin pedirle la clave otra vez ni
+    mandarlo al Inicio en medio de un ensayo. Al cerrar sesión se limpia todo, así que la
+    sesión solo termina cuando el usuario le da a "Cerrar sesión"."""
+    if st.session_state.role:
+        st.query_params["role"] = st.session_state.role
+        st.query_params["screen"] = st.session_state.screen
+        st.query_params["codigo"] = st.session_state.selected_codigo or ""
+        st.query_params["perf"] = st.session_state.selected_perforacion or ""
+        st.query_params["muestra"] = st.session_state.selected_muestra_id or ""
+        st.query_params["assay"] = st.session_state.selected_assay_id or ""
+        st.query_params["atipo"] = st.session_state.selected_assay_type or ""
+    else:
+        st.query_params.clear()
+
+
 def init_state():
     if "initialized" in st.session_state:
         return
@@ -493,6 +511,17 @@ def init_state():
     st.session_state.selected_assay_type = None
     st.session_state.read_only_view = False
 
+    # Restaura la sesión desde la URL si venía de una reconexión (ver _sync_query_params).
+    qp_role = st.query_params.get("role")
+    if qp_role in PASSWORDS:
+        st.session_state.role = qp_role
+        st.session_state.screen = st.query_params.get("screen") or "home"
+        st.session_state.selected_codigo = st.query_params.get("codigo") or ""
+        st.session_state.selected_perforacion = st.query_params.get("perf") or ""
+        st.session_state.selected_muestra_id = st.query_params.get("muestra") or ""
+        st.session_state.selected_assay_id = st.query_params.get("assay") or None
+        st.session_state.selected_assay_type = st.query_params.get("atipo") or None
+
 
 init_state()
 
@@ -502,6 +531,7 @@ def navigate(screen):
     if actual and actual != screen:
         st.session_state.nav_stack.append(actual)
     st.session_state.screen = screen
+    _sync_query_params()
     st.rerun()
 
 
@@ -511,6 +541,7 @@ def go_back(fallback="home"):
         st.session_state.screen = st.session_state.nav_stack.pop()
     else:
         st.session_state.screen = fallback
+    _sync_query_params()
     st.rerun()
 
 
