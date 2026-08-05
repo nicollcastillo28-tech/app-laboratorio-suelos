@@ -3107,12 +3107,19 @@ def render_assay_form():
                 navigate("muestra-detail")
         with col2:
             if st.button("Enviar a revisión", type="primary", use_container_width=True, icon=":material/send:"):
+                ya_estaba_finalizado = assay["status"] == "finalizado"
                 assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado", lastModified=now_iso())
                 if pasa200_gran_sibling:
                     pasa200_gran_sibling["data"] = data
                 if muestra:
                     quien = f" por {laboratorist}" if laboratorist else ""
                     add_historial_muestra(muestra, f"{ASSAY_LABELS[assay['tipo']]} enviado a revisión{quien}.")
+                    # Si este era el último ensayo pendiente, la muestra completa su ciclo en el
+                    # laboratorio (semáforo en rojo) — se avisa al Jefe para que la confirme.
+                    if not ya_estaba_finalizado and compute_muestra_estado(muestra) == "finalizado":
+                        add_notification("jefe", f"La Muestra {muestra['numero']} de {codigo} ya completó todos sus "
+                                                  f"ensayos — está lista para tu confirmación.", codigo, perf_codigo, muestra_id)
+                        add_historial_muestra(muestra, "Todos los ensayos completados — pendiente de confirmación del Jefe de Laboratorio.")
                 navigate("muestra-detail")
 
     if es_supervisor and assay["tipo"] == "granulometria" and muestra:
