@@ -725,6 +725,12 @@ def add_notification(role, mensaje, codigo=None, perf=None, muestra_id=None):
     })
 
 
+def add_historial_muestra(muestra, texto):
+    """Registro de auditoría por muestra: cuándo se entregó cada ensayo, cuándo confirmó el
+    Jefe, cuándo aprobó (o devolvió) el Ingeniero, etc. Se guarda en la propia muestra."""
+    muestra.setdefault("historial", []).append({"fecha": now_iso(), "texto": texto})
+
+
 def format_dt(iso_str):
     try:
         return datetime.fromisoformat(iso_str).strftime("%d/%m/%Y %H:%M")
@@ -2261,6 +2267,8 @@ def render_muestra_detail():
                         muestra["rechazado_por"] = ""
                         add_notification("jefe", f"El Ingeniero aprobó la Muestra {muestra['numero']} de {codigo} "
                                                   f"— ya se puede entregar al cliente.", codigo, perf_codigo, muestra_id)
+                        quien = f" ({nombre_ing})" if nombre_ing else ""
+                        add_historial_muestra(muestra, f"Aprobado por el Ingeniero{quien}.")
                         st.success("Aprobado.")
                         st.rerun()
                     motivo_ing = st.text_area("Motivo si vas a devolver al Jefe", key=f"ing_motivo_{muestra_id}",
@@ -2272,6 +2280,7 @@ def render_muestra_detail():
                             muestra["rechazado_por"] = "ing"
                             add_notification("jefe", f"El Ingeniero devolvió la Muestra {muestra['numero']} de {codigo}: "
                                                       f"{motivo_ing}", codigo, perf_codigo, muestra_id)
+                            add_historial_muestra(muestra, f"Devuelto por el Ingeniero: {motivo_ing}")
                             st.success("Devuelto al Jefe.")
                             st.rerun()
                         else:
@@ -2289,6 +2298,8 @@ def render_muestra_detail():
                         muestra["rechazado_por"] = ""
                         add_notification("ingeniero", f"El Jefe de Laboratorio envió la Muestra {muestra['numero']} de "
                                                        f"{codigo} para tu revisión final.", codigo, perf_codigo, muestra_id)
+                        quien = f" ({nombre_jefe})" if nombre_jefe else ""
+                        add_historial_muestra(muestra, f"Confirmado por el Jefe de Laboratorio{quien} y enviado al Ingeniero.")
                         st.success("Enviado al Ingeniero.")
                         st.rerun()
                     motivo_jefe = st.text_area("Motivo si vas a devolver al laboratorista", key=f"jefe_motivo_{muestra_id}",
@@ -2307,12 +2318,20 @@ def render_muestra_detail():
                             muestra["rechazado_por"] = "jefe"
                             add_notification("auxiliar", f"El Jefe de Laboratorio devolvió la Muestra {muestra['numero']} "
                                                           f"de {codigo}: {motivo_jefe}", codigo, perf_codigo, muestra_id)
+                            add_historial_muestra(muestra, f"Devuelto por el Jefe de Laboratorio: {motivo_jefe}")
                             st.success("Devuelto al laboratorista.")
                             st.rerun()
                         else:
                             st.error("Escribe el motivo antes de devolver.")
                 else:
                     st.caption("El Jefe de Laboratorio debe confirmar esta muestra antes de enviarla al Ingeniero.")
+
+    historial = muestra.get("historial", [])
+    if historial:
+        with st.expander(f"Historial de la muestra ({len(historial)})", icon=":material/history:"):
+            for h in sorted(historial, key=lambda h: h["fecha"], reverse=True):
+                st.markdown(f'<div style="margin-bottom:10px;"><div style="font-weight:600;">{html.escape(h["texto"])}</div>'
+                            f'<div class="timestamp-caption">{format_dt(h["fecha"])}</div></div>', unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -3091,6 +3110,9 @@ def render_assay_form():
                 assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado", lastModified=now_iso())
                 if pasa200_gran_sibling:
                     pasa200_gran_sibling["data"] = data
+                if muestra:
+                    quien = f" por {laboratorist}" if laboratorist else ""
+                    add_historial_muestra(muestra, f"{ASSAY_LABELS[assay['tipo']]} enviado a revisión{quien}.")
                 navigate("muestra-detail")
 
     if es_supervisor and assay["tipo"] == "granulometria" and muestra:
@@ -3170,6 +3192,9 @@ def render_continue():
                     navigate("assay-form")
 
 
+SEARCH_PAGE_SIZE = 8
+
+
 def render_search():
     if st.button("← Atrás"):
         go_back()
@@ -3180,76 +3205,105 @@ def render_search():
         st.info("Todavía no hay proyectos.")
         return
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
+    with st.container(border=True):
+        st.markdown(card_header_html("filter_list", "Filtros de Búsqueda"), unsafe_allow_html=True)
         default_idx = codes.index(st.session_state.selected_codigo) if st.session_state.selected_codigo in codes else 0
         codigo = st.selectbox("Proyecto", codes, index=default_idx)
-    perforaciones = st.session_state.perforaciones.get(codigo, [])
-    with c2:
+
+        perforaciones = st.session_state.perforaciones.get(codigo, [])
         perf_options = ["(todas)"] + [p["codigo"] for p in perforaciones]
         perf_choice = st.selectbox("Perforación", perf_options)
-    with c3:
+
+        perfs_to_show = perforaciones if perf_choice == "(todas)" else [p for p in perforaciones if p["codigo"] == perf_choice]
+        muestras_disponibles = [
+            m for perf in perfs_to_show for m in st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", [])
+        ]
+        muestra_options = ["(todas)"] + [m["id_unico"] for m in muestras_disponibles]
+        muestra_choice = st.selectbox("Muestra", muestra_options)
+
         f_type = st.selectbox("Tipo de ensayo", ["(todos)"] + list(ASSAY_LABELS.values()))
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("Aplicar filtros", type="primary", use_container_width=True, icon=":material/search:"):
+            st.session_state["search_page"] = 0
 
     if not perforaciones:
         st.info("Este proyecto todavía no tiene perforaciones. Ve a la Bitácora para agregarlas.")
         return
 
-    perfs_to_show = perforaciones if perf_choice == "(todas)" else [p for p in perforaciones if p["codigo"] == perf_choice]
-
     project = get_project(codigo)
-    any_shown = False
+    rows = []
     for perf in perfs_to_show:
         muestras = st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", [])
         for m in muestras:
+            if muestra_choice != "(todas)" and m["id_unico"] != muestra_choice:
+                continue
             solicitados = [e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS]
             if f_type != "(todos)":
                 solicitados = [e for e in solicitados if ASSAY_LABELS.get(SUPPORTED_ASSAY_MAP.get(e), None) == f_type]
-            if not solicitados:
-                continue
-            any_shown = True
-            with st.container(border=True):
-                st.markdown(f"**{m['id_unico']}**  ·  Prof. {m['profundidad_de']}–{m['profundidad_hasta']} m  ·  {m['tipo_muestra']}")
-                for ensayo_label in solicitados:
-                    cols = st.columns([2.2, 1.4, 1.3, 1.3])
-                    cols[0].markdown(ensayo_label)
-                    tipo_interno = SUPPORTED_ASSAY_MAP.get(ensayo_label)
-                    if tipo_interno:
-                        existing = get_assay(m["id_unico"], tipo_interno)
-                        status = existing["status"] if existing else "sin-iniciar"
-                        cols[1].markdown(status_badge_html(status), unsafe_allow_html=True)
-                        cols[1].caption(format_dt(existing["lastModified"]) if existing else "—")
-                        with cols[2]:
-                            if st.button("Abrir", key=f"search_open_{m['id_unico']}_{tipo_interno}", use_container_width=True):
-                                if existing:
-                                    st.session_state.selected_assay_id = existing["id"]
-                                else:
-                                    new_id = f"a-{uuid.uuid4().hex[:8]}"
-                                    st.session_state.assays.append({
-                                        "id": new_id, "muestra_id": m["id_unico"], "tipo": tipo_interno, "status": "sin-iniciar",
-                                        "data": {}, "observations": "", "laboratorist": "",
-                                        "codigo_interno": codigo, "perforacion_codigo": perf["codigo"], "muestra_numero": m["numero"],
-                                        "lastModified": now_iso(), "createdAt": now_iso(),
-                                    })
-                                    st.session_state.selected_assay_id = new_id
-                                st.session_state.selected_codigo = codigo
-                                st.session_state.selected_perforacion = perf["codigo"]
-                                st.session_state.selected_muestra_id = m["id_unico"]
-                                st.session_state.selected_assay_type = tipo_interno
-                                navigate("assay-form")
-                        with cols[3]:
-                            if st.session_state.role in ("jefe", "ingeniero") and tipo_interno == "granulometria" and project:
-                                excel_bytes = generar_excel_granulometria(
-                                    codigo, perf["codigo"], m, project, existing.get("data", {}) if existing else {},
-                                    existing.get("observations", "") if existing else "")
-                                st.download_button("Excel", icon=":material/download:", data=excel_bytes, file_name=f"Clasificacion_de_suelos_{m['id_unico']}.xlsm",
-                                                    mime="application/vnd.ms-excel.sheet.macroEnabled.12",
-                                                    key=f"search_dl_{m['id_unico']}", use_container_width=True)
-                    else:
-                        cols[1].markdown('<span class="badge badge-muted">Sin formulario aún</span>', unsafe_allow_html=True)
+            for ensayo_label in solicitados:
+                tipo_interno = SUPPORTED_ASSAY_MAP.get(ensayo_label)
+                if not tipo_interno:
+                    continue
+                rows.append((perf, m, ensayo_label, tipo_interno))
 
-    if not any_shown:
-        st.info("No se encontraron ensayos con esos filtros.")
+    with st.container(border=True):
+        col_ratios = [1.7, 2.2, 1.8, 1.3, 0.6]
+        headers = st.columns(col_ratios)
+        for col, label in zip(headers, ["ID ensayo", "Proyecto", "Tipo / Muestra", "Estado", ""]):
+            col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
+
+        if not rows:
+            st.info("No se encontraron ensayos con esos filtros.")
+        else:
+            total = len(rows)
+            total_pages = max(1, (total + SEARCH_PAGE_SIZE - 1) // SEARCH_PAGE_SIZE)
+            page = min(st.session_state.get("search_page", 0), total_pages - 1)
+            st.session_state["search_page"] = page
+            start = page * SEARCH_PAGE_SIZE
+            for perf, m, ensayo_label, tipo_interno in rows[start:start + SEARCH_PAGE_SIZE]:
+                existing = get_assay(m["id_unico"], tipo_interno)
+                status = existing["status"] if existing else "sin-iniciar"
+                ensayo_id = f'{codigo}-{perf["codigo"]}-M{m["numero"]}'
+                cols = st.columns(col_ratios, vertical_alignment="center")
+                cols[0].markdown(f'<span class="cell-id">{html.escape(ensayo_id)}</span>', unsafe_allow_html=True)
+                cols[1].markdown(f'<div class="cell-title">{html.escape(project["nombre"] if project else codigo)}</div>'
+                                  f'<div class="cell-sub">{html.escape(codigo)}</div>', unsafe_allow_html=True)
+                cols[2].markdown(f'<div class="cell-title">{html.escape(ensayo_label)}</div>'
+                                  f'<div class="cell-sub">Muestra {html.escape(str(m["numero"]))}</div>', unsafe_allow_html=True)
+                cols[3].markdown(status_badge_html(status), unsafe_allow_html=True)
+                with cols[4]:
+                    if st.button("", key=f"search_open_{m['id_unico']}_{tipo_interno}", icon=":material/chevron_right:",
+                                 use_container_width=True, help="Abrir"):
+                        if existing:
+                            st.session_state.selected_assay_id = existing["id"]
+                        else:
+                            new_id = f"a-{uuid.uuid4().hex[:8]}"
+                            st.session_state.assays.append({
+                                "id": new_id, "muestra_id": m["id_unico"], "tipo": tipo_interno, "status": "sin-iniciar",
+                                "data": {}, "observations": "", "laboratorist": "",
+                                "codigo_interno": codigo, "perforacion_codigo": perf["codigo"], "muestra_numero": m["numero"],
+                                "lastModified": now_iso(), "createdAt": now_iso(),
+                            })
+                            st.session_state.selected_assay_id = new_id
+                        st.session_state.selected_codigo = codigo
+                        st.session_state.selected_perforacion = perf["codigo"]
+                        st.session_state.selected_muestra_id = m["id_unico"]
+                        st.session_state.selected_assay_type = tipo_interno
+                        navigate("assay-form")
+
+            st.markdown("<hr style='margin:8px 0;'>", unsafe_allow_html=True)
+            f1, f2, f3 = st.columns([3, 1, 1])
+            f1.caption(f"Mostrando {len(rows[start:start + SEARCH_PAGE_SIZE])} de {total} resultado(s)")
+            with f2:
+                if st.button("", key="search_prev", icon=":material/chevron_left:", use_container_width=True, disabled=page == 0):
+                    st.session_state["search_page"] = page - 1
+                    st.rerun()
+            with f3:
+                if st.button("", key="search_next", icon=":material/chevron_right:", use_container_width=True,
+                             disabled=page >= total_pages - 1):
+                    st.session_state["search_page"] = page + 1
+                    st.rerun()
 
 
 # ════════════════════════════════════════════════════════════════════
