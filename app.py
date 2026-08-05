@@ -150,6 +150,14 @@ st.markdown(f"""
     /* El laboratorista puede escribir en minúscula — se ve en mayúscula de una vez (el texto
        que se guarda también se normaliza a mayúscula al hacer clic en "Guardar"). */
     .st-key-muestra-desc-visual-box .stTextArea textarea {{ text-transform: uppercase; }}
+    /* Botones dentro de la campana de notificaciones — por defecto salen blancos/planos y se
+       pierden contra el fondo del popover. */
+    .st-key-notif-popover-body .stButton button {{
+        background-color: {SECONDARY_CONTAINER}; color: {PRIMARY}; border-color: {SECONDARY_CONTAINER};
+    }}
+    .st-key-notif-popover-body .stButton button:hover {{
+        background-color: {PRIMARY}; color: {SURFACE}; border-color: {PRIMARY};
+    }}
     .role-pill {{
         display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 11px;
         font-family: 'JetBrains Mono', monospace; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
@@ -903,21 +911,22 @@ def render_topbar():
                 if not mis_notifs:
                     st.caption("No tienes notificaciones.")
                 else:
-                    if no_leidas and st.button("Marcar todas como leídas", key="notif_marcar_todas", use_container_width=True):
-                        for n in mis_notifs:
-                            n["leida"] = True
-                        st.rerun()
-                    for n in mis_notifs[:15]:
-                        with st.container(border=True):
-                            peso = "font-weight:700;" if not n["leida"] else ""
-                            st.markdown(f'<div style="{peso}">{html.escape(n["mensaje"])}</div>'
-                                        f'<div class="timestamp-caption">{format_dt(n["fecha"])}</div>', unsafe_allow_html=True)
-                            if n.get("muestra_id") and st.button("Ir a la muestra →", key=f"notif_go_{n['id']}", use_container_width=True):
+                    with st.container(key="notif-popover-body"):
+                        if no_leidas and st.button("Marcar todas como leídas", key="notif_marcar_todas", use_container_width=True):
+                            for n in mis_notifs:
                                 n["leida"] = True
-                                st.session_state.selected_codigo = n["codigo_interno"]
-                                st.session_state.selected_perforacion = n["perforacion_codigo"]
-                                st.session_state.selected_muestra_id = n["muestra_id"]
-                                navigate("muestra-detail")
+                            st.rerun()
+                        for n in mis_notifs[:15]:
+                            with st.container(border=True):
+                                peso = "font-weight:700;" if not n["leida"] else ""
+                                st.markdown(f'<div style="{peso}">{html.escape(n["mensaje"])}</div>'
+                                            f'<div class="timestamp-caption">{format_dt(n["fecha"])}</div>', unsafe_allow_html=True)
+                                if n.get("muestra_id") and st.button("Ir a la muestra →", key=f"notif_go_{n['id']}", use_container_width=True):
+                                    n["leida"] = True
+                                    st.session_state.selected_codigo = n["codigo_interno"]
+                                    st.session_state.selected_perforacion = n["perforacion_codigo"]
+                                    st.session_state.selected_muestra_id = n["muestra_id"]
+                                    navigate("muestra-detail")
         with c_avatar:
             iniciales = ROLE_INICIALES.get(st.session_state.role, "AX")
             st.markdown(f'<div class="topbar-avatar">{iniciales}</div>', unsafe_allow_html=True)
