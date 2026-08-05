@@ -323,7 +323,7 @@ SIEVES = [
     ("s_60", "No. 60", "0.25", "E32"), ("s_100", "No. 100", "0.149", "E33"), ("s_200", "No. 200", "0.075", "E34"),
 ]
 
-ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg"}
+ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200"}
 NORMAS_ENSAYO = {
     "granulometria": ["INV-214-13", "INV.E-213-13", "INV.E 123-13"],
     "humedad": ["INV E-122", "ASTM D2216"],
@@ -393,17 +393,18 @@ LIMITE_PLASTICO_FILAS = [
 ]
 LIMITE_PLASTICO_N = 2
 
-# "Pasa 200" no aparece como ensayo aparte: no tiene formato propio, es un apoyo que ya viene
-# incluido dentro del formulario y la plantilla de Granulometría (sección "Determinación Pasa
-# No. 200"), así que no necesita su propio espacio al asignar ensayos de una muestra.
+# "Pasa 200" sí aparece como ensayo aparte (se puede solicitar sin Granulometría), pero
+# comparte plantilla y datos con Granulometría: si ambos se solicitan para la misma muestra,
+# los dos leen y escriben el mismo diccionario de datos (ver render_assay_form), así que lo que
+# se digite en cualquiera de los dos se refleja igual en ambos.
 BITACORA_ENSAYOS = [
-    "Granulometría", "Humedad", "Límites de Atterberg", "Límite de contracción",
+    "Granulometría", "Pasa 200", "Humedad", "Límites de Atterberg", "Límite de contracción",
     "Materia orgánica", "Proctor", "CBR", "Compresión inconfinada", "Compresión en roca",
     "Peso unitario", "Gravedad específica", "Consolidación", "Corte CD", "Corte CU", "Corte UU", "Otro",
 ]
 SUPPORTED_ASSAY_MAP = {
     "Granulometría": "granulometria", "Humedad": "humedad", "Peso unitario": "masa-unitaria",
-    "Límites de Atterberg": "limites",
+    "Límites de Atterberg": "limites", "Pasa 200": "pasa200",
 }
 
 BITACORA_BASE_COLS = ["Número", "Prof. De", "Prof. A", "Tipo de muestra"] + BITACORA_ENSAYOS + ["Observaciones"]
@@ -2280,9 +2281,16 @@ def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_dat
     _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo, perf_numero_cell="E12")
 
     if gran_data is not None:
-        ws["D17"] = to_float(gran_data.get("masa_inicial_seca"))
+        masa_inicial_seca = to_float(gran_data.get("masa_inicial_seca"))
+        if masa_inicial_seca is not None:
+            ws["D17"] = masa_inicial_seca
+        # Si solo se solicitó Pasa 200 (sin Granulometría), `gran_data` no trae los tamices —
+        # se dejan las celdas tal cual trae la plantilla en vez de escribir 0, para no simular
+        # una curva granulométrica falsa ("pasa 100%" en todos los tamices).
         for key, _label, _apert, cell in SIEVES:
-            ws[cell] = to_float(gran_data.get(key)) or 0
+            valor = to_float(gran_data.get(key))
+            if valor is not None:
+                ws[cell] = valor
 
     if lim_data is not None:
         _escribir_limites(ws, lim_data)
@@ -2294,6 +2302,17 @@ def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_dat
 
 
 def generar_excel_granulometria(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    lim_assay = get_assay(muestra["id_unico"], "limites")
+    lim_data = lim_assay.get("data", {}) if lim_assay else None
+    return _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_data=data, lim_data=lim_data,
+                                         observaciones_ensayo=observaciones_ensayo)
+
+
+def generar_excel_pasa200(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    """Pasa 200 usa la misma plantilla de Granulometría. `data` ya viene resuelto por
+    render_assay_form: si la muestra también tiene Granulometría, es el mismo diccionario de
+    esa muestra (con tamices incluidos si se digitaron); si no, son solo los datos propios de
+    Pasa 200."""
     lim_assay = get_assay(muestra["id_unico"], "limites")
     lim_data = lim_assay.get("data", {}) if lim_assay else None
     return _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_data=data, lim_data=lim_data,
@@ -2417,15 +2436,14 @@ PASA_200_FILAS = [
 ]
 
 
-def render_granulometria_form(data, assay_id):
-    st.info("Estos datos se guardan tal cual y se llevan a la plantilla oficial de Excel — los cálculos y la clasificación USCS los hace el Excel, no la app.")
-
-    render_norma_selector("granulometria", data, "gran")
-    render_equipo(data, "gran", EQUIPO_GRANULOMETRIA)
-
+def render_pasa200_section(data, assay_id, requerido=True):
+    """Campos de "Determinación Pasa No. 200". Se usa tanto embebido dentro del formulario de
+    Granulometría como en el formulario del ensayo "Pasa 200" independiente — en ambos casos
+    `data` puede terminar siendo el mismo diccionario compartido (ver render_assay_form), así
+    que lo que se digite en cualquiera de las dos pantallas se refleja en la otra."""
+    badge = '<span class="badge badge-warning">Requerido</span>' if requerido else ""
     with st.container(border=True):
-        st.markdown(card_header_html("water_drop", "Determinación Pasa No. 200",
-                                      '<span class="badge badge-warning">Requerido</span>'), unsafe_allow_html=True)
+        st.markdown(card_header_html("water_drop", "Determinación Pasa No. 200", badge), unsafe_allow_html=True)
         head = st.columns([2.2, 1, 1])
         head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Antes del lavado (g)</div>', unsafe_allow_html=True)
         head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Después del lavado (g)</div>', unsafe_allow_html=True)
@@ -2461,6 +2479,23 @@ def render_granulometria_form(data, assay_id):
         masa_seco_mas_recip = to_float(data.get("p200_seco_mas_recipiente_antes"))
         masa_recip = to_float(data.get("p200_masa_recipiente_antes"))
         data["masa_inicial_seca"] = (masa_seco_mas_recip - masa_recip) if (masa_seco_mas_recip is not None and masa_recip is not None) else ""
+
+
+def render_pasa200_form(data, assay_id):
+    st.info("Estos datos se guardan tal cual y se llevan a la plantilla oficial de Excel de Granulometría — "
+            "si la muestra también tiene Granulometría, los dos ensayos comparten los mismos datos.")
+    render_norma_selector("granulometria", data, "gran")
+    render_equipo(data, "gran", EQUIPO_GRANULOMETRIA)
+    render_pasa200_section(data, assay_id, requerido=False)
+
+
+def render_granulometria_form(data, assay_id):
+    st.info("Estos datos se guardan tal cual y se llevan a la plantilla oficial de Excel — los cálculos y la clasificación USCS los hace el Excel, no la app.")
+
+    render_norma_selector("granulometria", data, "gran")
+    render_equipo(data, "gran", EQUIPO_GRANULOMETRIA)
+
+    render_pasa200_section(data, assay_id)
 
     with st.container(border=True):
         st.markdown(card_header_html("grid_view", "Granulometría (Masa de Suelo Retenido)"), unsafe_allow_html=True)
@@ -2616,6 +2651,12 @@ def render_read_only_summary(tipo, data, laboratorista="—"):
             sieve_rows = [(label, data.get(key, "—")) for key, label, _apert, _cell in SIEVES]
             st.markdown(param_table_html(sieve_rows, header_left="TAMIZ", header_right="RETENIDO (g)"), unsafe_allow_html=True)
         equipos, norma = data.get("gran_equipos", []), data.get("gran_norma", "—")
+    elif tipo == "pasa200":
+        with st.container(border=True):
+            st.markdown(card_header_html("water_drop", "Determinación Pasa No. 200"), unsafe_allow_html=True)
+            pasa200_rows = [(label, data.get(f"{key}_antes"), data.get(f"{key}_despues")) for key, label in PASA_200_FILAS]
+            st.markdown(param_table_3col_html(pasa200_rows), unsafe_allow_html=True)
+        equipos, norma = data.get("gran_equipos", []), data.get("gran_norma", "—")
     elif tipo == "humedad":
         masa_humedo = to_float(data.get("hum_masa_humedo_mas_recipiente"))
         masa_seco = to_float(data.get("hum_seco_mas_recipiente"))
@@ -2735,7 +2776,13 @@ def render_assay_form():
                         f"Humedad {cond_label}", value=muestra.get(f"cond_{cond_key}_hum", ""),
                         key=f"cond_{cond_key}_hum_{muestra_id}", label_visibility="collapsed", placeholder="0")
 
-    data = dict(assay.get("data", {}))
+    # Pasa 200 comparte plantilla y datos con Granulometría: si la muestra también tiene un
+    # ensayo de Granulometría, "Pasa 200" lee y escribe directamente sobre ESE diccionario de
+    # datos (no el suyo propio), así que lo digitado en cualquiera de las dos pantallas se ve
+    # reflejado en la otra. Si no hay Granulometría, Pasa 200 usa sus propios datos, igual que
+    # cualquier otro ensayo independiente.
+    pasa200_gran_sibling = get_assay(muestra_id, "granulometria") if assay["tipo"] == "pasa200" else None
+    data = dict(pasa200_gran_sibling["data"]) if pasa200_gran_sibling else dict(assay.get("data", {}))
 
     if read_only:
         if es_jefe:
@@ -2759,6 +2806,8 @@ def render_assay_form():
     else:
         if assay["tipo"] == "granulometria":
             render_granulometria_form(data, assay_id)
+        elif assay["tipo"] == "pasa200":
+            render_pasa200_form(data, assay_id)
         elif assay["tipo"] == "humedad":
             render_humedad_form(data, assay_id)
         elif assay["tipo"] == "limites":
@@ -2777,10 +2826,14 @@ def render_assay_form():
         with col1:
             if st.button("Guardar borrador", use_container_width=True, icon=":material/save:"):
                 assay.update(data=data, observations=observations, laboratorist=laboratorist, status="en-proceso", lastModified=now_iso())
+                if pasa200_gran_sibling:
+                    pasa200_gran_sibling["data"] = data
                 navigate("muestra-detail")
         with col2:
             if st.button("Finalizar ensayo", type="primary", use_container_width=True, icon=":material/check_circle:"):
                 assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado", lastModified=now_iso())
+                if pasa200_gran_sibling:
+                    pasa200_gran_sibling["data"] = data
                 navigate("muestra-detail")
 
     if es_jefe and assay["tipo"] == "granulometria" and muestra:
@@ -2789,6 +2842,16 @@ def render_assay_form():
         excel_bytes = generar_excel_granulometria(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
             "Descargar Excel (Granulometría y Límites de Atterberg — mismo archivo por muestra)", icon=":material/download:",
+            data=excel_bytes, file_name=f"Clasificacion_de_suelos_{muestra['id_unico']}.xlsm",
+            mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
+        )
+
+    if es_jefe and assay["tipo"] == "pasa200" and muestra:
+        st.markdown("---")
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        excel_bytes = generar_excel_pasa200(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
+        st.download_button(
+            "Descargar Excel (Granulometría — mismo archivo por muestra)", icon=":material/download:",
             data=excel_bytes, file_name=f"Clasificacion_de_suelos_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
