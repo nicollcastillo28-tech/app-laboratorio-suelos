@@ -2382,9 +2382,8 @@ def generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, obs
     ws["E20"] = to_float(data.get("mu_peso_aire"))  # B = masa en el aire
     ws["F20"] = to_float(data.get("mu_peso_aire_par"))  # C = masa en el aire parafinado
     ws["G20"] = to_float(data.get("mu_peso_agua_par"))  # D = masa parafinada sumergida
-    dens_parafina = to_float(data.get("mu_dens_parafina"))
-    if dens_parafina:
-        ws["L24"] = dens_parafina  # densidad de la parafina (la plantilla trae 0.86 por defecto)
+    # La densidad de la parafina (L24) no se digita en la app — se deja el 0.86 por defecto
+    # que ya trae la plantilla.
 
     # La humedad (G28) la necesita la fórmula de "densidad seca" pero esta plantilla no la
     # digita — se toma del ensayo de Humedad de la misma muestra, igual que Granulometría y
@@ -2592,11 +2591,9 @@ def render_masa_unitaria_form(data):
     with c1:
         data["mu_peso_aire"] = st.text_input("Masa en el aire (g)", value=data.get("mu_peso_aire", ""), placeholder="245.80")
         data["mu_peso_agua_par"] = st.text_input("Masa en el agua parafinado (g)", value=data.get("mu_peso_agua_par", ""), placeholder="138.20")
-        data["mu_peso_parafina"] = st.text_input("Masa de la parafina (g)", value=data.get("mu_peso_parafina", ""), placeholder="12.50")
     with c2:
         data["mu_peso_aire_par"] = st.text_input("Masa en el aire parafinado (g)", value=data.get("mu_peso_aire_par", ""), placeholder="258.30")
         data["mu_temp_agua"] = st.text_input("Temperatura del agua (°C)", value=data.get("mu_temp_agua", ""), placeholder="22.0")
-        data["mu_dens_parafina"] = st.text_input("Densidad de la parafina (g/cm³)", value=data.get("mu_dens_parafina", ""), placeholder="0.90")
 
     render_equipo(data, "mu", EQUIPO_MASA_UNITARIA)
     render_norma_selector("masa-unitaria", data, "mu")
@@ -2707,8 +2704,7 @@ def render_read_only_summary(tipo, data, laboratorista="—"):
         equipos, norma = data.get("lim_equipos", []), "INV. E-125-13 / INV. E-126-13"
     else:
         rows = [("Masa en el aire (g)", data.get("mu_peso_aire")), ("Masa en el aire parafinado (g)", data.get("mu_peso_aire_par")),
-                ("Masa en el agua parafinado (g)", data.get("mu_peso_agua_par")), ("Temperatura del agua (°C)", data.get("mu_temp_agua")),
-                ("Masa de la parafina (g)", data.get("mu_peso_parafina")), ("Densidad de la parafina (g/cm³)", data.get("mu_dens_parafina"))]
+                ("Masa en el agua parafinado (g)", data.get("mu_peso_agua_par")), ("Temperatura del agua (°C)", data.get("mu_temp_agua"))]
         with st.container(border=True):
             st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
             st.markdown(param_table_html(rows), unsafe_allow_html=True)
