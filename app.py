@@ -119,8 +119,13 @@ st.markdown(f"""
     data-test-scroll-behavior="normal" (no lo tienen los stVerticalBlock sin borde). */
     div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] {{
         border-radius: 12px !important; border: 1px solid {BORDER} !important;
-        border-left: 4px solid {PRIMARY} !important;
         box-shadow: 0 1px 4px rgba(11,28,48,0.08) !important; background: {SURFACE} !important;
+    }}
+    /* Acento azul a la izquierda solo en tarjetas de contenido — se excluyen la barra de
+       navegación y las cajas donde se digita información (esas no son "otra tarjeta más",
+       son campos de captura). */
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-desc-visual-box):not(.st-key-muestra-obs-box) {{
+        border-left: 4px solid {PRIMARY} !important;
     }}
     /* Tarjetas de "Ensayos asignados" (una por ensayo): más separación entre sí y sombra
        más marcada para que no se confundan entre ellas ni con el fondo de la página. */
@@ -2039,6 +2044,7 @@ def _bitacora_draft_df(key, muestras):
 
 
 def render_bitacora():
+    require_role("jefe")
     if st.button("← Atrás"):
         go_back()
     st.markdown("## Bitácora orden para ensayos de laboratorio")
@@ -2219,29 +2225,36 @@ def render_muestra_detail():
         st.markdown('<div class="section-title">Descripción visual de la muestra</div>', unsafe_allow_html=True)
         st.caption("Cómo se ve físicamente la muestra (color, textura, humedad, etc.). Esta es la que se lleva "
                    "al campo \"DESCRIPCIÓN VISUAL\" del Excel oficial — es independiente de las observaciones.")
-        with st.container(key="muestra-desc-visual-box"):
-            descripcion_visual = st.text_area(
-                "Descripción visual de la muestra", value=muestra.get("descripcion_visual", ""), label_visibility="collapsed",
-                placeholder="Ej: Suelo arcilloso color gris, humedad media, sin fragmentos de roca...", key=f"desc_visual_{muestra_id}",
-            )
-        if st.button("Guardar descripción visual", icon=":material/save:", key=f"desc_visual_save_{muestra_id}"):
-            muestra["descripcion_visual"] = descripcion_visual.upper()
-            st.success("Descripción visual guardada.")
+        if st.session_state.role == "auxiliar":
+            with st.container(key="muestra-desc-visual-box"):
+                descripcion_visual = st.text_area(
+                    "Descripción visual de la muestra", value=muestra.get("descripcion_visual", ""), label_visibility="collapsed",
+                    placeholder="Ej: Suelo arcilloso color gris, humedad media, sin fragmentos de roca...", key=f"desc_visual_{muestra_id}",
+                )
+            if st.button("Guardar descripción visual", icon=":material/save:", key=f"desc_visual_save_{muestra_id}"):
+                muestra["descripcion_visual"] = descripcion_visual.upper()
+                st.success("Descripción visual guardada.")
+        else:
+            st.markdown(f'<div class="cell-muted">{html.escape(muestra.get("descripcion_visual") or "— (el laboratorista aún no la digita) —")}</div>',
+                        unsafe_allow_html=True)
 
     with st.container(border=True):
         st.markdown('<div class="section-title">Observaciones</div>', unsafe_allow_html=True)
-        st.caption("El Jefe la digita antes de que el laboratorista inicie el ensayo (instrucciones, contexto del "
-                   "cliente, etc.); el laboratorista la digita si la muestra presenta fisuras o no se puede "
-                   "realizar el ensayo por alguna razón. Se guarda para todos los ensayos de esta muestra y la "
-                   "puede editar tanto el Jefe como el laboratorista.")
-        with st.container(key="muestra-obs-box"):
-            observacion = st.text_area(
-                "Observaciones", value=muestra.get("observaciones", ""), label_visibility="collapsed",
-                placeholder="Ej: Muestra con fisuras visibles, no fue posible completar el ensayo...", key=f"obs_{muestra_id}",
-            )
-        if st.button("Guardar observación", icon=":material/save:", key=f"obs_save_{muestra_id}"):
-            muestra["observaciones"] = observacion
-            st.success("Observación guardada.")
+        st.caption("El laboratorista la digita si la muestra presenta fisuras o no se puede realizar el ensayo "
+                   "por alguna razón. Se guarda para todos los ensayos de esta muestra. El Jefe deja instrucciones "
+                   "para el laboratorista desde la Bitácora, al crear o editar la muestra.")
+        if st.session_state.role == "auxiliar":
+            with st.container(key="muestra-obs-box"):
+                observacion = st.text_area(
+                    "Observaciones", value=muestra.get("observaciones", ""), label_visibility="collapsed",
+                    placeholder="Ej: Muestra con fisuras visibles, no fue posible completar el ensayo...", key=f"obs_{muestra_id}",
+                )
+            if st.button("Guardar observación", icon=":material/save:", key=f"obs_save_{muestra_id}"):
+                muestra["observaciones"] = observacion
+                st.success("Observación guardada.")
+        else:
+            st.markdown(f'<div class="cell-muted">{html.escape(muestra.get("observaciones") or "— Sin observaciones —")}</div>',
+                        unsafe_allow_html=True)
 
     # Filtra por si la muestra guarda un ensayo que ya no es seleccionable (p. ej. "Pasa 200",
     # que quedó incluido dentro de Granulometría) — no se muestra aunque quede marcado en datos viejos.
@@ -2310,7 +2323,39 @@ def render_muestra_detail():
                         if not mostrar_aprobacion:
                             pass
                         elif etapa == "aprobado":
-                            st.button("Confirmado", disabled=True, use_container_width=True, key=f"aprobado_ro_{ensayo_label}")
+                            if st.session_state.role == "ingeniero":
+                                b1, b2 = st.columns(2)
+                                with b1:
+                                    st.button("Confirmado", disabled=True, use_container_width=True, key=f"aprobado_ro_{ensayo_label}")
+                                with b2:
+                                    with st.popover("Desconfirmar", use_container_width=True):
+                                        st.caption("Si los resultados no satisfacen al cliente, esto reabre el ensayo "
+                                                   "para el laboratorista y reinicia el ciclo de confirmación.")
+                                        motivo_desconf = st.text_area("Motivo", key=f"desconfirmar_motivo_{ensayo_label}",
+                                                                       placeholder="Qué hay que corregir...")
+                                        if st.button("Confirmar desconfirmación", key=f"desconfirmar_{ensayo_label}", use_container_width=True):
+                                            if motivo_desconf.strip():
+                                                existing["status"] = "en-proceso"
+                                                existing["lastModified"] = now_iso()
+                                                existing["etapa_revision"] = None
+                                                existing["confirmado_por_jefe"] = ""
+                                                existing["confirmado_por_jefe_fecha"] = ""
+                                                existing["aprobado_por_ing"] = ""
+                                                existing["aprobado_por_ing_fecha"] = ""
+                                                existing["motivo_rechazo"] = motivo_desconf
+                                                existing["rechazado_por"] = "ing"
+                                                add_notification("auxiliar", f"El Director Técnico desconfirmó {ensayo_label} de la Muestra "
+                                                                              f"{muestra['numero']} de {codigo}: {motivo_desconf}", codigo, perf_codigo, muestra_id)
+                                                add_notification("jefe", f"El Director Técnico desconfirmó {ensayo_label} de la Muestra "
+                                                                          f"{muestra['numero']} de {codigo}: {motivo_desconf}", codigo, perf_codigo, muestra_id)
+                                                add_historial(existing, "Desconfirmado por el Director Técnico", f"Director Técnico: {motivo_desconf}",
+                                                              icono="undo", tono="danger")
+                                                st.success("Desconfirmado — vuelve al laboratorista.")
+                                                st.rerun()
+                                            else:
+                                                st.error("Escribe el motivo antes de desconfirmar.")
+                            else:
+                                st.button("Confirmado", disabled=True, use_container_width=True, key=f"aprobado_ro_{ensayo_label}")
                         elif etapa == "pendiente_ing":
                             if st.session_state.role == "ingeniero":
                                 b1, b2 = st.columns(2)
@@ -3171,8 +3216,9 @@ def render_assay_form():
         elif assay["tipo"] == "masa-unitaria":
             render_masa_unitaria_form(data)
 
-        st.markdown('<div class="section-title">Observaciones</div>', unsafe_allow_html=True)
-        observations = st.text_area("Observaciones", value=assay.get("observations", ""), label_visibility="collapsed", placeholder="Observaciones generales del ensayo…")
+        with st.expander("Observaciones (opcional)", icon=":material/notes:", expanded=bool(assay.get("observations"))):
+            observations = st.text_area("Observaciones", value=assay.get("observations", ""), label_visibility="collapsed",
+                                         placeholder="Observaciones generales del ensayo, en caso de que se requiera…")
 
         st.markdown('<div class="section-title">Laboratorista</div>', unsafe_allow_html=True)
         laboratorist = st.text_input("Laboratorista", value=assay.get("laboratorist", ""), label_visibility="collapsed", placeholder="Nombre completo")
