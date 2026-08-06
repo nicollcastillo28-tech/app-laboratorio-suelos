@@ -123,8 +123,9 @@ st.markdown(f"""
     }}
     /* Tarjetas de "Ensayos asignados" (una por ensayo): más separación entre sí y borde/sombra
        más marcados para que no se confundan entre ellas ni con el fondo de la página. */
-    div[class*="st-key-ensayo-card-"] {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"][class*="st-key-ensayo-card-"] {{
         margin-bottom: 12px !important; border: 1px solid {BORDER} !important;
+        border-left: 4px solid {PRIMARY} !important;
         box-shadow: 0 2px 6px rgba(11,28,48,0.10) !important;
     }}
 
