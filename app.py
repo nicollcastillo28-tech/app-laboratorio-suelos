@@ -121,6 +121,12 @@ st.markdown(f"""
         border-radius: 12px !important; border: 1px solid {BORDER} !important;
         box-shadow: 0 1px 4px rgba(11,28,48,0.08) !important; background: {SURFACE} !important;
     }}
+    /* Tarjetas de "Ensayos asignados" (una por ensayo): más separación entre sí y borde/sombra
+       más marcados para que no se confundan entre ellas ni con el fondo de la página. */
+    div[class*="st-key-ensayo-card-"] {{
+        margin-bottom: 12px !important; border: 1px solid {BORDER} !important;
+        box-shadow: 0 2px 6px rgba(11,28,48,0.10) !important;
+    }}
 
     .section-title {{
         font-size: 12px; font-weight: 700; color: {MUTED}; text-transform: uppercase;
@@ -632,7 +638,7 @@ def aprobacion_badge_html(etapa):
     """Estado de aprobación (Jefe → Director Técnico) de un ensayo individual — independiente
     del semáforo de laboratorio (sin-iniciar/en-proceso/finalizado)."""
     label, clase = APROBACION_INFO.get(etapa, APROBACION_INFO[None])
-    return f'<span class="badge {clase}">Aprobación Director Técnico: {label}</span>'
+    return f'<span class="badge {clase}">DT: {label}</span>'
 
 
 def card_header_html(icon_name, title, extra_html=""):
@@ -2276,14 +2282,111 @@ def render_muestra_detail():
             tipo_interno = SUPPORTED_ASSAY_MAP.get(ensayo_label)
             existing = get_assay(muestra_id, tipo_interno) if tipo_interno else None
             status = existing["status"] if existing else "sin-iniciar"
+            etapa = existing.get("etapa_revision") if existing else None
+            mostrar_aprobacion = bool(tipo_interno and existing and status == "finalizado")
+            slug = re.sub(r"[^a-z0-9]+", "-", ensayo_label.lower())
 
-            with st.container(border=True):
-                cols = st.columns([0.6, 2.4, 1.6, 1])
+            with st.container(border=True, key=f"ensayo-card-{slug}"):
+                cols = st.columns([0.5, 2.0, 1.8, 2.6, 0.9], vertical_alignment="center")
                 cols[0].markdown(status_circle_html(status), unsafe_allow_html=True)
-                cols[1].markdown(f"**{ensayo_label}**")
-                if tipo_interno:
-                    cols[2].markdown(status_badge_html(status), unsafe_allow_html=True)
+                with cols[1]:
+                    st.markdown(f"**{ensayo_label}**")
+                    if existing and existing.get("laboratorist"):
+                        st.markdown(f'<div class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(existing["lastModified"])} · {existing["laboratorist"]}</div>', unsafe_allow_html=True)
+                    elif existing:
+                        st.markdown(f'<div class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(existing["lastModified"])}</div>', unsafe_allow_html=True)
+
+                if not tipo_interno:
+                    cols[2].markdown('<span class="badge badge-muted">Sin formulario aún</span>', unsafe_allow_html=True)
+                else:
+                    with cols[2]:
+                        if mostrar_aprobacion:
+                            st.markdown(aprobacion_badge_html(etapa), unsafe_allow_html=True)
+                        else:
+                            st.markdown(status_badge_html(status), unsafe_allow_html=True)
+
                     with cols[3]:
+                        if not mostrar_aprobacion:
+                            pass
+                        elif etapa == "aprobado":
+                            st.button("Confirmado", disabled=True, use_container_width=True, key=f"aprobado_ro_{ensayo_label}")
+                        elif etapa == "pendiente_ing":
+                            if st.session_state.role == "ingeniero":
+                                b1, b2 = st.columns(2)
+                                with b1:
+                                    if st.button("Confirmar", type="primary",
+                                                 use_container_width=True, key=f"ing_aprobar_{ensayo_label}"):
+                                        existing["etapa_revision"] = "aprobado"
+                                        existing["aprobado_por_ing"] = "Director Técnico"
+                                        existing["aprobado_por_ing_fecha"] = now_iso()
+                                        existing["motivo_rechazo"] = ""
+                                        existing["rechazado_por"] = ""
+                                        add_notification("jefe", f"El Director Técnico aprobó {ensayo_label} de la Muestra "
+                                                                  f"{muestra['numero']} de {codigo}.", codigo, perf_codigo, muestra_id)
+                                        add_historial(existing, "Aprobación Final del Director Técnico", "Director Técnico",
+                                                      icono="verified", tono="success")
+                                        st.success("Aprobado.")
+                                        st.rerun()
+                                with b2:
+                                    with st.popover("Devolver", use_container_width=True):
+                                        motivo_ing = st.text_area("Motivo", key=f"ing_motivo_{ensayo_label}",
+                                                                   placeholder="Qué hay que corregir...")
+                                        if st.button("Confirmar devolución", key=f"ing_devolver_{ensayo_label}", use_container_width=True):
+                                            if motivo_ing.strip():
+                                                existing["etapa_revision"] = None
+                                                existing["motivo_rechazo"] = motivo_ing
+                                                existing["rechazado_por"] = "ing"
+                                                add_notification("jefe", f"El Director Técnico devolvió {ensayo_label} de la Muestra "
+                                                                          f"{muestra['numero']} de {codigo}: {motivo_ing}", codigo, perf_codigo, muestra_id)
+                                                add_historial(existing, "Devuelto al Jefe de Laboratorio", f"Director Técnico: {motivo_ing}",
+                                                              icono="undo", tono="danger")
+                                                st.success("Devuelto al Jefe.")
+                                                st.rerun()
+                                            else:
+                                                st.error("Escribe el motivo antes de devolver.")
+                            else:
+                                st.button("Confirmar", disabled=True, use_container_width=True, key=f"ing_aprobar_ro_{ensayo_label}")
+                        else:
+                            if st.session_state.role == "jefe":
+                                b1, b2 = st.columns(2)
+                                with b1:
+                                    if st.button("Confirmar", type="primary",
+                                                 use_container_width=True, key=f"jefe_confirmar_{ensayo_label}"):
+                                        existing["etapa_revision"] = "pendiente_ing"
+                                        existing["confirmado_por_jefe"] = "Jefe de Laboratorio"
+                                        existing["confirmado_por_jefe_fecha"] = now_iso()
+                                        existing["motivo_rechazo"] = ""
+                                        existing["rechazado_por"] = ""
+                                        add_notification("ingeniero", f"El Jefe de Laboratorio envió {ensayo_label} de la Muestra "
+                                                                       f"{muestra['numero']} de {codigo} para tu confirmación final.",
+                                                          codigo, perf_codigo, muestra_id)
+                                        add_historial(existing, "Ensayo Confirmado", "Jefe de Laboratorio",
+                                                      icono="check_circle", tono="success")
+                                        st.success("Enviado al Director Técnico.")
+                                        st.rerun()
+                                with b2:
+                                    with st.popover("Devolver", use_container_width=True):
+                                        motivo_jefe = st.text_area("Motivo", key=f"jefe_motivo_{ensayo_label}",
+                                                                    placeholder="Qué hay que corregir...")
+                                        if st.button("Confirmar devolución", key=f"jefe_devolver_{ensayo_label}", use_container_width=True):
+                                            if motivo_jefe.strip():
+                                                existing["status"] = "en-proceso"
+                                                existing["lastModified"] = now_iso()
+                                                existing["etapa_revision"] = None
+                                                existing["motivo_rechazo"] = motivo_jefe
+                                                existing["rechazado_por"] = "jefe"
+                                                add_notification("auxiliar", f"El Jefe de Laboratorio devolvió {ensayo_label} de la Muestra "
+                                                                              f"{muestra['numero']} de {codigo}: {motivo_jefe}", codigo, perf_codigo, muestra_id)
+                                                add_historial(existing, "Devuelto al Laboratorista", f"Jefe de Laboratorio: {motivo_jefe}",
+                                                              icono="undo", tono="danger")
+                                                st.success("Devuelto al laboratorista.")
+                                                st.rerun()
+                                            else:
+                                                st.error("Escribe el motivo antes de devolver.")
+                            else:
+                                st.caption("Pendiente del Jefe")
+
+                    with cols[4]:
                         if st.button("Abrir", key=f"open_ensayo_{ensayo_label}", use_container_width=True):
                             if existing:
                                 st.session_state.selected_assay_id = existing["id"]
@@ -2298,99 +2401,12 @@ def render_muestra_detail():
                                 st.session_state.selected_assay_id = new_id
                             st.session_state.selected_assay_type = tipo_interno
                             navigate("assay-form")
-                    if existing and existing.get("laboratorist"):
-                        st.markdown(f'<div class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(existing["lastModified"])} · {existing["laboratorist"]}</div>', unsafe_allow_html=True)
-                    elif existing:
-                        st.markdown(f'<div class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(existing["lastModified"])}</div>', unsafe_allow_html=True)
-                else:
-                    cols[2].markdown('<span class="badge badge-muted">Sin formulario aún</span>', unsafe_allow_html=True)
 
-                if tipo_interno and existing and status == "finalizado":
-                    st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
-                    etapa = existing.get("etapa_revision")
+                if mostrar_aprobacion:
                     motivo = existing.get("motivo_rechazo")
-                    st.markdown(aprobacion_badge_html(etapa), unsafe_allow_html=True)
                     if motivo:
                         quien = "el Jefe de Laboratorio" if existing.get("rechazado_por") == "jefe" else "el Director Técnico"
                         st.warning(f"Devuelto por {quien}: {motivo}")
-
-                    if etapa == "aprobado":
-                        st.button("Confirmado", disabled=True, use_container_width=True,
-                                  key=f"aprobado_ro_{ensayo_label}")
-                    elif etapa == "pendiente_ing":
-                        if st.session_state.role == "ingeniero":
-                            nombre_ing = st.text_input("Tu nombre", key=f"ing_nombre_{ensayo_label}", placeholder="Nombre completo")
-                            if st.button("Confirmar Aprobación Técnica", type="primary", icon=":material/check_circle:",
-                                         use_container_width=True, key=f"ing_aprobar_{ensayo_label}"):
-                                existing["etapa_revision"] = "aprobado"
-                                existing["aprobado_por_ing"] = nombre_ing
-                                existing["aprobado_por_ing_fecha"] = now_iso()
-                                existing["motivo_rechazo"] = ""
-                                existing["rechazado_por"] = ""
-                                add_notification("jefe", f"El Director Técnico aprobó {ensayo_label} de la Muestra "
-                                                          f"{muestra['numero']} de {codigo}.", codigo, perf_codigo, muestra_id)
-                                actor_ing = f"{nombre_ing} (Director Técnico)" if nombre_ing else "Director Técnico"
-                                add_historial(existing, "Aprobación Final del Director Técnico", actor_ing,
-                                              icono="verified", tono="success")
-                                st.success("Aprobado.")
-                                st.rerun()
-                            motivo_ing = st.text_area("Motivo si vas a devolver al Jefe", key=f"ing_motivo_{ensayo_label}",
-                                                       placeholder="Qué hay que corregir...")
-                            if st.button("Devolver al Jefe", icon=":material/undo:", use_container_width=True,
-                                         key=f"ing_devolver_{ensayo_label}"):
-                                if motivo_ing.strip():
-                                    existing["etapa_revision"] = None
-                                    existing["motivo_rechazo"] = motivo_ing
-                                    existing["rechazado_por"] = "ing"
-                                    add_notification("jefe", f"El Director Técnico devolvió {ensayo_label} de la Muestra "
-                                                              f"{muestra['numero']} de {codigo}: {motivo_ing}", codigo, perf_codigo, muestra_id)
-                                    add_historial(existing, "Devuelto al Jefe de Laboratorio", f"Director Técnico: {motivo_ing}",
-                                                  icono="undo", tono="danger")
-                                    st.success("Devuelto al Jefe.")
-                                    st.rerun()
-                                else:
-                                    st.error("Escribe el motivo antes de devolver.")
-                        else:
-                            st.button("Confirmar Aprobación Técnica", disabled=True, use_container_width=True,
-                                      key=f"ing_aprobar_ro_{ensayo_label}")
-                    else:
-                        if st.session_state.role == "jefe":
-                            nombre_jefe = st.text_input("Tu nombre", key=f"jefe_nombre_{ensayo_label}", placeholder="Nombre completo")
-                            if st.button("Confirmar Aprobación", type="primary", icon=":material/check_circle:",
-                                         use_container_width=True, key=f"jefe_confirmar_{ensayo_label}"):
-                                existing["etapa_revision"] = "pendiente_ing"
-                                existing["confirmado_por_jefe"] = nombre_jefe
-                                existing["confirmado_por_jefe_fecha"] = now_iso()
-                                existing["motivo_rechazo"] = ""
-                                existing["rechazado_por"] = ""
-                                add_notification("ingeniero", f"El Jefe de Laboratorio envió {ensayo_label} de la Muestra "
-                                                               f"{muestra['numero']} de {codigo} para tu confirmación final.",
-                                                  codigo, perf_codigo, muestra_id)
-                                actor_jefe = f"{nombre_jefe} (Jefe)" if nombre_jefe else "Jefe de Laboratorio"
-                                add_historial(existing, "Ensayo Confirmado", actor_jefe, icono="check_circle", tono="success")
-                                st.success("Enviado al Director Técnico.")
-                                st.rerun()
-                            motivo_jefe = st.text_area("Motivo si vas a devolver al laboratorista", key=f"jefe_motivo_{ensayo_label}",
-                                                        placeholder="Qué hay que corregir...")
-                            if st.button("Devolver al Laboratorista", icon=":material/undo:", use_container_width=True,
-                                         key=f"jefe_devolver_{ensayo_label}"):
-                                if motivo_jefe.strip():
-                                    existing["status"] = "en-proceso"
-                                    existing["lastModified"] = now_iso()
-                                    existing["etapa_revision"] = None
-                                    existing["motivo_rechazo"] = motivo_jefe
-                                    existing["rechazado_por"] = "jefe"
-                                    add_notification("auxiliar", f"El Jefe de Laboratorio devolvió {ensayo_label} de la Muestra "
-                                                                  f"{muestra['numero']} de {codigo}: {motivo_jefe}", codigo, perf_codigo, muestra_id)
-                                    add_historial(existing, "Devuelto al Laboratorista", f"Jefe de Laboratorio: {motivo_jefe}",
-                                                  icono="undo", tono="danger")
-                                    st.success("Devuelto al laboratorista.")
-                                    st.rerun()
-                                else:
-                                    st.error("Escribe el motivo antes de devolver.")
-                        else:
-                            st.caption("El Jefe de Laboratorio debe confirmar este ensayo antes de enviarlo al Director Técnico.")
-
                     ens_historial = existing.get("historial", [])
                     if ens_historial:
                         with st.expander(f"Historial de Cambios ({len(ens_historial)})", icon=":material/history:"):
