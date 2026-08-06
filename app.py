@@ -1044,7 +1044,7 @@ def render_home():
                     navigate("projects-done")
         elif es_ingeniero:
             pendientes_ing = _muestras_pendientes_ing()
-            c1, c2 = st.columns([2, 1])
+            c1, c2, c3 = st.columns(3)
             with c1:
                 st.markdown(f'<div class="bento-primary"><div class="bento-icon">{icon("fact_check")}</div>'
                              f'<div><span class="bento-eyebrow">Tareas prioritarias</span>'
@@ -1052,6 +1052,12 @@ def render_home():
                              f'confirmadas por el Jefe de Laboratorio, esperando tu visto bueno final.</p></div></div>',
                              unsafe_allow_html=True)
             with c2:
+                st.markdown(f'<div class="bento-light"><div class="bento-icon">{icon("sync")}</div>'
+                             f'<div><h3>Proyectos en ejecución</h3><p>{sum(1 for p in st.session_state.projects if project_status(p["codigo_interno"])=="ejecucion")} proyecto(s) activos en laboratorio.</p></div></div>',
+                             unsafe_allow_html=True)
+                if st.button("Ver proyectos →", key="cta_active_ing", use_container_width=True):
+                    navigate("projects-active")
+            with c3:
                 st.markdown(f'<div class="bento-light"><div class="bento-icon">{icon("archive")}</div>'
                              '<div><h3>Proyectos ejecutados</h3><p>Consulta el historial certificado.</p></div></div>',
                              unsafe_allow_html=True)
@@ -1119,7 +1125,8 @@ def render_home():
                     if a.get("laboratorist"):
                         actualizacion += f' · {html.escape(a["laboratorist"])}'
                     cols = st.columns(col_ratios, vertical_alignment="center")
-                    cols[0].markdown(f'<span class="cell-id">{html.escape(a["codigo_interno"])}</span>', unsafe_allow_html=True)
+                    cols[0].markdown(f'<span class="cell-id">{html.escape(a["codigo_interno"])}</span>'
+                                      f'<div class="cell-sub">{titulo}</div>', unsafe_allow_html=True)
                     cols[1].markdown(f'<div class="cell-title">{titulo}</div><div class="cell-sub">{subtitulo}</div>',
                                       unsafe_allow_html=True)
                     cols[2].markdown(f'<span class="cell-muted">{html.escape(actualizacion)}</span>', unsafe_allow_html=True)
