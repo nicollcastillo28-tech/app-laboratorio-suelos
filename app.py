@@ -650,9 +650,9 @@ def aprobacion_badge_html(etapa):
 def card_header_html(icon_name, title, extra_html=""):
     """Encabezado de tarjeta con ícono + título (y opcionalmente un badge a la derecha),
     usado en las tarjetas de los formularios de ensayo (Norma, Equipos, Pasa 200, etc.)."""
-    return (f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">'
-            f'<div style="display:flex;align-items:center;gap:8px;font-weight:700;color:{PRIMARY};font-size:15px;">'
-            f'{icon(icon_name, size=18)} {title}</div>{extra_html}</div>')
+    return (f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">'
+            f'<div style="display:flex;align-items:center;gap:9px;font-weight:800;color:{PRIMARY};font-size:19px;">'
+            f'{icon(icon_name, size=22)} {title}</div>{extra_html}</div>')
 
 
 def param_table_html(rows, header_left="PARÁMETRO", header_right="VALOR REGISTRADO"):
@@ -3177,26 +3177,32 @@ def render_assay_form():
         profundidad_txt = f'{muestra["profundidad_de"]:.2f}m - {muestra["profundidad_hasta"]:.2f}m' if muestra else "—"
         g4.markdown(f'<div class="cell-muted" style="margin-top:12px;">Profundidad</div><div style="font-weight:600;">{profundidad_txt}</div>',
                     unsafe_allow_html=True)
+        if muestra is not None:
+            st.markdown(f'<div class="cell-muted" style="margin-top:12px;">Descripción visual de la muestra</div>'
+                        f'<div style="font-weight:600;">{html.escape(muestra.get("descripcion_visual") or "— (el laboratorista aún no la digita) —")}</div>',
+                        unsafe_allow_html=True)
 
     if muestra is not None:
         with st.container(border=True):
             st.markdown(card_header_html("thermostat", "Condición del Ensayo"), unsafe_allow_html=True)
-            st.caption("Se digita una sola vez por muestra: la inicial al empezar el ensayo y la final al terminarlo. Se comparte entre todos los ensayos de esta muestra.")
-            if read_only:
-                st.markdown(condicion_table_html(muestra), unsafe_allow_html=True)
-            else:
-                head = st.columns([1.4, 1, 1])
-                head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Temperatura °C</div>', unsafe_allow_html=True)
-                head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Humedad %</div>', unsafe_allow_html=True)
-                for cond_key, cond_label in (("inicial", "Inicial"), ("final", "Final")):
-                    row = st.columns([1.4, 1, 1])
-                    row[0].markdown(f'<div style="padding-top:8px;">{cond_label}</div>', unsafe_allow_html=True)
-                    muestra[f"cond_{cond_key}_temp"] = row[1].text_input(
-                        f"Temperatura {cond_label}", value=muestra.get(f"cond_{cond_key}_temp", ""),
-                        key=f"cond_{cond_key}_temp_{muestra_id}", label_visibility="collapsed", placeholder="0.0")
-                    muestra[f"cond_{cond_key}_hum"] = row[2].text_input(
-                        f"Humedad {cond_label}", value=muestra.get(f"cond_{cond_key}_hum", ""),
-                        key=f"cond_{cond_key}_hum_{muestra_id}", label_visibility="collapsed", placeholder="0")
+            with st.expander("Ver temperatura y humedad", icon=":material/thermostat:",
+                              expanded=bool(muestra.get("cond_inicial_temp") or muestra.get("cond_inicial_hum"))):
+                st.caption("Se digita una sola vez por muestra: la inicial al empezar el ensayo y la final al terminarlo. Se comparte entre todos los ensayos de esta muestra.")
+                if read_only:
+                    st.markdown(condicion_table_html(muestra), unsafe_allow_html=True)
+                else:
+                    head = st.columns([1.4, 1, 1])
+                    head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Temperatura °C</div>', unsafe_allow_html=True)
+                    head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Humedad %</div>', unsafe_allow_html=True)
+                    for cond_key, cond_label in (("inicial", "Inicial"), ("final", "Final")):
+                        row = st.columns([1.4, 1, 1])
+                        row[0].markdown(f'<div style="padding-top:8px;">{cond_label}</div>', unsafe_allow_html=True)
+                        muestra[f"cond_{cond_key}_temp"] = row[1].text_input(
+                            f"Temperatura {cond_label}", value=muestra.get(f"cond_{cond_key}_temp", ""),
+                            key=f"cond_{cond_key}_temp_{muestra_id}", label_visibility="collapsed", placeholder="0.0")
+                        muestra[f"cond_{cond_key}_hum"] = row[2].text_input(
+                            f"Humedad {cond_label}", value=muestra.get(f"cond_{cond_key}_hum", ""),
+                            key=f"cond_{cond_key}_hum_{muestra_id}", label_visibility="collapsed", placeholder="0")
 
     # Pasa 200 comparte plantilla y datos con Granulometría: si la muestra también tiene un
     # ensayo de Granulometría, "Pasa 200" lee y escribe directamente sobre ESE diccionario de
