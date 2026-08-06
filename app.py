@@ -31,8 +31,8 @@ TEMPLATE_HUMEDAD = os.path.join(BASE_DIR, "templates", "GDA-FLC-014_humedad_natu
 TEMPLATE_MASA_UNITARIA = os.path.join(BASE_DIR, "templates", "GDA-FLC-004_masa_unitaria.xlsx")
 
 PASSWORDS = {"jefe": "geodelta2024", "auxiliar": "aux2024", "ingeniero": "ing2024"}
-ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "auxiliar": "Auxiliar", "ingeniero": "Ingeniero"}
-ROLE_INICIALES = {"jefe": "JL", "auxiliar": "AX", "ingeniero": "ING"}
+ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "auxiliar": "Auxiliar", "ingeniero": "Director Técnico"}
+ROLE_INICIALES = {"jefe": "JL", "auxiliar": "AX", "ingeniero": "DT"}
 
 # ════════════════════════════════════════════════════════════════════
 # ESTILOS — paleta del brief SoilLab Pro (Primary #1B365D · Secondary #4A6278 · Tertiary #005EB8 · Neutral #64748B)
@@ -738,7 +738,7 @@ def add_notification(role, mensaje, codigo=None, perf=None, muestra_id=None):
 
 def add_historial_muestra(muestra, titulo, subtitulo="", icono="history", tono="muted"):
     """Registro de auditoría por muestra: cuándo se entregó cada ensayo, cuándo confirmó el
-    Jefe, cuándo aprobó (o devolvió) el Ingeniero, etc. Se guarda en la propia muestra y se
+    Jefe, cuándo aprobó (o devolvió) el Director Técnico, etc. Se guarda en la propia muestra y se
     muestra como línea de tiempo (ver historial_timeline_html)."""
     muestra.setdefault("historial", []).append({
         "fecha": now_iso(), "titulo": titulo, "subtitulo": subtitulo, "icono": icono, "tono": tono,
@@ -830,7 +830,7 @@ def project_progress(codigo):
 
 def project_status(codigo):
     """'ejecutado' solo si el proyecto tiene al menos una muestra, TODAS están finalizadas
-    (el laboratorista terminó) Y TODAS tienen el visto bueno final del Ingeniero — no basta
+    (el laboratorista terminó) Y TODAS tienen el visto bueno final del Director Técnico — no basta
     con que el laboratorio haya terminado, tiene que estar aprobado para poder entregarse."""
     counts = project_progress(codigo)
     total = sum(counts.values())
@@ -847,7 +847,7 @@ def desarchivar_proyecto(codigo):
     """Reabre un proyecto ejecutado: revierte a 'en-proceso' todos sus ensayos finalizados,
     para que el laboratorista pueda volver a digitar o el Jefe agregar nuevas muestras/
     perforaciones. También limpia la aprobación de cada muestra (etapa_revision y demás) —
-    si se reabre, tiene que volver a pasar por Jefe e Ingeniero antes de poder archivarse de
+    si se reabre, tiene que volver a pasar por Jefe y Director Técnico antes de poder archivarse de
     nuevo. El estado 'ejecutado' se recalcula solo (ver project_status)."""
     ahora = now_iso()
     for a in st.session_state.assays:
@@ -894,11 +894,11 @@ def render_login():
         with st.container(border=True, key="login-card"):
             st.markdown("#### Bienvenido de nuevo")
             st.caption("Ingresa tus credenciales para acceder al sistema.")
-            role_choice = st.radio("Tipo de usuario", ["Auxiliar", "Jefe", "Ingeniero"], horizontal=True)
+            role_choice = st.radio("Tipo de usuario", ["Auxiliar", "Jefe", "Director Técnico"], horizontal=True)
             password = st.text_input("Clave de acceso", type="password", placeholder="••••••••")
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("INGRESAR", type="primary", use_container_width=True):
-                role_key = {"Jefe": "jefe", "Ingeniero": "ingeniero"}.get(role_choice, "auxiliar")
+                role_key = {"Jefe": "jefe", "Director Técnico": "ingeniero"}.get(role_choice, "auxiliar")
                 if password == PASSWORDS[role_key]:
                     st.session_state.role = role_key
                     st.session_state.nav_stack = []
@@ -994,7 +994,7 @@ def render_bottomnav():
 # ════════════════════════════════════════════════════════════════════
 def _muestras_pendientes_ing():
     """Muestras ya finalizadas por el laboratorista, confirmadas por el Jefe y esperando el
-    visto bueno del Ingeniero. Devuelve tuplas (codigo, perf_codigo, muestra)."""
+    visto bueno del Director Técnico. Devuelve tuplas (codigo, perf_codigo, muestra)."""
     pendientes = []
     for p in st.session_state.projects:
         codigo = p["codigo_interno"]
@@ -1013,7 +1013,7 @@ def render_home():
         st.markdown("## Bienvenido, Jefe de Laboratorio")
         st.caption("Resumen de operaciones y control de calidad geotécnica para hoy.")
     elif es_ingeniero:
-        st.markdown("## Bienvenido, Ingeniero")
+        st.markdown("## Bienvenido, Director Técnico")
         st.caption("Revisión final y aprobación de muestras antes de entregarlas al cliente.")
     else:
         st.markdown("## Panel de Auxiliar")
@@ -1616,7 +1616,7 @@ def render_project_detail():
             ("outbox", "Fecha de emisión", project.get("fecha_emision")),
             ("person", "Asignado a", project.get("laboratorista_asignado")),
         ]
-        # Datos del cliente: los ven Jefe e Ingeniero (roles de consulta/revisión), nunca el laboratorista.
+        # Datos del cliente: los ven Jefe y Director Técnico (roles de consulta/revisión), nunca el laboratorista.
         if st.session_state.role in ("jefe", "ingeniero"):
             info_rows.insert(1, ("badge", "Cliente", project.get("cliente")))
             info_rows.insert(2, ("mail", "Correo electrónico", project.get("correo_cliente")))
@@ -2272,7 +2272,7 @@ def render_muestra_detail():
         etapa = muestra.get("etapa_revision")
         motivo = muestra.get("motivo_rechazo")
         if motivo:
-            quien = "el Jefe de Laboratorio" if muestra.get("rechazado_por") == "jefe" else "el Ingeniero"
+            quien = "el Jefe de Laboratorio" if muestra.get("rechazado_por") == "jefe" else "el Director Técnico"
             st.warning(f"Devuelto por {quien}: {motivo}")
 
         with st.container(border=True):
@@ -2281,17 +2281,18 @@ def render_muestra_detail():
                 st.markdown(
                     f'<div class="cell-muted">Confirmado por Jefe</div><div style="font-weight:600;">'
                     f'{html.escape(muestra.get("confirmado_por_jefe") or "—")} · {format_dt(muestra.get("confirmado_por_jefe_fecha"))}</div>'
-                    f'<div class="cell-muted" style="margin-top:10px;">Aprobado por Ingeniero</div><div style="font-weight:600;">'
+                    f'<div class="cell-muted" style="margin-top:10px;">Aprobado por Director Técnico</div><div style="font-weight:600;">'
                     f'{html.escape(muestra.get("aprobado_por_ing") or "—")} · {format_dt(muestra.get("aprobado_por_ing_fecha"))}</div>',
                     unsafe_allow_html=True)
             elif etapa == "pendiente_ing":
-                st.markdown(card_header_html("hourglass_top", "Enviado al Ingeniero — esperando revisión"), unsafe_allow_html=True)
+                st.markdown(card_header_html("hourglass_top", "Esperando confirmación del Director Técnico"), unsafe_allow_html=True)
                 st.markdown(
                     f'<div class="cell-muted">Confirmado por Jefe</div><div style="font-weight:600;">'
                     f'{html.escape(muestra.get("confirmado_por_jefe") or "—")} · {format_dt(muestra.get("confirmado_por_jefe_fecha"))}</div>',
                     unsafe_allow_html=True)
                 if st.session_state.role == "ingeniero":
                     st.markdown("<br>", unsafe_allow_html=True)
+                    st.caption("Esta muestra fue enviada por el Jefe de Laboratorio para tu revisión y confirmación final.")
                     nombre_ing = st.text_input("Tu nombre", key=f"ing_nombre_{muestra_id}", placeholder="Nombre completo")
                     if st.button("Dar visto bueno final", type="primary", icon=":material/check_circle:",
                                  use_container_width=True, key=f"ing_aprobar_{muestra_id}"):
@@ -2300,10 +2301,10 @@ def render_muestra_detail():
                         muestra["aprobado_por_ing_fecha"] = now_iso()
                         muestra["motivo_rechazo"] = ""
                         muestra["rechazado_por"] = ""
-                        add_notification("jefe", f"El Ingeniero aprobó la Muestra {muestra['numero']} de {codigo} "
+                        add_notification("jefe", f"El Director Técnico aprobó la Muestra {muestra['numero']} de {codigo} "
                                                   f"— ya se puede entregar al cliente.", codigo, perf_codigo, muestra_id)
-                        actor_ing = f"{nombre_ing} (Ingeniero)" if nombre_ing else "Ingeniero"
-                        add_historial_muestra(muestra, "Aprobado por el Ingeniero", actor_ing,
+                        actor_ing = f"{nombre_ing} (Director Técnico)" if nombre_ing else "Director Técnico"
+                        add_historial_muestra(muestra, "Aprobado por el Director Técnico", actor_ing,
                                                icono="verified", tono="success")
                         st.success("Aprobado.")
                         st.rerun()
@@ -2331,31 +2332,33 @@ def render_muestra_detail():
                             muestra["motivo_rechazo"] = motivo_ing
                             muestra["rechazado_por"] = "ing"
                             ensayos_txt = ", ".join(ensayos_a_devolver_ing)
-                            add_notification("jefe", f"El Ingeniero devolvió {ensayos_txt} de la Muestra {muestra['numero']} "
+                            add_notification("jefe", f"El Director Técnico devolvió {ensayos_txt} de la Muestra {muestra['numero']} "
                                                       f"de {codigo}: {motivo_ing}", codigo, perf_codigo, muestra_id)
-                            add_notification("auxiliar", f"El Ingeniero devolvió {ensayos_txt} de la Muestra {muestra['numero']} "
+                            add_notification("auxiliar", f"El Director Técnico devolvió {ensayos_txt} de la Muestra {muestra['numero']} "
                                                           f"de {codigo}: {motivo_ing}", codigo, perf_codigo, muestra_id)
                             add_historial_muestra(muestra, f"Devuelto al Jefe de Laboratorio: {ensayos_txt}",
-                                                   f"Ingeniero: {motivo_ing}", icono="undo", tono="danger")
+                                                   f"Director Técnico: {motivo_ing}", icono="undo", tono="danger")
                             st.success("Devuelto al Jefe.")
                             st.rerun()
             else:
                 st.markdown(card_header_html("fact_check", "Pendiente de confirmación del Jefe de Laboratorio"), unsafe_allow_html=True)
                 if st.session_state.role == "jefe":
+                    st.caption("Al confirmar, indicas que ya revisaste los datos de esta muestra. Se enviará al "
+                               "Director Técnico para su revisión y confirmación final.")
                     nombre_jefe = st.text_input("Tu nombre", key=f"jefe_nombre_{muestra_id}", placeholder="Nombre completo")
-                    if st.button("Confirmar y enviar al Ingeniero", type="primary", icon=":material/check_circle:",
+                    if st.button("Confirmar revisión y enviar al Director Técnico", type="primary", icon=":material/check_circle:",
                                  use_container_width=True, key=f"jefe_confirmar_{muestra_id}"):
                         muestra["etapa_revision"] = "pendiente_ing"
                         muestra["confirmado_por_jefe"] = nombre_jefe
                         muestra["confirmado_por_jefe_fecha"] = now_iso()
                         muestra["motivo_rechazo"] = ""
                         muestra["rechazado_por"] = ""
-                        add_notification("ingeniero", f"El Jefe de Laboratorio envió la Muestra {muestra['numero']} de "
-                                                       f"{codigo} para tu revisión final.", codigo, perf_codigo, muestra_id)
+                        add_notification("ingeniero", f"El Jefe de Laboratorio revisó y envió la Muestra {muestra['numero']} de "
+                                                       f"{codigo} para tu confirmación final.", codigo, perf_codigo, muestra_id)
                         actor_jefe = f"{nombre_jefe} (Jefe)" if nombre_jefe else "Jefe de Laboratorio"
                         add_historial_muestra(muestra, "Muestra Confirmada", actor_jefe,
                                                icono="check_circle", tono="success")
-                        st.success("Enviado al Ingeniero.")
+                        st.success("Enviado al Director Técnico.")
                         st.rerun()
                     motivo_jefe = st.text_area("Motivo si vas a devolver al laboratorista", key=f"jefe_motivo_{muestra_id}",
                                                 placeholder="Qué hay que corregir...")
@@ -2388,7 +2391,7 @@ def render_muestra_detail():
                             st.success("Devuelto al laboratorista.")
                             st.rerun()
                 else:
-                    st.caption("El Jefe de Laboratorio debe confirmar esta muestra antes de enviarla al Ingeniero.")
+                    st.caption("El Jefe de Laboratorio debe confirmar esta muestra antes de enviarla al Director Técnico.")
 
     historial = muestra.get("historial", [])
     if historial:
@@ -3070,7 +3073,7 @@ def render_assay_form():
     muestra = get_muestra(codigo, perf_codigo, muestra_id)
     es_jefe = st.session_state.role == "jefe"
     es_supervisor = st.session_state.role in ("jefe", "ingeniero")
-    # El Jefe y el Ingeniero solo consultan los ensayos — quien digita los datos de laboratorio es el laboratorista.
+    # El Jefe y el Director Técnico solo consultan los ensayos — quien digita los datos de laboratorio es el laboratorista.
     read_only = es_supervisor or (st.session_state.role == "auxiliar" and project_status(codigo) == "ejecutado")
 
     if st.button("← Atrás"):
@@ -3178,7 +3181,7 @@ def render_assay_form():
                     actor_lab = f"{laboratorist} (Laboratorista)" if laboratorist else "Laboratorista"
                     add_historial_muestra(muestra, f"{ASSAY_LABELS[assay['tipo']]} Enviado a Revisión", actor_lab,
                                            icono="science", tono="primary")
-                    # Cada ensayo que el laboratorista termina se avisa al Jefe (nunca al Ingeniero,
+                    # Cada ensayo que el laboratorista termina se avisa al Jefe (nunca al Director Técnico,
                     # que solo entra en juego cuando el Jefe confirma la muestra completa).
                     if not ya_estaba_finalizado:
                         add_notification("jefe", f"El laboratorista terminó {ASSAY_LABELS[assay['tipo']]} de la Muestra "
