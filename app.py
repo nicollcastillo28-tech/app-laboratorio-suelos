@@ -119,13 +119,13 @@ st.markdown(f"""
     data-test-scroll-behavior="normal" (no lo tienen los stVerticalBlock sin borde). */
     div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] {{
         border-radius: 12px !important; border: 1px solid {BORDER} !important;
+        border-left: 4px solid {PRIMARY} !important;
         box-shadow: 0 1px 4px rgba(11,28,48,0.08) !important; background: {SURFACE} !important;
     }}
-    /* Tarjetas de "Ensayos asignados" (una por ensayo): más separación entre sí y borde/sombra
-       más marcados para que no se confundan entre ellas ni con el fondo de la página. */
+    /* Tarjetas de "Ensayos asignados" (una por ensayo): más separación entre sí y sombra
+       más marcada para que no se confundan entre ellas ni con el fondo de la página. */
     div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"][class*="st-key-ensayo-card-"] {{
-        margin-bottom: 12px !important; border: 1px solid {BORDER} !important;
-        border-left: 4px solid {PRIMARY} !important;
+        margin-bottom: 12px !important;
         box-shadow: 0 2px 6px rgba(11,28,48,0.10) !important;
     }}
 
