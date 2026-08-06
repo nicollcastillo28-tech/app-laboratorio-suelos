@@ -924,8 +924,8 @@ def render_topbar():
                             st.rerun()
                         for n in mis_notifs[:15]:
                             with st.container(border=True):
-                                peso = "font-weight:700;" if not n["leida"] else ""
-                                st.markdown(f'<div style="{peso}">{html.escape(n["mensaje"])}</div>'
+                                estilo_msg = "font-weight:700;" if not n["leida"] else f"font-weight:400;font-size:13px;color:{MUTED};"
+                                st.markdown(f'<div style="{estilo_msg}">{html.escape(n["mensaje"])}</div>'
                                             f'<div class="timestamp-caption">{format_dt(n["fecha"])}</div>', unsafe_allow_html=True)
                                 if n.get("muestra_id") and st.button("Ir a la muestra →", key=f"notif_go_{n['id']}", use_container_width=True):
                                     n["leida"] = True
