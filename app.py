@@ -2466,11 +2466,14 @@ def render_muestra_detail():
                             st.session_state.selected_assay_type = tipo_interno
                             navigate("assay-form")
 
-                if mostrar_aprobacion:
+                if existing:
                     motivo = existing.get("motivo_rechazo")
                     if motivo:
                         quien = "el Jefe de Laboratorio" if existing.get("rechazado_por") == "jefe" else "el Director Técnico"
                         st.warning(f"Devuelto por {quien}: {motivo}")
+                    # El historial se muestra siempre que exista (no solo cuando el ensayo está
+                    # "Finalizado") — un desconfirmar/devolver reabre el ensayo pero no borra su
+                    # registro de auditoría, y debe seguir siendo visible.
                     ens_historial = existing.get("historial", [])
                     if ens_historial:
                         with st.expander(f"Historial de Cambios ({len(ens_historial)})", icon=":material/history:"):
