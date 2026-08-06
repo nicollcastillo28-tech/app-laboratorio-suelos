@@ -357,7 +357,7 @@ NORMAS_ENSAYO = {
     "masa-unitaria": ["INV E-202", "ASTM D1188"],
 }
 STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado"}
-STATUS_BADGE = {"sin-iniciar": "badge-success", "en-proceso": "badge-warning", "finalizado": "badge-danger"}
+STATUS_BADGE = {"sin-iniciar": "badge-danger", "en-proceso": "badge-warning", "finalizado": "badge-success"}
 STATUS_ICON = {"sin-iniciar": "radio_button_unchecked", "en-proceso": "autorenew", "finalizado": "check_circle"}
 
 TIPO_PERFORACION_PREFIX = {"Sondeo": "S", "Apique": "AP", "Fuente/Cantera": "F"}
