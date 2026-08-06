@@ -2237,41 +2237,50 @@ def render_muestra_detail():
                         unsafe_allow_html=True)
         st.progress(pct_ensayos / 100)
 
-    st.markdown('<div class="section-title">Ensayos asignados</div>', unsafe_allow_html=True)
-    if not solicitados:
-        st.info("Esta muestra no tiene ensayos marcados en la bitácora.")
-    for ensayo_label in solicitados:
-        with st.container(border=True):
-            tipo_interno = SUPPORTED_ASSAY_MAP.get(ensayo_label)
-            existing = get_assay(muestra_id, tipo_interno) if tipo_interno else None
-            status = existing["status"] if existing else "sin-iniciar"
+    with st.container(border=True):
+        st.markdown(f'<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">'
+                    f'{icon("assignment", size=15)} Ensayos asignados</div>', unsafe_allow_html=True)
+        if not solicitados:
+            st.info("Esta muestra no tiene ensayos marcados en la bitácora.")
+        else:
+            col_ratios = [2.4, 1.5, 2.3, 1]
+            headers = st.columns(col_ratios)
+            for col, label in zip(headers, ["Ensayo", "Estado", "Última actualización", "Acción"]):
+                col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
+            for ensayo_label in solicitados:
+                tipo_interno = SUPPORTED_ASSAY_MAP.get(ensayo_label)
+                existing = get_assay(muestra_id, tipo_interno) if tipo_interno else None
+                status = existing["status"] if existing else "sin-iniciar"
 
-            cols = st.columns([0.6, 2.4, 1.6, 1])
-            cols[0].markdown(status_circle_html(status), unsafe_allow_html=True)
-            cols[1].markdown(f"**{ensayo_label}**")
-            if tipo_interno:
-                cols[2].markdown(status_badge_html(status), unsafe_allow_html=True)
-                with cols[3]:
-                    if st.button("Abrir", key=f"open_ensayo_{ensayo_label}", use_container_width=True):
-                        if existing:
-                            st.session_state.selected_assay_id = existing["id"]
-                        else:
-                            new_id = f"a-{uuid.uuid4().hex[:8]}"
-                            st.session_state.assays.append({
-                                "id": new_id, "muestra_id": muestra_id, "tipo": tipo_interno, "status": "sin-iniciar",
-                                "data": {}, "observations": "", "laboratorist": "",
-                                "codigo_interno": codigo, "perforacion_codigo": perf_codigo, "muestra_numero": muestra["numero"],
-                                "lastModified": now_iso(), "createdAt": now_iso(),
-                            })
-                            st.session_state.selected_assay_id = new_id
-                        st.session_state.selected_assay_type = tipo_interno
-                        navigate("assay-form")
-                if existing and existing.get("laboratorist"):
-                    st.markdown(f'<div class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(existing["lastModified"])} · {existing["laboratorist"]}</div>', unsafe_allow_html=True)
-                elif existing:
-                    st.markdown(f'<div class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(existing["lastModified"])}</div>', unsafe_allow_html=True)
-            else:
-                cols[2].markdown('<span class="badge badge-muted">Sin formulario aún</span>', unsafe_allow_html=True)
+                cols = st.columns(col_ratios, vertical_alignment="center")
+                cols[0].markdown(f'<div class="cell-title">{ensayo_label}</div>', unsafe_allow_html=True)
+                if tipo_interno:
+                    cols[1].markdown(status_badge_html(status), unsafe_allow_html=True)
+                    if existing and existing.get("laboratorist"):
+                        actualizacion = f'{format_dt(existing["lastModified"])} · {html.escape(existing["laboratorist"])}'
+                    elif existing:
+                        actualizacion = format_dt(existing["lastModified"])
+                    else:
+                        actualizacion = "—"
+                    cols[2].markdown(f'<span class="cell-muted">{actualizacion}</span>', unsafe_allow_html=True)
+                    with cols[3]:
+                        if st.button("Abrir", key=f"open_ensayo_{ensayo_label}", use_container_width=True):
+                            if existing:
+                                st.session_state.selected_assay_id = existing["id"]
+                            else:
+                                new_id = f"a-{uuid.uuid4().hex[:8]}"
+                                st.session_state.assays.append({
+                                    "id": new_id, "muestra_id": muestra_id, "tipo": tipo_interno, "status": "sin-iniciar",
+                                    "data": {}, "observations": "", "laboratorist": "",
+                                    "codigo_interno": codigo, "perforacion_codigo": perf_codigo, "muestra_numero": muestra["numero"],
+                                    "lastModified": now_iso(), "createdAt": now_iso(),
+                                })
+                                st.session_state.selected_assay_id = new_id
+                            st.session_state.selected_assay_type = tipo_interno
+                            navigate("assay-form")
+                else:
+                    cols[1].markdown('<span class="badge badge-muted">Sin formulario aún</span>', unsafe_allow_html=True)
+                    cols[2].markdown('<span class="cell-muted">—</span>', unsafe_allow_html=True)
 
     if estado == "finalizado":
         st.markdown('<div class="section-title">Aprobación de la muestra</div>', unsafe_allow_html=True)
