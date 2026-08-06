@@ -753,11 +753,14 @@ def historial_timeline_html(historial):
         marcador = (f'<div class="timeline-marker-col">'
                     f'<div class="status-circle status-circle-{h.get("tono", "muted")}">'
                     f'{icon(h.get("icono", "history"), size=17, fill=True)}</div>{linea}</div>')
+        # Compatibilidad con entradas antiguas (formato previo: solo {"fecha","texto"}) que
+        # puedan seguir en el store en memoria de una sesión anterior al rediseño del historial.
+        titulo = h.get("titulo") or h.get("texto") or "Cambio registrado"
         actor_html = (f'<div class="timeline-actor">{html.escape(h["subtitulo"])}</div>'
                       if h.get("subtitulo") else "")
         filas.append(
             f'<div class="timeline-item">{marcador}'
-            f'<div class="timeline-content"><div class="timeline-titulo">{html.escape(h["titulo"])}</div>'
+            f'<div class="timeline-content"><div class="timeline-titulo">{html.escape(titulo)}</div>'
             f'{actor_html}<div class="timeline-fecha">{format_dt(h["fecha"])}</div></div></div>'
         )
     return "".join(filas)
