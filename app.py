@@ -2324,36 +2324,32 @@ def render_muestra_detail():
                             pass
                         elif etapa == "aprobado":
                             if st.session_state.role == "ingeniero":
-                                b1, b2 = st.columns(2)
-                                with b1:
-                                    st.button("Confirmado", disabled=True, use_container_width=True, key=f"aprobado_ro_{ensayo_label}")
-                                with b2:
-                                    with st.popover("Desconfirmar", use_container_width=True):
-                                        st.caption("Si los resultados no satisfacen al cliente, esto reabre el ensayo "
-                                                   "para el laboratorista y reinicia el ciclo de confirmación.")
-                                        motivo_desconf = st.text_area("Motivo", key=f"desconfirmar_motivo_{ensayo_label}",
-                                                                       placeholder="Qué hay que corregir...")
-                                        if st.button("Confirmar desconfirmación", key=f"desconfirmar_{ensayo_label}", use_container_width=True):
-                                            if motivo_desconf.strip():
-                                                existing["status"] = "en-proceso"
-                                                existing["lastModified"] = now_iso()
-                                                existing["etapa_revision"] = None
-                                                existing["confirmado_por_jefe"] = ""
-                                                existing["confirmado_por_jefe_fecha"] = ""
-                                                existing["aprobado_por_ing"] = ""
-                                                existing["aprobado_por_ing_fecha"] = ""
-                                                existing["motivo_rechazo"] = motivo_desconf
-                                                existing["rechazado_por"] = "ing"
-                                                add_notification("auxiliar", f"El Director Técnico desconfirmó {ensayo_label} de la Muestra "
-                                                                              f"{muestra['numero']} de {codigo}: {motivo_desconf}", codigo, perf_codigo, muestra_id)
-                                                add_notification("jefe", f"El Director Técnico desconfirmó {ensayo_label} de la Muestra "
+                                with st.popover("Desconfirmar", use_container_width=True):
+                                    st.caption("Si los resultados no satisfacen al cliente, esto reabre el ensayo "
+                                               "para el laboratorista y reinicia el ciclo de confirmación.")
+                                    motivo_desconf = st.text_area("Motivo", key=f"desconfirmar_motivo_{ensayo_label}",
+                                                                   placeholder="Qué hay que corregir...")
+                                    if st.button("Confirmar desconfirmación", key=f"desconfirmar_{ensayo_label}", use_container_width=True):
+                                        if motivo_desconf.strip():
+                                            existing["status"] = "en-proceso"
+                                            existing["lastModified"] = now_iso()
+                                            existing["etapa_revision"] = None
+                                            existing["confirmado_por_jefe"] = ""
+                                            existing["confirmado_por_jefe_fecha"] = ""
+                                            existing["aprobado_por_ing"] = ""
+                                            existing["aprobado_por_ing_fecha"] = ""
+                                            existing["motivo_rechazo"] = motivo_desconf
+                                            existing["rechazado_por"] = "ing"
+                                            add_notification("auxiliar", f"El Director Técnico desconfirmó {ensayo_label} de la Muestra "
                                                                           f"{muestra['numero']} de {codigo}: {motivo_desconf}", codigo, perf_codigo, muestra_id)
-                                                add_historial(existing, "Desconfirmado por el Director Técnico", f"Director Técnico: {motivo_desconf}",
-                                                              icono="undo", tono="danger")
-                                                st.success("Desconfirmado — vuelve al laboratorista.")
-                                                st.rerun()
-                                            else:
-                                                st.error("Escribe el motivo antes de desconfirmar.")
+                                            add_notification("jefe", f"El Director Técnico desconfirmó {ensayo_label} de la Muestra "
+                                                                      f"{muestra['numero']} de {codigo}: {motivo_desconf}", codigo, perf_codigo, muestra_id)
+                                            add_historial(existing, "Desconfirmado por el Director Técnico", f"Director Técnico: {motivo_desconf}",
+                                                          icono="undo", tono="danger")
+                                            st.success("Desconfirmado — vuelve al laboratorista.")
+                                            st.rerun()
+                                        else:
+                                            st.error("Escribe el motivo antes de desconfirmar.")
                             else:
                                 st.button("Confirmado", disabled=True, use_container_width=True, key=f"aprobado_ro_{ensayo_label}")
                         elif etapa == "pendiente_ing":
@@ -2390,8 +2386,30 @@ def render_muestra_detail():
                                                 st.rerun()
                                             else:
                                                 st.error("Escribe el motivo antes de devolver.")
+                            elif st.session_state.role == "jefe":
+                                with st.popover("Desconfirmar", use_container_width=True):
+                                    st.caption("Retira tu confirmación — el ensayo deja de estar pendiente de "
+                                               "revisión del Director Técnico.")
+                                    motivo_jefe_desconf = st.text_area("Motivo", key=f"jefe_desconfirmar_motivo_{ensayo_label}",
+                                                                        placeholder="Por qué te retractas...")
+                                    if st.button("Confirmar desconfirmación", key=f"jefe_desconfirmar_{ensayo_label}", use_container_width=True):
+                                        if motivo_jefe_desconf.strip():
+                                            existing["etapa_revision"] = None
+                                            existing["confirmado_por_jefe"] = ""
+                                            existing["confirmado_por_jefe_fecha"] = ""
+                                            existing["motivo_rechazo"] = motivo_jefe_desconf
+                                            existing["rechazado_por"] = "jefe"
+                                            add_notification("ingeniero", f"El Jefe de Laboratorio desconfirmó {ensayo_label} de la Muestra "
+                                                                           f"{muestra['numero']} de {codigo} — ya no está pendiente de tu revisión.",
+                                                              codigo, perf_codigo, muestra_id)
+                                            add_historial(existing, "Desconfirmado por el Jefe de Laboratorio", f"Jefe de Laboratorio: {motivo_jefe_desconf}",
+                                                          icono="undo", tono="danger")
+                                            st.success("Desconfirmado.")
+                                            st.rerun()
+                                        else:
+                                            st.error("Escribe el motivo antes de desconfirmar.")
                             else:
-                                st.button("Confirmar", disabled=True, use_container_width=True, key=f"ing_aprobar_ro_{ensayo_label}")
+                                st.caption("Esperando al Director Técnico")
                         else:
                             if st.session_state.role == "jefe":
                                 b1, b2 = st.columns(2)
