@@ -122,9 +122,9 @@ st.markdown(f"""
         box-shadow: 0 1px 4px rgba(11,28,48,0.08) !important; background: {SURFACE} !important;
     }}
     /* Acento azul a la izquierda solo en tarjetas de contenido — se excluyen la barra de
-       navegación y las cajas donde se digita información (esas no son "otra tarjeta más",
-       son campos de captura). */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-desc-visual-box):not(.st-key-muestra-obs-box) {{
+       navegación, las tarjetas de notificaciones y las cajas donde se digita información
+       (esas no son "otra tarjeta más", son campos de captura). */
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-desc-visual-box):not(.st-key-muestra-obs-box):not([class*="st-key-notif-card-"]) {{
         border-left: 4px solid {PRIMARY} !important;
     }}
     /* Tarjetas de "Ensayos asignados" (una por ensayo): más separación entre sí y sombra
@@ -983,7 +983,7 @@ def render_topbar():
                                 n["leida"] = True
                             st.rerun()
                         for n in mis_notifs[:15]:
-                            with st.container(border=True):
+                            with st.container(border=True, key=f"notif-card-{n['id']}"):
                                 estilo_msg = "font-weight:700;" if not n["leida"] else f"font-weight:400;font-size:13px;color:{MUTED};"
                                 st.markdown(f'<div style="{estilo_msg}">{html.escape(n["mensaje"])}</div>'
                                             f'<div class="timestamp-caption">{format_dt(n["fecha"])}</div>', unsafe_allow_html=True)
