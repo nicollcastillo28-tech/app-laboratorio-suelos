@@ -2309,19 +2309,36 @@ def render_muestra_detail():
                         st.rerun()
                     motivo_ing = st.text_area("Motivo si vas a devolver al Jefe", key=f"ing_motivo_{muestra_id}",
                                                placeholder="Qué hay que corregir...")
+                    ensayos_a_devolver_ing = st.multiselect(
+                        "Ensayos a devolver", options=solicitados, default=solicitados,
+                        key=f"ing_devolver_sel_{muestra_id}",
+                        help="Solo se reabren para el laboratorista los ensayos que marques — el resto se queda finalizado.",
+                    )
                     if st.button("Devolver al Jefe", icon=":material/undo:", use_container_width=True, key=f"ing_devolver_{muestra_id}"):
-                        if motivo_ing.strip():
+                        if not motivo_ing.strip():
+                            st.error("Escribe el motivo antes de devolver.")
+                        elif not ensayos_a_devolver_ing:
+                            st.error("Selecciona al menos un ensayo a devolver.")
+                        else:
+                            ahora = now_iso()
+                            for e in ensayos_a_devolver_ing:
+                                tipo_i = SUPPORTED_ASSAY_MAP.get(e)
+                                a = get_assay(muestra_id, tipo_i) if tipo_i else None
+                                if a and a["status"] == "finalizado":
+                                    a["status"] = "en-proceso"
+                                    a["lastModified"] = ahora
                             muestra["etapa_revision"] = None
                             muestra["motivo_rechazo"] = motivo_ing
                             muestra["rechazado_por"] = "ing"
-                            add_notification("jefe", f"El Ingeniero devolvió la Muestra {muestra['numero']} de {codigo}: "
-                                                      f"{motivo_ing}", codigo, perf_codigo, muestra_id)
-                            add_historial_muestra(muestra, "Devuelto al Jefe de Laboratorio", f"Ingeniero: {motivo_ing}",
-                                                   icono="undo", tono="danger")
+                            ensayos_txt = ", ".join(ensayos_a_devolver_ing)
+                            add_notification("jefe", f"El Ingeniero devolvió {ensayos_txt} de la Muestra {muestra['numero']} "
+                                                      f"de {codigo}: {motivo_ing}", codigo, perf_codigo, muestra_id)
+                            add_notification("auxiliar", f"El Ingeniero devolvió {ensayos_txt} de la Muestra {muestra['numero']} "
+                                                          f"de {codigo}: {motivo_ing}", codigo, perf_codigo, muestra_id)
+                            add_historial_muestra(muestra, f"Devuelto al Jefe de Laboratorio: {ensayos_txt}",
+                                                   f"Ingeniero: {motivo_ing}", icono="undo", tono="danger")
                             st.success("Devuelto al Jefe.")
                             st.rerun()
-                        else:
-                            st.error("Escribe el motivo antes de devolver.")
             else:
                 st.markdown(card_header_html("fact_check", "Pendiente de confirmación del Jefe de Laboratorio"), unsafe_allow_html=True)
                 if st.session_state.role == "jefe":
