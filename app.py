@@ -1113,9 +1113,9 @@ def render_home():
             if not recientes:
                 st.info("Todavía no hay actividad registrada.")
             else:
-                col_ratios = [1.4, 2.6, 1.8, 1.3, 0.9]
+                col_ratios = [1.2, 2.0, 1.9, 1.5, 1.1, 0.9]
                 headers = st.columns(col_ratios)
-                for col, label in zip(headers, ["ID proyecto", "Cliente / Ubicación", "Última actualización", "Estado", "Acción"]):
+                for col, label in zip(headers, ["ID proyecto", "Nombre del proyecto", "Sondeo / Muestra", "Última actualización", "Estado", "Acción"]):
                     col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
                 for a in recientes:
                     proyecto = get_project(a["codigo_interno"])
@@ -1125,13 +1125,12 @@ def render_home():
                     if a.get("laboratorist"):
                         actualizacion += f' · {html.escape(a["laboratorist"])}'
                     cols = st.columns(col_ratios, vertical_alignment="center")
-                    cols[0].markdown(f'<span class="cell-id">{html.escape(a["codigo_interno"])}</span>'
-                                      f'<div class="cell-sub">{titulo}</div>', unsafe_allow_html=True)
-                    cols[1].markdown(f'<div class="cell-title">{titulo}</div><div class="cell-sub">{subtitulo}</div>',
-                                      unsafe_allow_html=True)
-                    cols[2].markdown(f'<span class="cell-muted">{html.escape(actualizacion)}</span>', unsafe_allow_html=True)
-                    cols[3].markdown(status_badge_html(a["status"]), unsafe_allow_html=True)
-                    with cols[4]:
+                    cols[0].markdown(f'<span class="cell-id">{html.escape(a["codigo_interno"])}</span>', unsafe_allow_html=True)
+                    cols[1].markdown(f'<div class="cell-title">{titulo}</div>', unsafe_allow_html=True)
+                    cols[2].markdown(f'<div class="cell-sub">{subtitulo}</div>', unsafe_allow_html=True)
+                    cols[3].markdown(f'<span class="cell-muted">{html.escape(actualizacion)}</span>', unsafe_allow_html=True)
+                    cols[4].markdown(status_badge_html(a["status"]), unsafe_allow_html=True)
+                    with cols[5]:
                         if st.button("Abrir", key=f"open_recent_{a['id']}", use_container_width=True):
                             st.session_state.selected_codigo = a["codigo_interno"]
                             navigate("project-detail")
