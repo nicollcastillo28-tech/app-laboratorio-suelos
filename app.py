@@ -143,6 +143,17 @@ st.markdown(f"""
     .status-circle-warning {{ background: {WARNING_LIGHT}; color: {WARNING}; }}
     .status-circle-danger {{ background: {DANGER_LIGHT}; color: {DANGER}; }}
     .status-circle-muted {{ background: #EEF1F5; color: {MUTED}; }}
+    .status-circle-primary {{ background: {SECONDARY_CONTAINER}; color: {PRIMARY}; }}
+
+    /* Línea de tiempo del historial de la muestra (marcador + línea conectora + contenido) */
+    .timeline-item {{ display: flex; gap: 14px; }}
+    .timeline-marker-col {{ display: flex; flex-direction: column; align-items: center; }}
+    .timeline-line {{ width: 2px; flex: 1; min-height: 14px; background: {BORDER}; margin: 4px 0; }}
+    .timeline-content {{ flex: 1; padding-bottom: 22px; }}
+    .timeline-item:last-child .timeline-content {{ padding-bottom: 2px; }}
+    .timeline-titulo {{ font-weight: 700; font-size: 14px; color: {TEXT}; }}
+    .timeline-actor {{ font-size: 13px; color: {PRIMARY}; margin-top: 1px; }}
+    .timeline-fecha {{ font-size: 12px; color: {MUTED}; margin-top: 4px; }}
 
     /* Tarjeta con acento a la izquierda, para encabezados de detalle (ej. Detalle de Muestra) */
     .st-key-muestra-header-card {{ border-left: 4px solid {PRIMARY} !important; }}
@@ -725,10 +736,31 @@ def add_notification(role, mensaje, codigo=None, perf=None, muestra_id=None):
     })
 
 
-def add_historial_muestra(muestra, texto):
+def add_historial_muestra(muestra, titulo, subtitulo="", icono="history", tono="muted"):
     """Registro de auditoría por muestra: cuándo se entregó cada ensayo, cuándo confirmó el
-    Jefe, cuándo aprobó (o devolvió) el Ingeniero, etc. Se guarda en la propia muestra."""
-    muestra.setdefault("historial", []).append({"fecha": now_iso(), "texto": texto})
+    Jefe, cuándo aprobó (o devolvió) el Ingeniero, etc. Se guarda en la propia muestra y se
+    muestra como línea de tiempo (ver historial_timeline_html)."""
+    muestra.setdefault("historial", []).append({
+        "fecha": now_iso(), "titulo": titulo, "subtitulo": subtitulo, "icono": icono, "tono": tono,
+    })
+
+
+def historial_timeline_html(historial):
+    items = sorted(historial, key=lambda h: h["fecha"], reverse=True)
+    filas = []
+    for i, h in enumerate(items):
+        linea = '<div class="timeline-line"></div>' if i < len(items) - 1 else ""
+        marcador = (f'<div class="timeline-marker-col">'
+                    f'<div class="status-circle status-circle-{h.get("tono", "muted")}">'
+                    f'{icon(h.get("icono", "history"), size=17, fill=True)}</div>{linea}</div>')
+        actor_html = (f'<div class="timeline-actor">{html.escape(h["subtitulo"])}</div>'
+                      if h.get("subtitulo") else "")
+        filas.append(
+            f'<div class="timeline-item">{marcador}'
+            f'<div class="timeline-content"><div class="timeline-titulo">{html.escape(h["titulo"])}</div>'
+            f'{actor_html}<div class="timeline-fecha">{format_dt(h["fecha"])}</div></div></div>'
+        )
+    return "".join(filas)
 
 
 def format_dt(iso_str):
@@ -2267,8 +2299,9 @@ def render_muestra_detail():
                         muestra["rechazado_por"] = ""
                         add_notification("jefe", f"El Ingeniero aprobó la Muestra {muestra['numero']} de {codigo} "
                                                   f"— ya se puede entregar al cliente.", codigo, perf_codigo, muestra_id)
-                        quien = f" ({nombre_ing})" if nombre_ing else ""
-                        add_historial_muestra(muestra, f"Aprobado por el Ingeniero{quien}.")
+                        actor_ing = f"{nombre_ing} (Ingeniero)" if nombre_ing else "Ingeniero"
+                        add_historial_muestra(muestra, "Aprobado por el Ingeniero", actor_ing,
+                                               icono="verified", tono="success")
                         st.success("Aprobado.")
                         st.rerun()
                     motivo_ing = st.text_area("Motivo si vas a devolver al Jefe", key=f"ing_motivo_{muestra_id}",
@@ -2280,7 +2313,8 @@ def render_muestra_detail():
                             muestra["rechazado_por"] = "ing"
                             add_notification("jefe", f"El Ingeniero devolvió la Muestra {muestra['numero']} de {codigo}: "
                                                       f"{motivo_ing}", codigo, perf_codigo, muestra_id)
-                            add_historial_muestra(muestra, f"Devuelto por el Ingeniero: {motivo_ing}")
+                            add_historial_muestra(muestra, "Devuelto al Jefe de Laboratorio", f"Ingeniero: {motivo_ing}",
+                                                   icono="undo", tono="danger")
                             st.success("Devuelto al Jefe.")
                             st.rerun()
                         else:
@@ -2298,8 +2332,9 @@ def render_muestra_detail():
                         muestra["rechazado_por"] = ""
                         add_notification("ingeniero", f"El Jefe de Laboratorio envió la Muestra {muestra['numero']} de "
                                                        f"{codigo} para tu revisión final.", codigo, perf_codigo, muestra_id)
-                        quien = f" ({nombre_jefe})" if nombre_jefe else ""
-                        add_historial_muestra(muestra, f"Confirmado por el Jefe de Laboratorio{quien} y enviado al Ingeniero.")
+                        actor_jefe = f"{nombre_jefe} (Jefe)" if nombre_jefe else "Jefe de Laboratorio"
+                        add_historial_muestra(muestra, "Muestra Confirmada", actor_jefe,
+                                               icono="check_circle", tono="success")
                         st.success("Enviado al Ingeniero.")
                         st.rerun()
                     motivo_jefe = st.text_area("Motivo si vas a devolver al laboratorista", key=f"jefe_motivo_{muestra_id}",
@@ -2318,7 +2353,8 @@ def render_muestra_detail():
                             muestra["rechazado_por"] = "jefe"
                             add_notification("auxiliar", f"El Jefe de Laboratorio devolvió la Muestra {muestra['numero']} "
                                                           f"de {codigo}: {motivo_jefe}", codigo, perf_codigo, muestra_id)
-                            add_historial_muestra(muestra, f"Devuelto por el Jefe de Laboratorio: {motivo_jefe}")
+                            add_historial_muestra(muestra, "Devuelto al Laboratorista", f"Jefe de Laboratorio: {motivo_jefe}",
+                                                   icono="undo", tono="danger")
                             st.success("Devuelto al laboratorista.")
                             st.rerun()
                         else:
@@ -2328,10 +2364,9 @@ def render_muestra_detail():
 
     historial = muestra.get("historial", [])
     if historial:
-        with st.expander(f"Historial de la muestra ({len(historial)})", icon=":material/history:"):
-            for h in sorted(historial, key=lambda h: h["fecha"], reverse=True):
-                st.markdown(f'<div style="margin-bottom:10px;"><div style="font-weight:600;">{html.escape(h["texto"])}</div>'
-                            f'<div class="timestamp-caption">{format_dt(h["fecha"])}</div></div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("history", f"Historial de Cambios ({len(historial)})"), unsafe_allow_html=True)
+            st.markdown(historial_timeline_html(historial), unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -3112,14 +3147,21 @@ def render_assay_form():
                 if pasa200_gran_sibling:
                     pasa200_gran_sibling["data"] = data
                 if muestra:
-                    quien = f" por {laboratorist}" if laboratorist else ""
-                    add_historial_muestra(muestra, f"{ASSAY_LABELS[assay['tipo']]} enviado a revisión{quien}.")
-                    # Si este era el último ensayo pendiente, la muestra completa su ciclo en el
-                    # laboratorio (semáforo en rojo) — se avisa al Jefe para que la confirme.
-                    if not ya_estaba_finalizado and compute_muestra_estado(muestra) == "finalizado":
-                        add_notification("jefe", f"La Muestra {muestra['numero']} de {codigo} ya completó todos sus "
-                                                  f"ensayos — está lista para tu confirmación.", codigo, perf_codigo, muestra_id)
-                        add_historial_muestra(muestra, "Todos los ensayos completados — pendiente de confirmación del Jefe de Laboratorio.")
+                    actor_lab = f"{laboratorist} (Laboratorista)" if laboratorist else "Laboratorista"
+                    add_historial_muestra(muestra, f"{ASSAY_LABELS[assay['tipo']]} Enviado a Revisión", actor_lab,
+                                           icono="science", tono="primary")
+                    # Cada ensayo que el laboratorista termina se avisa al Jefe (nunca al Ingeniero,
+                    # que solo entra en juego cuando el Jefe confirma la muestra completa).
+                    if not ya_estaba_finalizado:
+                        add_notification("jefe", f"El laboratorista terminó {ASSAY_LABELS[assay['tipo']]} de la Muestra "
+                                                  f"{muestra['numero']} de {codigo}.", codigo, perf_codigo, muestra_id)
+                        # Si este era el último ensayo pendiente, la muestra completa su ciclo en el
+                        # laboratorio (semáforo en rojo) — se avisa aparte para que la confirme.
+                        if compute_muestra_estado(muestra) == "finalizado":
+                            add_notification("jefe", f"La Muestra {muestra['numero']} de {codigo} ya completó todos sus "
+                                                      f"ensayos — está lista para tu confirmación.", codigo, perf_codigo, muestra_id)
+                            add_historial_muestra(muestra, "Muestra Lista para Confirmación",
+                                                   "Todos los ensayos fueron completados", icono="task_alt", tono="warning")
                 navigate("muestra-detail")
 
     if es_supervisor and assay["tipo"] == "granulometria" and muestra:
