@@ -3250,6 +3250,22 @@ def render_assay_form():
         st.markdown('<div class="section-title">Laboratorista</div>', unsafe_allow_html=True)
         laboratorist = st.text_input("Laboratorista", value=assay.get("laboratorist", ""), label_visibility="collapsed", placeholder="Nombre completo")
 
+        # Autoguardado: si el laboratorista digita y se le olvida darle a "Guardar borrador"
+        # antes de salir, los datos no se pierden — se persisten solos en cada rerun (cada vez
+        # que se completa un campo), sin necesidad de un clic explícito.
+        if (data != assay.get("data", {}) or observations != assay.get("observations", "")
+                or laboratorist != assay.get("laboratorist", "")):
+            assay["data"] = data
+            if pasa200_gran_sibling:
+                pasa200_gran_sibling["data"] = data
+            assay["observations"] = observations
+            assay["laboratorist"] = laboratorist
+            if assay["status"] == "sin-iniciar":
+                assay["status"] = "en-proceso"
+            assay["lastModified"] = now_iso()
+        st.markdown(f'<div class="timestamp-caption">{icon("cloud_done", size=13)} Los cambios se guardan automáticamente mientras digitas.</div>',
+                    unsafe_allow_html=True)
+
         st.markdown("<br>", unsafe_allow_html=True)
         col1, col2 = st.columns(2)
         with col1:
