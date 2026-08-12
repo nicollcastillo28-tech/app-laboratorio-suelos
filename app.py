@@ -181,6 +181,13 @@ st.markdown(f"""
     .st-key-notif-popover-body .stButton button:hover {{
         background-color: {PRIMARY}; color: {SURFACE}; border-color: {PRIMARY};
     }}
+    /* Campana: roja mientras haya notificaciones sin leer, para que se note de un vistazo. */
+    .st-key-bell-alert button {{
+        background-color: {DANGER} !important; color: {SURFACE} !important; border-color: {DANGER} !important;
+    }}
+    .st-key-bell-alert button:hover {{
+        background-color: {DANGER_LIGHT} !important; color: {DANGER} !important; border-color: {DANGER} !important;
+    }}
     .role-pill {{
         display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 11px;
         font-family: 'JetBrains Mono', monospace; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
@@ -995,27 +1002,27 @@ def render_topbar():
                 (n for n in st.session_state.notifications if n["role"] == st.session_state.role),
                 key=lambda n: n["fecha"], reverse=True)
             no_leidas = sum(1 for n in mis_notifs if not n["leida"])
-            with st.popover(str(no_leidas) if no_leidas else "", icon=":material/notifications:", use_container_width=True):
-                st.markdown("**Notificaciones**")
-                if not mis_notifs:
-                    st.caption("No tienes notificaciones.")
-                else:
-                    with st.container(key="notif-popover-body"):
-                        if no_leidas and st.button("Marcar todas como leídas", key="notif_marcar_todas", use_container_width=True):
-                            for n in mis_notifs:
-                                n["leida"] = True
-                            st.rerun()
-                        for n in mis_notifs[:15]:
-                            with st.container(border=True, key=f"notif-card-{n['id']}"):
-                                estilo_msg = "font-weight:700;" if not n["leida"] else f"font-weight:400;font-size:13px;color:{MUTED};"
-                                st.markdown(f'<div style="{estilo_msg}">{html.escape(n["mensaje"])}</div>'
-                                            f'<div class="timestamp-caption">{format_dt(n["fecha"])}</div>', unsafe_allow_html=True)
-                                if n.get("muestra_id") and st.button("Ir a la muestra →", key=f"notif_go_{n['id']}", use_container_width=True):
-                                    n["leida"] = True
-                                    st.session_state.selected_codigo = n["codigo_interno"]
-                                    st.session_state.selected_perforacion = n["perforacion_codigo"]
-                                    st.session_state.selected_muestra_id = n["muestra_id"]
-                                    navigate("muestra-detail")
+            with st.container(key="bell-alert" if no_leidas else "bell-quiet"):
+                with st.popover(str(no_leidas) if no_leidas else "", icon=":material/notifications:", use_container_width=True):
+                    st.markdown("**Notificaciones**")
+                    if not mis_notifs:
+                        st.caption("No tienes notificaciones.")
+                    else:
+                        with st.container(key="notif-popover-body"):
+                            if no_leidas and st.button("Marcar todas como leídas", key="notif_marcar_todas", use_container_width=True):
+                                db.mark_all_notifications_read(st.session_state.role)
+                                st.rerun()
+                            for n in mis_notifs[:15]:
+                                with st.container(border=True, key=f"notif-card-{n['id']}"):
+                                    estilo_msg = "font-weight:700;" if not n["leida"] else f"font-weight:400;font-size:13px;color:{MUTED};"
+                                    st.markdown(f'<div style="{estilo_msg}">{html.escape(n["mensaje"])}</div>'
+                                                f'<div class="timestamp-caption">{format_dt(n["fecha"])}</div>', unsafe_allow_html=True)
+                                    if n.get("muestra_id") and st.button("Ir a la muestra →", key=f"notif_go_{n['id']}", use_container_width=True):
+                                        db.mark_notification_read(n["id"])
+                                        st.session_state.selected_codigo = n["codigo_interno"]
+                                        st.session_state.selected_perforacion = n["perforacion_codigo"]
+                                        st.session_state.selected_muestra_id = n["muestra_id"]
+                                        navigate("muestra-detail")
         with c_avatar:
             iniciales = ROLE_INICIALES.get(st.session_state.role, "LB")
             st.markdown(f'<div class="topbar-avatar">{iniciales}</div>', unsafe_allow_html=True)
