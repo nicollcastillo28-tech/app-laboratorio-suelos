@@ -61,7 +61,8 @@ def sign_in(codigo: str, password: str) -> dict:
     email = f"{codigo.strip().lower()}@{AUTH_DOMAIN}"
     try:
         client.auth.sign_in_with_password({"email": email, "password": password})
-    except Exception:
+    except Exception as e:
+        print(f"[db.sign_in] fallo autenticando {email!r}: {e!r}")
         raise AuthError("Código de usuario o clave incorrectos.")
 
     profile = get_current_profile(client)
