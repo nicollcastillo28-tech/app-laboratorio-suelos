@@ -9,7 +9,6 @@ Cómo correrla en tu computador:
 import html
 import os
 import re
-import uuid
 import zipfile
 from datetime import date, datetime
 from io import BytesIO
@@ -17,6 +16,8 @@ from io import BytesIO
 import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
+
+import db
 
 # ════════════════════════════════════════════════════════════════════
 # CONFIGURACIÓN DE LA PÁGINA
@@ -30,9 +31,8 @@ TEMPLATE_BITACORA_ORDEN = os.path.join(BASE_DIR, "templates", "GDA-FL-003_bitaco
 TEMPLATE_HUMEDAD = os.path.join(BASE_DIR, "templates", "GDA-FLC-014_humedad_natural.xlsx")
 TEMPLATE_MASA_UNITARIA = os.path.join(BASE_DIR, "templates", "GDA-FLC-004_masa_unitaria.xlsx")
 
-PASSWORDS = {"jefe": "geodelta2024", "auxiliar": "aux2024", "ingeniero": "ing2024"}
-ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "auxiliar": "Auxiliar", "ingeniero": "Director Técnico"}
-ROLE_INICIALES = {"jefe": "JL", "auxiliar": "AX", "ingeniero": "DT"}
+ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "laboratorista": "Laboratorista", "ingeniero": "Director Técnico"}
+ROLE_INICIALES = {"jefe": "JL", "laboratorista": "LB", "ingeniero": "DT"}
 
 # ════════════════════════════════════════════════════════════════════
 # ESTILOS — paleta del brief SoilLab Pro (Primary #1B365D · Secondary #4A6278 · Tertiary #005EB8 · Neutral #64748B)
@@ -304,7 +304,7 @@ st.markdown(f"""
         color: {NEUTRAL}; font-size: 13px;
     }}
 
-    /* ---- ENSAYOS ASIGNADOS (panel de Auxiliar) ---- */
+    /* ---- ENSAYOS ASIGNADOS (panel de Laboratorista) ---- */
     .assigned-th {{
         background: {SECONDARY_CONTAINER}; color: {PRIMARY}; font-family: 'JetBrains Mono', monospace;
         font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
@@ -472,50 +472,78 @@ BITACORA_XLSX_MAX_ROWS = 14  # la plantilla trae 14 filas fijas (18 a 31)
 
 
 # ════════════════════════════════════════════════════════════════════
-# ALMACÉN COMPARTIDO ENTRE SESIONES (jefe y auxiliares deben ver los mismos datos
-# aunque estén en pestañas/dispositivos distintos — st.session_state por sí solo es
-# privado de cada sesión de navegador, así que los datos "de negocio" viven aquí,
-# en un recurso cacheado que vive mientras el proceso del servidor siga corriendo.
-# Nota: esto NO sobrevive un reinicio del servidor — eso es tarea de la migración a
-# Supabase, que queda pendiente aparte).
+# CARGA DE DATOS DESDE SUPABASE (una vez por rerun, en el enrutador principal)
+#
+# El resto de la app sigue leyendo st.session_state.projects/perforaciones/
+# muestras/assays exactamente con la misma forma que tenían en el store en
+# memoria (perforaciones/muestras siguen agrupadas por código interno, los
+# ensayos siguen usando el id_unico de la muestra como "muestra_id") — así
+# que ninguno de los ~50 sitios de lectura repartidos por la app tuvo que
+# cambiar. Lo único que cambia es de dónde viene el dato (Supabase, no un
+# dict en memoria) y que ahora SÍ sobrevive un reinicio del servidor.
+# Los sitios de ESCRITURA sí cambiaron: mutan vía db.py y luego hacen
+# st.rerun(), que dispara una nueva llamada a _load_data() con el dato fresco.
 # ════════════════════════════════════════════════════════════════════
-@st.cache_resource
-def get_shared_store():
-    codigo_demo = "GDA-001-24"
-    return {
-        "projects": [{
-            "codigo_interno": codigo_demo, "numero": "001", "anio": "24",
-            "nombre": "Estudio de suelos vía Bogotá-Medellín Km 14", "localizacion": "Sector Norte, Km 14+200",
-            "fecha_bitacora": "2024-11-15", "fecha_ingreso_muestra": "2024-11-15", "norma": "GDA",
-        }],
-        "perforaciones": {codigo_demo: [{"tipo": "Sondeo", "consecutivo": 1, "codigo": "S1"}]},
-        "muestras": {
-            f"{codigo_demo}::S1": [{
-                "numero": "1", "id_unico": f"{codigo_demo}-S1-M1", "profundidad_de": 0.0, "profundidad_hasta": 1.5,
-                "tipo_muestra": "Shelby", "ensayos": {"Granulometría": True, "Humedad": True}, "observaciones": "",
-            }]
-        },
-        "assays": [{
-            "id": "a001", "muestra_id": f"{codigo_demo}-S1-M1", "tipo": "granulometria", "status": "en-proceso",
-            "data": {}, "observations": "", "laboratorist": "",
-            "codigo_interno": codigo_demo, "perforacion_codigo": "S1", "muestra_numero": "1",
-            "lastModified": datetime.now().isoformat(), "createdAt": datetime.now().isoformat(),
-        }],
-        "notifications": [],
-    }
+def _load_data():
+    projects = db.list_projects()
+    proj_by_id = {p["id"]: p for p in projects}
+    st.session_state.projects = projects
+
+    perfs_raw = db.list_all_perforaciones()
+    perf_by_id = {p["id"]: p for p in perfs_raw}
+    perforaciones = {}
+    for p in perfs_raw:
+        proj = proj_by_id.get(p["project_id"])
+        if proj:
+            perforaciones.setdefault(proj["codigo_interno"], []).append(p)
+    st.session_state.perforaciones = perforaciones
+
+    muestras_raw = db.list_all_muestras()
+    muestra_by_id = {m["id"]: m for m in muestras_raw}
+    muestras = {}
+    for m in muestras_raw:
+        perf = perf_by_id.get(m["perforacion_id"])
+        proj = proj_by_id.get(perf["project_id"]) if perf else None
+        if perf and proj:
+            key = f"{proj['codigo_interno']}::{perf['codigo']}"
+            muestras.setdefault(key, []).append(m)
+    st.session_state.muestras = muestras
+
+    assays = []
+    for a in db.list_all_assays():
+        muestra = muestra_by_id.get(a["muestra_id"])
+        perf = perf_by_id.get(muestra["perforacion_id"]) if muestra else None
+        proj = proj_by_id.get(perf["project_id"]) if perf else None
+        if not (muestra and perf and proj):
+            continue
+        a = dict(a)
+        a["muestra_id"] = muestra["id_unico"]
+        a["codigo_interno"] = proj["codigo_interno"]
+        a["perforacion_codigo"] = perf["codigo"]
+        a["muestra_numero"] = muestra["numero"]
+        a["lastModified"] = a["updated_at"]
+        a["createdAt"] = a["created_at"]
+        assays.append(a)
+    st.session_state.assays = assays
+
+    notifications = db.list_notifications(st.session_state.role) if st.session_state.role else []
+    for n in notifications:
+        n["role"] = n["target_role"]
+        n["muestra_id"] = n.get("muestra_id_unico")
+    st.session_state.notifications = notifications
 
 
 # ════════════════════════════════════════════════════════════════════
 # ESTADO INICIAL
 # ════════════════════════════════════════════════════════════════════
 def _sync_query_params():
-    """Guarda el rol y la pantalla actual en la URL. Si la conexión se corta (celular que se
-    bloquea, wifi inestable) y el navegador reconecta, Streamlit abre una sesión nueva pero
-    puede restaurar dónde estaba el usuario leyendo esto — sin pedirle la clave otra vez ni
-    mandarlo al Inicio en medio de un ensayo. Al cerrar sesión se limpia todo, así que la
-    sesión solo termina cuando el usuario le da a "Cerrar sesión"."""
+    """Guarda la pantalla actual en la URL (nunca el token de sesión — ver decisión de
+    migración a Supabase Auth). Si la conexión se corta (celular que se bloquea, wifi
+    inestable) y el navegador reconecta, Streamlit abre una sesión nueva sin el login;
+    la persona tiene que volver a entrar con su código+clave, pero al hacerlo se le
+    devuelve a la misma pantalla en vez de mandarla a Inicio. Al cerrar sesión se limpia
+    todo, así que la sesión solo termina cuando el usuario le da a "Cerrar sesión"."""
     if st.session_state.role:
-        st.query_params["role"] = st.session_state.role
         st.query_params["screen"] = st.session_state.screen
         st.query_params["codigo"] = st.session_state.selected_codigo or ""
         st.query_params["perf"] = st.session_state.selected_perforacion or ""
@@ -531,17 +559,19 @@ def init_state():
         return
     st.session_state.initialized = True
     st.session_state.role = None
+    st.session_state.profile = None
     st.session_state.screen = "home"
 
-    store = get_shared_store()
-    st.session_state.projects = store["projects"]
-    st.session_state.perforaciones = store["perforaciones"]
-    st.session_state.muestras = store["muestras"]
-    st.session_state.assays = store["assays"]
-    st.session_state.notifications = store["notifications"]
+    st.session_state.projects = []
+    st.session_state.perforaciones = {}
+    st.session_state.muestras = {}
+    st.session_state.assays = []
+    st.session_state.notifications = []
 
     st.session_state.nav_stack = []
     st.session_state.bitacora_draft = {}
+    st.session_state.draft_perforaciones = []
+    st.session_state.draft_muestras = {}
     st.session_state.selected_codigo = ""
     st.session_state.selected_perforacion = ""
     st.session_state.selected_muestra_id = ""
@@ -549,16 +579,15 @@ def init_state():
     st.session_state.selected_assay_type = None
     st.session_state.read_only_view = False
 
-    # Restaura la sesión desde la URL si venía de una reconexión (ver _sync_query_params).
-    qp_role = st.query_params.get("role")
-    if qp_role in PASSWORDS:
-        st.session_state.role = qp_role
-        st.session_state.screen = st.query_params.get("screen") or "home"
-        st.session_state.selected_codigo = st.query_params.get("codigo") or ""
-        st.session_state.selected_perforacion = st.query_params.get("perf") or ""
-        st.session_state.selected_muestra_id = st.query_params.get("muestra") or ""
-        st.session_state.selected_assay_id = st.query_params.get("assay") or None
-        st.session_state.selected_assay_type = st.query_params.get("atipo") or None
+    # Restaura la posición de navegación desde la URL tras una reconexión (ver
+    # _sync_query_params) — el login sigue siendo necesario, pero la persona vuelve
+    # a la misma pantalla en vez de a Inicio una vez que entra de nuevo.
+    st.session_state.screen = st.query_params.get("screen") or "home"
+    st.session_state.selected_codigo = st.query_params.get("codigo") or ""
+    st.session_state.selected_perforacion = st.query_params.get("perf") or ""
+    st.session_state.selected_muestra_id = st.query_params.get("muestra") or ""
+    st.session_state.selected_assay_id = st.query_params.get("assay") or None
+    st.session_state.selected_assay_type = st.query_params.get("atipo") or None
 
 
 init_state()
@@ -754,21 +783,16 @@ def now_iso():
 
 
 def add_notification(role, mensaje, codigo=None, perf=None, muestra_id=None):
-    """Notificación compartida entre todas las sesiones logueadas con `role` (ver
-    get_shared_store: notifications vive en el mismo store con @st.cache_resource)."""
-    st.session_state.notifications.append({
-        "id": f"n-{uuid.uuid4().hex[:8]}", "role": role, "mensaje": mensaje, "leida": False,
-        "fecha": now_iso(), "codigo_interno": codigo, "perforacion_codigo": perf, "muestra_id": muestra_id,
-    })
+    """Notificación compartida entre todas las sesiones logueadas con `role` (tabla
+    notifications en Supabase — ver _load_data)."""
+    db.add_notification(role, mensaje, codigo_interno=codigo, perforacion_codigo=perf, muestra_id_unico=muestra_id)
 
 
 def add_historial(obj, titulo, subtitulo="", icono="history", tono="muted"):
-    """Registro de auditoría (por muestra o por ensayo): cuándo se entregó, cuándo confirmó el
-    Jefe, cuándo aprobó (o devolvió) el Director Técnico, etc. Se guarda en el propio dict y se
-    muestra como línea de tiempo (ver historial_timeline_html)."""
-    obj.setdefault("historial", []).append({
-        "fecha": now_iso(), "titulo": titulo, "subtitulo": subtitulo, "icono": icono, "tono": tono,
-    })
+    """Registro de auditoría de un ensayo: cuándo se entregó, cuándo confirmó el Jefe, cuándo
+    aprobó (o devolvió) el Director Técnico, etc. Se muestra como línea de tiempo (ver
+    historial_timeline_html). `obj` es el dict de assay tal como lo devuelve get_assay."""
+    db.add_historial(obj["id"], titulo, subtitulo, icono, tono)
 
 
 def historial_timeline_html(historial):
@@ -874,16 +898,11 @@ def desarchivar_proyecto(codigo):
     para que el laboratorista pueda volver a digitar o el Jefe agregar nuevas muestras/
     perforaciones. También limpia la aprobación de cada ensayo (etapa_revision y demás) —
     si se reabre, tiene que volver a pasar por Jefe y Director Técnico antes de poder archivarse
-    de nuevo. El estado 'ejecutado' se recalcula solo (ver project_status)."""
-    ahora = now_iso()
+    de nuevo. El estado 'ejecutado' se recalcula solo (ver project_status). El llamador hace
+    st.rerun() después, que recarga todo fresco desde Supabase (ver _load_data)."""
     for a in st.session_state.assays:
         if a["codigo_interno"] == codigo:
-            if a["status"] == "finalizado":
-                a["status"] = "en-proceso"
-                a["lastModified"] = ahora
-            for campo in ("etapa_revision", "confirmado_por_jefe", "confirmado_por_jefe_fecha",
-                          "aprobado_por_ing", "aprobado_por_ing_fecha", "motivo_rechazo", "rechazado_por"):
-                a.pop(campo, None)
+            db.reset_confirmacion(a["id"], reset_status=(a["status"] == "finalizado"))
 
 
 def confirm_delete(action_key, label):
@@ -918,18 +937,22 @@ def render_login():
         st.markdown('<div class="login-title">Geodelta Lab</div>', unsafe_allow_html=True)
         with st.container(border=True, key="login-card"):
             st.markdown("#### Bienvenido de nuevo")
-            st.caption("Ingresa tus credenciales para acceder al sistema.")
-            role_choice = st.radio("Tipo de usuario", ["Auxiliar", "Jefe", "Director Técnico"], horizontal=True)
+            st.caption("Ingresa tu código de usuario y tu clave para acceder al sistema.")
+            codigo = st.text_input("Código de usuario", placeholder="ej. jperez", autocomplete="off")
             password = st.text_input("Clave de acceso", type="password", placeholder="••••••••")
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("INGRESAR", type="primary", use_container_width=True):
-                role_key = {"Jefe": "jefe", "Director Técnico": "ingeniero"}.get(role_choice, "auxiliar")
-                if password == PASSWORDS[role_key]:
-                    st.session_state.role = role_key
-                    st.session_state.nav_stack = []
-                    navigate("home")
+                if not codigo or not password:
+                    st.error("Ingresa tu código de usuario y tu clave.")
                 else:
-                    st.error("Clave incorrecta.")
+                    try:
+                        profile = db.sign_in(codigo, password)
+                    except db.AuthError as e:
+                        st.error(str(e))
+                    else:
+                        st.session_state.profile = profile
+                        st.session_state.role = profile["role"]
+                        st.rerun()
             st.markdown('<hr style="margin:16px 0 4px 0;">', unsafe_allow_html=True)
             if st.button("¿Olvidaste tu clave?", key="forgot_pwd", type="secondary", use_container_width=True):
                 st.info("Contacta al Jefe de laboratorio para restablecer tu clave de acceso.")
@@ -994,11 +1017,13 @@ def render_topbar():
                                     st.session_state.selected_muestra_id = n["muestra_id"]
                                     navigate("muestra-detail")
         with c_avatar:
-            iniciales = ROLE_INICIALES.get(st.session_state.role, "AX")
+            iniciales = ROLE_INICIALES.get(st.session_state.role, "LB")
             st.markdown(f'<div class="topbar-avatar">{iniciales}</div>', unsafe_allow_html=True)
         with c_logout:
             if st.button("", key="logout_top", help="Cerrar sesión", use_container_width=True, icon=":material/logout:"):
+                db.sign_out()
                 st.session_state.role = None
+                st.session_state.profile = None
                 st.session_state.nav_stack = []
                 navigate("home")
 
@@ -1047,7 +1072,7 @@ def render_home():
         st.markdown("## Bienvenido, Director Técnico")
         st.caption("Revisión final y aprobación de muestras antes de entregarlas al cliente.")
     else:
-        st.markdown("## Panel de Auxiliar")
+        st.markdown("## Panel de Laboratorista")
         st.caption("Gestiona tus proyectos asignados y registra los resultados de los ensayos de suelo.")
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1234,11 +1259,7 @@ def _render_project_list(codes, empty_msg, allow_delete, mark_read_only=False, a
                 with cols[3]:
                     if confirm_delete(f"project_{p['codigo_interno']}", f"el proyecto {p['codigo_interno']}"):
                         codigo = p["codigo_interno"]
-                        st.session_state.projects[:] = [x for x in st.session_state.projects if x["codigo_interno"] != codigo]
-                        st.session_state.perforaciones.pop(codigo, None)
-                        for k in [k for k in st.session_state.muestras if k.startswith(codigo + "::")]:
-                            del st.session_state.muestras[k]
-                        st.session_state.assays[:] = [a for a in st.session_state.assays if a["codigo_interno"] != codigo]
+                        db.archive_project(p["id"])
                         st.session_state.bitacora_draft = {k: v for k, v in st.session_state.bitacora_draft.items() if not k.startswith(codigo + "::")}
                         st.rerun()
             if allow_unarchive:
@@ -1337,7 +1358,7 @@ def render_projects_done():
     if st.button("← Atrás"):
         go_back()
     st.markdown("## Proyectos ejecutados")
-    if st.session_state.role == "auxiliar":
+    if st.session_state.role == "laboratorista":
         st.info("Modo consulta: puedes ver los resultados, pero no editarlos.")
     codes = [p["codigo_interno"] for p in st.session_state.projects if project_status(p["codigo_interno"]) == "ejecutado"]
     _render_project_list(codes, "Todavía no hay proyectos completamente finalizados.",
@@ -1476,17 +1497,16 @@ def render_new_project():
 
     laboratorista_asignado = st.text_input(
         "Asignar bitácora a laboratorista (opcional)", placeholder="Nombre del laboratorista",
-        help="Es solo una referencia informativa: como todos los auxiliares comparten la misma clave, "
+        help="Es solo una referencia informativa: como todos los laboratoristas comparten la misma clave, "
              "esto no restringe quién puede ver o digitar el proyecto.",
     )
 
-    # Perforaciones y muestras se arman aquí mismo, antes de crear el proyecto formalmente.
-    # Se usa el código interno (ya calculado en vivo) como llave temporal en session_state.
-    perforaciones = []
+    # Perforaciones y muestras se arman aquí mismo, antes de crear el proyecto formalmente —
+    # en estado de borrador propio (no en st.session_state.perforaciones/muestras, que ahora
+    # se recargan desde Supabase en cada rerun y no existen todavía para un proyecto sin crear).
+    perforaciones = st.session_state.setdefault("draft_perforaciones", [])
     edited_frames = {}
     if codigo_valido and nombre:
-        perforaciones = st.session_state.perforaciones.setdefault(codigo_interno, [])
-
         st.markdown('<div class="section-title">Perforación</div>', unsafe_allow_html=True)
         pc1, pc2 = st.columns([2, 1])
         with pc1:
@@ -1498,14 +1518,14 @@ def render_new_project():
                 consecutivo = len([p for p in perforaciones if p["tipo"] == tipo]) + 1
                 codigo_perf = f"{prefix}{consecutivo}"
                 perforaciones.append({"tipo": tipo, "consecutivo": consecutivo, "codigo": codigo_perf})
-                st.session_state.muestras[f"{codigo_interno}::{codigo_perf}"] = []
+                st.session_state.setdefault("draft_muestras", {})[codigo_perf] = []
                 st.rerun()
 
         if perforaciones:
             st.markdown('<div class="section-title">Perforaciones y muestras</div>', unsafe_allow_html=True)
         for perf in perforaciones:
             key = f"{codigo_interno}::{perf['codigo']}"
-            muestras = st.session_state.muestras.setdefault(key, [])
+            muestras = st.session_state.draft_muestras.setdefault(perf["codigo"], [])
             with st.expander(f"**{perf['codigo']}** — {perf['tipo']}  ·  {len(muestras)} muestra(s)", expanded=True):
                 df_source = _bitacora_draft_df(key, muestras)
 
@@ -1554,38 +1574,29 @@ def render_new_project():
                     st.caption(f"El formato oficial admite hasta {BITACORA_XLSX_MAX_ROWS} muestras; se incluyeron las primeras {BITACORA_XLSX_MAX_ROWS}.")
 
                 if confirm_delete(f"newperf_{key}", f"la perforación {perf['codigo']}"):
-                    st.session_state.perforaciones[codigo_interno] = [p for p in perforaciones if p["codigo"] != perf["codigo"]]
-                    st.session_state.muestras.pop(key, None)
+                    st.session_state.draft_perforaciones = [p for p in perforaciones if p["codigo"] != perf["codigo"]]
+                    st.session_state.draft_muestras.pop(perf["codigo"], None)
                     st.session_state.bitacora_draft.pop(key, None)
                     st.rerun()
     elif nombre or numero or anio:
         st.info("Completa un código interno válido y el nombre del proyecto para agregar perforaciones y muestras.")
 
+    def _limpiar_borrador():
+        st.session_state.draft_perforaciones = []
+        st.session_state.draft_muestras = {}
+        st.session_state.bitacora_draft = {k: v for k, v in st.session_state.bitacora_draft.items()
+                                            if not k.startswith(f"{codigo_interno}::")}
+
     st.markdown("<br>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Cancelar", use_container_width=True):
-            if codigo_interno:
-                st.session_state.perforaciones.pop(codigo_interno, None)
-                for k in [k for k in st.session_state.muestras if k.startswith(codigo_interno + "::")]:
-                    del st.session_state.muestras[k]
-                st.session_state.bitacora_draft = {k: v for k, v in st.session_state.bitacora_draft.items() if not k.startswith(codigo_interno + "::")}
+            _limpiar_borrador()
             navigate("home")
     with col2:
         if st.button("Guardar bitácora", type="primary", use_container_width=True, icon=":material/save:",
                       disabled=not codigo_valido or not nombre):
-            st.session_state.projects.append({
-                "codigo_interno": codigo_interno, "numero": numero, "anio": anio, "nombre": nombre,
-                "localizacion": localizacion, "norma": norma,
-                "fecha_bitacora": str(fecha_bitacora), "fecha_ingreso_muestra": str(fecha_ingreso),
-                "laboratorista_asignado": laboratorista_asignado,
-                "cliente": cliente, "correo_cliente": correo_cliente, "muestra_tomada_por": muestra_tomada_por,
-                "direccion_cliente": direccion_cliente, "telefono_contacto": telefono_contacto,
-                "nombre_contacto": nombre_contacto,
-                "fecha_inicio_proyecto": str(fecha_inicio_proyecto), "fecha_final_proyecto": str(fecha_final_proyecto),
-                "fecha_recepcion": str(fecha_recepcion), "fecha_ejecucion": str(fecha_ejecucion), "fecha_emision": str(fecha_emision),
-            })
-            st.session_state.perforaciones.setdefault(codigo_interno, [])
+            perforaciones_payload = []
             for perf in perforaciones:
                 key = f"{codigo_interno}::{perf['codigo']}"
                 df_rows = edited_frames.get(key)
@@ -1603,11 +1614,20 @@ def render_new_project():
                         "ensayos": {e: bool(row.get(e, False)) for e in BITACORA_ENSAYOS},
                         "observaciones": row.get("Observaciones") or "",
                     })
-                st.session_state.muestras[key] = nuevas
-                # El draft cacheado quedó vacío desde que se creó la perforación (antes de guardar);
-                # se descarta para que la próxima vez que se abra la Bitácora se reconstruya a partir
-                # de las muestras recién guardadas y no muestre/reescriba una tabla vacía.
-                st.session_state.bitacora_draft.pop(key, None)
+                perforaciones_payload.append({**perf, "muestras": nuevas})
+
+            db.commit_new_project({
+                "codigo_interno": codigo_interno, "numero": numero, "anio": anio, "nombre": nombre,
+                "localizacion": localizacion, "norma": norma,
+                "fecha_bitacora": str(fecha_bitacora), "fecha_ingreso_muestra": str(fecha_ingreso),
+                "laboratorista_asignado": laboratorista_asignado,
+                "cliente": cliente, "correo_cliente": correo_cliente, "muestra_tomada_por": muestra_tomada_por,
+                "direccion_cliente": direccion_cliente, "telefono_contacto": telefono_contacto,
+                "nombre_contacto": nombre_contacto,
+                "fecha_inicio_proyecto": str(fecha_inicio_proyecto), "fecha_final_proyecto": str(fecha_final_proyecto),
+                "fecha_recepcion": str(fecha_recepcion), "fecha_ejecucion": str(fecha_ejecucion), "fecha_emision": str(fecha_emision),
+            }, perforaciones_payload)
+            _limpiar_borrador()
             st.session_state.selected_codigo = codigo_interno
             navigate("project-detail")
 
@@ -1673,12 +1693,8 @@ def render_project_detail():
                 navigate("edit-project")
         with c2:
             if confirm_delete(f"project_{codigo}", f"el proyecto {codigo} y todas sus perforaciones y muestras"):
-                st.session_state.projects[:] = [p for p in st.session_state.projects if p["codigo_interno"] != codigo]
-                st.session_state.perforaciones.pop(codigo, None)
-                for k in [k for k in st.session_state.muestras if k.startswith(codigo + "::")]:
-                    del st.session_state.muestras[k]
+                db.archive_project(project["id"])
                 st.session_state.bitacora_draft = {k: v for k, v in st.session_state.bitacora_draft.items() if not k.startswith(codigo + "::")}
-                st.session_state.assays[:] = [a for a in st.session_state.assays if a["codigo_interno"] != codigo]
                 navigate("home")
         if project_status(codigo) == "ejecutado":
             st.caption("Este proyecto ya está completamente ejecutado (todas sus muestras finalizadas).")
@@ -1688,7 +1704,7 @@ def render_project_detail():
                 st.rerun()
 
     with st.container(border=True):
-        st.markdown('<div class="section-title">Progreso general (así avanzan los auxiliares)</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Progreso general (así avanzan los laboratoristas)</div>', unsafe_allow_html=True)
         c1, c2 = st.columns([1, 3])
         with c1:
             st.markdown(f'<div style="font-size:24px;font-weight:800;color:{PRIMARY};">{pct_general}%</div>', unsafe_allow_html=True)
@@ -1879,23 +1895,15 @@ def render_edit_project():
             go_back(fallback="project-detail")
     with c2:
         if st.button("Guardar cambios", type="primary", use_container_width=True, icon=":material/save:", disabled=not nombre):
-            project["nombre"] = nombre
-            project["localizacion"] = localizacion
-            project["norma"] = norma
-            project["fecha_bitacora"] = str(fecha_bitacora)
-            project["fecha_ingreso_muestra"] = str(fecha_ingreso)
-            project["laboratorista_asignado"] = laboratorista_asignado
-            project["cliente"] = cliente
-            project["correo_cliente"] = correo_cliente
-            project["muestra_tomada_por"] = muestra_tomada_por
-            project["direccion_cliente"] = direccion_cliente
-            project["telefono_contacto"] = telefono_contacto
-            project["nombre_contacto"] = nombre_contacto
-            project["fecha_inicio_proyecto"] = str(fecha_inicio_proyecto)
-            project["fecha_final_proyecto"] = str(fecha_final_proyecto)
-            project["fecha_recepcion"] = str(fecha_recepcion)
-            project["fecha_ejecucion"] = str(fecha_ejecucion)
-            project["fecha_emision"] = str(fecha_emision)
+            db.update_project(
+                project["id"], nombre=nombre, localizacion=localizacion, norma=norma,
+                fecha_bitacora=str(fecha_bitacora), fecha_ingreso_muestra=str(fecha_ingreso),
+                laboratorista_asignado=laboratorista_asignado, cliente=cliente, correo_cliente=correo_cliente,
+                muestra_tomada_por=muestra_tomada_por, direccion_cliente=direccion_cliente,
+                telefono_contacto=telefono_contacto, nombre_contacto=nombre_contacto,
+                fecha_inicio_proyecto=str(fecha_inicio_proyecto), fecha_final_proyecto=str(fecha_final_proyecto),
+                fecha_recepcion=str(fecha_recepcion), fecha_ejecucion=str(fecha_ejecucion), fecha_emision=str(fecha_emision),
+            )
             navigate("project-detail")
 
 
@@ -2043,6 +2051,27 @@ def _bitacora_draft_df(key, muestras):
     return st.session_state.bitacora_draft[key]
 
 
+def _sync_muestras_perforacion(perforacion_id, codigo, perf_codigo, nuevas_rows):
+    """Reconcilia la tabla editada de muestras de una perforación existente contra lo que ya
+    hay en Supabase: filas con id_unico ya conocido se actualizan, las nuevas se crean, y las
+    que ya no aparecen (se borraron en el editor) se archivan."""
+    actuales = st.session_state.muestras.get(f"{codigo}::{perf_codigo}", [])
+    actuales_by_id_unico = {m["id_unico"]: m for m in actuales}
+    vistos = set()
+    for row in nuevas_rows:
+        id_unico = row["id_unico"]
+        vistos.add(id_unico)
+        existente = actuales_by_id_unico.get(id_unico)
+        campos = {k: v for k, v in row.items() if k != "id_unico"}
+        if existente:
+            db.update_muestra(existente["id"], **campos)
+        else:
+            db.create_muestra(perforacion_id, id_unico=id_unico, **campos)
+    for id_unico, m in actuales_by_id_unico.items():
+        if id_unico not in vistos:
+            db.archive_muestra(m["id"])
+
+
 def render_bitacora():
     require_role("jefe")
     if st.button("← Atrás"):
@@ -2075,8 +2104,7 @@ def render_bitacora():
                 prefix = TIPO_PERFORACION_PREFIX[tipo]
                 consecutivo = len([p for p in perforaciones if p["tipo"] == tipo]) + 1
                 codigo_perf = f"{prefix}{consecutivo}"
-                perforaciones.append({"tipo": tipo, "consecutivo": consecutivo, "codigo": codigo_perf})
-                st.session_state.muestras[f"{codigo}::{codigo_perf}"] = []
+                db.create_perforacion(project["id"], tipo, consecutivo, codigo_perf)
                 st.rerun()
     else:
         st.info("Estás viendo la bitácora en modo lectura. Solo el Jefe puede editarla.")
@@ -2150,10 +2178,8 @@ def render_bitacora():
                 st.caption(f"El formato oficial admite hasta {BITACORA_XLSX_MAX_ROWS} muestras; se incluyeron las primeras {BITACORA_XLSX_MAX_ROWS}.")
 
             if es_jefe and confirm_delete(f"perf_{key}", f"la perforación {perf['codigo']} y todas sus muestras"):
-                st.session_state.perforaciones[codigo] = [p for p in st.session_state.perforaciones[codigo] if p["codigo"] != perf["codigo"]]
-                st.session_state.muestras.pop(key, None)
+                db.archive_perforacion(perf["id"])
                 st.session_state.bitacora_draft.pop(key, None)
-                st.session_state.assays[:] = [a for a in st.session_state.assays if not (a["codigo_interno"] == codigo and a["perforacion_codigo"] == perf["codigo"])]
                 st.rerun()
 
 
@@ -2178,12 +2204,13 @@ def render_bitacora():
                         "ensayos": {e: bool(row.get(e, False)) for e in BITACORA_ENSAYOS},
                         "observaciones": row.get("Observaciones") or "",
                     })
-                st.session_state.muestras[key] = nuevas
+                _sync_muestras_perforacion(perf["id"], codigo, perf["codigo"], nuevas)
                 # Se descarta el draft cacheado para que, si se vuelve a abrir esta perforación,
                 # se reconstruya desde las muestras recién guardadas (evita mostrar/pisar con una
                 # tabla vieja lo que ya se guardó).
                 st.session_state.bitacora_draft.pop(key, None)
-            st.success("Bitácora guardada. Los auxiliares ya pueden ver y digitar las muestras.")
+            st.success("Bitácora guardada. Los laboratoristas ya pueden ver y digitar las muestras.")
+            st.rerun()
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -2225,15 +2252,16 @@ def render_muestra_detail():
         st.markdown('<div class="section-title">Descripción visual de la muestra</div>', unsafe_allow_html=True)
         st.caption("Cómo se ve físicamente la muestra (color, textura, humedad, etc.). Esta es la que se lleva "
                    "al campo \"DESCRIPCIÓN VISUAL\" del Excel oficial — es independiente de las observaciones.")
-        if st.session_state.role == "auxiliar":
+        if st.session_state.role == "laboratorista":
             with st.container(key="muestra-desc-visual-box"):
                 descripcion_visual = st.text_area(
                     "Descripción visual de la muestra", value=muestra.get("descripcion_visual", ""), label_visibility="collapsed",
                     placeholder="Ej: Suelo arcilloso color gris, humedad media, sin fragmentos de roca...", key=f"desc_visual_{muestra_id}",
                 )
             if st.button("Guardar descripción visual", icon=":material/save:", key=f"desc_visual_save_{muestra_id}"):
-                muestra["descripcion_visual"] = descripcion_visual.upper()
+                db.update_muestra(muestra["id"], descripcion_visual=descripcion_visual.upper())
                 st.success("Descripción visual guardada.")
+                st.rerun()
         else:
             st.markdown(f'<div class="cell-muted">{html.escape(muestra.get("descripcion_visual") or "— (el laboratorista aún no la digita) —")}</div>',
                         unsafe_allow_html=True)
@@ -2243,15 +2271,16 @@ def render_muestra_detail():
         st.caption("El laboratorista la digita si la muestra presenta fisuras o no se puede realizar el ensayo "
                    "por alguna razón. Se guarda para todos los ensayos de esta muestra. El Jefe deja instrucciones "
                    "para el laboratorista desde la Bitácora, al crear o editar la muestra.")
-        if st.session_state.role == "auxiliar":
+        if st.session_state.role == "laboratorista":
             with st.container(key="muestra-obs-box"):
                 observacion = st.text_area(
                     "Observaciones", value=muestra.get("observaciones", ""), label_visibility="collapsed",
                     placeholder="Ej: Muestra con fisuras visibles, no fue posible completar el ensayo...", key=f"obs_{muestra_id}",
                 )
             if st.button("Guardar observación", icon=":material/save:", key=f"obs_save_{muestra_id}"):
-                muestra["observaciones"] = observacion
+                db.update_muestra(muestra["id"], observaciones=observacion)
                 st.success("Observación guardada.")
+                st.rerun()
         else:
             st.markdown(f'<div class="cell-muted">{html.escape(muestra.get("observaciones") or "— Sin observaciones —")}</div>',
                         unsafe_allow_html=True)
@@ -2331,16 +2360,8 @@ def render_muestra_detail():
                                                                    placeholder="Qué hay que corregir...")
                                     if st.button("Confirmar desconfirmación", key=f"desconfirmar_{ensayo_label}", use_container_width=True):
                                         if motivo_desconf.strip():
-                                            existing["status"] = "en-proceso"
-                                            existing["lastModified"] = now_iso()
-                                            existing["etapa_revision"] = None
-                                            existing["confirmado_por_jefe"] = ""
-                                            existing["confirmado_por_jefe_fecha"] = ""
-                                            existing["aprobado_por_ing"] = ""
-                                            existing["aprobado_por_ing_fecha"] = ""
-                                            existing["motivo_rechazo"] = motivo_desconf
-                                            existing["rechazado_por"] = "ing"
-                                            add_notification("auxiliar", f"El Director Técnico desconfirmó {ensayo_label} de la Muestra "
+                                            db.ing_desconfirmar(existing["id"], st.session_state.profile, motivo_desconf)
+                                            add_notification("laboratorista", f"El Director Técnico desconfirmó {ensayo_label} de la Muestra "
                                                                           f"{muestra['numero']} de {codigo}: {motivo_desconf}", codigo, perf_codigo, muestra_id)
                                             add_notification("jefe", f"El Director Técnico desconfirmó {ensayo_label} de la Muestra "
                                                                       f"{muestra['numero']} de {codigo}: {motivo_desconf}", codigo, perf_codigo, muestra_id)
@@ -2358,11 +2379,7 @@ def render_muestra_detail():
                                 with b1:
                                     if st.button("Confirmar", type="primary",
                                                  use_container_width=True, key=f"ing_aprobar_{ensayo_label}"):
-                                        existing["etapa_revision"] = "aprobado"
-                                        existing["aprobado_por_ing"] = "Director Técnico"
-                                        existing["aprobado_por_ing_fecha"] = now_iso()
-                                        existing["motivo_rechazo"] = ""
-                                        existing["rechazado_por"] = ""
+                                        db.ing_aprobar(existing["id"], st.session_state.profile)
                                         add_notification("jefe", f"El Director Técnico aprobó {ensayo_label} de la Muestra "
                                                                   f"{muestra['numero']} de {codigo}.", codigo, perf_codigo, muestra_id)
                                         add_historial(existing, "Aprobación Final del Director Técnico", "Director Técnico",
@@ -2375,9 +2392,7 @@ def render_muestra_detail():
                                                                    placeholder="Qué hay que corregir...")
                                         if st.button("Confirmar devolución", key=f"ing_devolver_{ensayo_label}", use_container_width=True):
                                             if motivo_ing.strip():
-                                                existing["etapa_revision"] = None
-                                                existing["motivo_rechazo"] = motivo_ing
-                                                existing["rechazado_por"] = "ing"
+                                                db.ing_devolver(existing["id"], st.session_state.profile, motivo_ing)
                                                 add_notification("jefe", f"El Director Técnico devolvió {ensayo_label} de la Muestra "
                                                                           f"{muestra['numero']} de {codigo}: {motivo_ing}", codigo, perf_codigo, muestra_id)
                                                 add_historial(existing, "Devuelto al Jefe de Laboratorio", f"Director Técnico: {motivo_ing}",
@@ -2394,11 +2409,7 @@ def render_muestra_detail():
                                                                         placeholder="Por qué te retractas...")
                                     if st.button("Confirmar desconfirmación", key=f"jefe_desconfirmar_{ensayo_label}", use_container_width=True):
                                         if motivo_jefe_desconf.strip():
-                                            existing["etapa_revision"] = None
-                                            existing["confirmado_por_jefe"] = ""
-                                            existing["confirmado_por_jefe_fecha"] = ""
-                                            existing["motivo_rechazo"] = motivo_jefe_desconf
-                                            existing["rechazado_por"] = "jefe"
+                                            db.jefe_desconfirmar(existing["id"], st.session_state.profile, motivo_jefe_desconf)
                                             add_notification("ingeniero", f"El Jefe de Laboratorio desconfirmó {ensayo_label} de la Muestra "
                                                                            f"{muestra['numero']} de {codigo} — ya no está pendiente de tu revisión.",
                                                               codigo, perf_codigo, muestra_id)
@@ -2416,11 +2427,7 @@ def render_muestra_detail():
                                 with b1:
                                     if st.button("Confirmar", type="primary",
                                                  use_container_width=True, key=f"jefe_confirmar_{ensayo_label}"):
-                                        existing["etapa_revision"] = "pendiente_ing"
-                                        existing["confirmado_por_jefe"] = "Jefe de Laboratorio"
-                                        existing["confirmado_por_jefe_fecha"] = now_iso()
-                                        existing["motivo_rechazo"] = ""
-                                        existing["rechazado_por"] = ""
+                                        db.jefe_confirmar(existing["id"], st.session_state.profile)
                                         add_notification("ingeniero", f"El Jefe de Laboratorio envió {ensayo_label} de la Muestra "
                                                                        f"{muestra['numero']} de {codigo} para tu confirmación final.",
                                                           codigo, perf_codigo, muestra_id)
@@ -2434,12 +2441,8 @@ def render_muestra_detail():
                                                                     placeholder="Qué hay que corregir...")
                                         if st.button("Confirmar devolución", key=f"jefe_devolver_{ensayo_label}", use_container_width=True):
                                             if motivo_jefe.strip():
-                                                existing["status"] = "en-proceso"
-                                                existing["lastModified"] = now_iso()
-                                                existing["etapa_revision"] = None
-                                                existing["motivo_rechazo"] = motivo_jefe
-                                                existing["rechazado_por"] = "jefe"
-                                                add_notification("auxiliar", f"El Jefe de Laboratorio devolvió {ensayo_label} de la Muestra "
+                                                db.jefe_devolver(existing["id"], st.session_state.profile, motivo_jefe)
+                                                add_notification("laboratorista", f"El Jefe de Laboratorio devolvió {ensayo_label} de la Muestra "
                                                                               f"{muestra['numero']} de {codigo}: {motivo_jefe}", codigo, perf_codigo, muestra_id)
                                                 add_historial(existing, "Devuelto al Laboratorista", f"Jefe de Laboratorio: {motivo_jefe}",
                                                               icono="undo", tono="danger")
@@ -2455,14 +2458,8 @@ def render_muestra_detail():
                             if existing:
                                 st.session_state.selected_assay_id = existing["id"]
                             else:
-                                new_id = f"a-{uuid.uuid4().hex[:8]}"
-                                st.session_state.assays.append({
-                                    "id": new_id, "muestra_id": muestra_id, "tipo": tipo_interno, "status": "sin-iniciar",
-                                    "data": {}, "observations": "", "laboratorist": "",
-                                    "codigo_interno": codigo, "perforacion_codigo": perf_codigo, "muestra_numero": muestra["numero"],
-                                    "lastModified": now_iso(), "createdAt": now_iso(),
-                                })
-                                st.session_state.selected_assay_id = new_id
+                                nuevo = db.create_assay(muestra["id"], tipo_interno)
+                                st.session_state.selected_assay_id = nuevo["id"]
                             st.session_state.selected_assay_type = tipo_interno
                             navigate("assay-form")
 
@@ -3056,7 +3053,7 @@ def render_limites_form(data, assay_id):
 
 def render_read_only_summary(tipo, data, laboratorista="—"):
     """Vista de solo lectura ('Resultados de Ensayo') — la misma para el Jefe (siempre) y para
-    el auxiliar cuando el proyecto ya fue ejecutado. Sin casillas de digitación, solo tarjetas
+    el laboratorista cuando el proyecto ya fue ejecutado. Sin casillas de digitación, solo tarjetas
     y tablas con los datos ya registrados."""
     if tipo == "granulometria":
         # Toda orden de granulometría incluye el Pasa No. 200 — se muestra tal cual se digitó,
@@ -3154,7 +3151,7 @@ def render_assay_form():
     es_jefe = st.session_state.role == "jefe"
     es_supervisor = st.session_state.role in ("jefe", "ingeniero")
     # El Jefe y el Director Técnico solo consultan los ensayos — quien digita los datos de laboratorio es el laboratorista.
-    read_only = es_supervisor or (st.session_state.role == "auxiliar" and project_status(codigo) == "ejecutado")
+    read_only = es_supervisor or (st.session_state.role == "laboratorista" and project_status(codigo) == "ejecutado")
 
     if st.button("← Atrás"):
         go_back(fallback="muestra-detail")
@@ -3197,12 +3194,20 @@ def render_assay_form():
                     for cond_key, cond_label in (("inicial", "Inicial"), ("final", "Final")):
                         row = st.columns([1.4, 1, 1])
                         row[0].markdown(f'<div style="padding-top:8px;">{cond_label}</div>', unsafe_allow_html=True)
-                        muestra[f"cond_{cond_key}_temp"] = row[1].text_input(
+                        nuevo_temp = row[1].text_input(
                             f"Temperatura {cond_label}", value=muestra.get(f"cond_{cond_key}_temp", ""),
                             key=f"cond_{cond_key}_temp_{muestra_id}", label_visibility="collapsed", placeholder="0.0")
-                        muestra[f"cond_{cond_key}_hum"] = row[2].text_input(
+                        nuevo_hum = row[2].text_input(
                             f"Humedad {cond_label}", value=muestra.get(f"cond_{cond_key}_hum", ""),
                             key=f"cond_{cond_key}_hum_{muestra_id}", label_visibility="collapsed", placeholder="0")
+                        cambios_cond = {}
+                        if nuevo_temp != muestra.get(f"cond_{cond_key}_temp", ""):
+                            cambios_cond[f"cond_{cond_key}_temp"] = nuevo_temp
+                        if nuevo_hum != muestra.get(f"cond_{cond_key}_hum", ""):
+                            cambios_cond[f"cond_{cond_key}_hum"] = nuevo_hum
+                        if cambios_cond:
+                            db.update_muestra(muestra["id"], **cambios_cond)
+                            muestra.update(cambios_cond)
 
     # Pasa 200 comparte plantilla y datos con Granulometría: si la muestra también tiene un
     # ensayo de Granulometría, "Pasa 200" lee y escribe directamente sobre ESE diccionario de
@@ -3228,7 +3233,7 @@ def render_assay_form():
         if es_jefe and assay["status"] == "finalizado":
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("Habilitar edición para el laboratorista", icon=":material/lock_open:", use_container_width=True):
-                assay.update(status="en-proceso", lastModified=now_iso())
+                db.update_assay_data(assay["id"], status="en-proceso")
                 st.success("Ensayo habilitado — el laboratorista ya puede volver a digitar los datos.")
                 st.rerun()
     else:
@@ -3255,14 +3260,14 @@ def render_assay_form():
         # que se completa un campo), sin necesidad de un clic explícito.
         if (data != assay.get("data", {}) or observations != assay.get("observations", "")
                 or laboratorist != assay.get("laboratorist", "")):
-            assay["data"] = data
+            nuevo_status = "en-proceso" if assay["status"] == "sin-iniciar" else assay["status"]
+            db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status=nuevo_status)
             if pasa200_gran_sibling:
-                pasa200_gran_sibling["data"] = data
+                db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
+            assay["data"] = data
             assay["observations"] = observations
             assay["laboratorist"] = laboratorist
-            if assay["status"] == "sin-iniciar":
-                assay["status"] = "en-proceso"
-            assay["lastModified"] = now_iso()
+            assay["status"] = nuevo_status
         st.markdown(f'<div class="timestamp-caption">{icon("cloud_done", size=13)} Los cambios se guardan automáticamente mientras digitas.</div>',
                     unsafe_allow_html=True)
 
@@ -3270,16 +3275,17 @@ def render_assay_form():
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Guardar borrador", use_container_width=True, icon=":material/save:"):
-                assay.update(data=data, observations=observations, laboratorist=laboratorist, status="en-proceso", lastModified=now_iso())
+                db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status="en-proceso")
                 if pasa200_gran_sibling:
-                    pasa200_gran_sibling["data"] = data
+                    db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
                 navigate("muestra-detail")
         with col2:
             if st.button("Enviar a revisión", type="primary", use_container_width=True, icon=":material/send:"):
                 ya_estaba_finalizado = assay["status"] == "finalizado"
-                assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado", lastModified=now_iso())
+                db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status="finalizado")
+                assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado")
                 if pasa200_gran_sibling:
-                    pasa200_gran_sibling["data"] = data
+                    db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
                 if muestra:
                     actor_lab = f"{laboratorist} (Laboratorista)" if laboratorist else "Laboratorista"
                     add_historial(assay, "Enviado a Revisión", actor_lab, icono="science", tono="primary")
@@ -3462,14 +3468,8 @@ def render_search():
                         if existing:
                             st.session_state.selected_assay_id = existing["id"]
                         else:
-                            new_id = f"a-{uuid.uuid4().hex[:8]}"
-                            st.session_state.assays.append({
-                                "id": new_id, "muestra_id": m["id_unico"], "tipo": tipo_interno, "status": "sin-iniciar",
-                                "data": {}, "observations": "", "laboratorist": "",
-                                "codigo_interno": codigo, "perforacion_codigo": perf["codigo"], "muestra_numero": m["numero"],
-                                "lastModified": now_iso(), "createdAt": now_iso(),
-                            })
-                            st.session_state.selected_assay_id = new_id
+                            nuevo = db.create_assay(m["id"], tipo_interno)
+                            st.session_state.selected_assay_id = nuevo["id"]
                         st.session_state.selected_codigo = codigo
                         st.session_state.selected_perforacion = perf["codigo"]
                         st.session_state.selected_muestra_id = m["id_unico"]
@@ -3496,6 +3496,7 @@ def render_search():
 if st.session_state.role is None:
     render_login()
 else:
+    _load_data()
     render_topbar()
     SCREENS = {
         "home": render_home, "new-project": render_new_project, "project-detail": render_project_detail,
