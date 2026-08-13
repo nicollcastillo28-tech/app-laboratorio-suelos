@@ -90,9 +90,12 @@ st.markdown(f"""
         border: 1px solid {BORDER}; margin-left: auto; flex-shrink: 0;
     }}
 
-    /* ---- BOTTOM NAV (celular y tablet en vertical) ---- */
+    /* ---- BOTTOM NAV (celular y tablet, ambas orientaciones) ----
+       900px solo cubría tablet en vertical; en horizontal (~1024-1194px, iPad/Android típico)
+       caía en el layout de escritorio con la nav de arriba apretada contra el padding por
+       defecto de Streamlit — de ahí se veía "apretada" incluso en "modo escritorio". */
     .st-key-bottomnav {{ display: none; }}
-    @media (max-width: 900px) {{
+    @media (max-width: 1180px) {{
         .st-key-topbar-nav {{ display: none; }}
         div[data-testid="stColumn"]:has(.st-key-topbar-nav) {{ display: none; }}
         .st-key-bottomnav {{
@@ -106,7 +109,12 @@ st.markdown(f"""
         }}
         .st-key-bottomnav [data-testid="stHorizontalBlock"] {{ flex-direction: row !important; flex-wrap: nowrap !important; gap: 6px !important; }}
         .st-key-bottomnav [data-testid="stColumn"] {{ width: auto !important; flex: 1 1 0 !important; min-width: 0 !important; }}
-        .main .block-container {{ padding-bottom: 76px; }}
+        /* Streamlit deja ~5rem de aire a cada lado por defecto (clase ".main" ya no existe en
+           esta versión, por eso el selector viejo nunca aplicaba) — en una tablet eso se come
+           casi el 20% del ancho útil y hace ver todo más apretado de lo que hace falta. */
+        [data-testid="stMainBlockContainer"] {{
+            padding-left: 1.25rem !important; padding-right: 1.25rem !important; padding-bottom: 76px !important;
+        }}
     }}
     @media (max-width: 420px) {{
         .topbar-brand .brand-title {{ display: none; }}
@@ -352,7 +360,7 @@ st.markdown(f"""
     .st-key-fab-new-project .stButton button span[data-testid="stIconMaterial"] {{
         color: #fff !important; font-size: 26px !important;
     }}
-    @media (max-width: 900px) {{
+    @media (max-width: 1180px) {{
         .st-key-fab-new-project {{ bottom: 92px; right: 16px; }}
     }}
 </style>
