@@ -373,6 +373,9 @@ st.markdown(f"""
 # que sí puede tocar el DOM del documento padre por ser mismo origen) usando esa convención de
 # placeholder para poner inputmode="decimal"/"numeric" solo ahí. El resto de campos de texto
 # (nombre, dirección, correo...) no calzan el patrón y se quedan con el teclado normal.
+# El mismo script hace que Enter salte al siguiente campo de texto en vez de quedarse quieto
+# (útil digitando tamiz tras tamiz) — el setTimeout deja que Streamlit primero registre el
+# valor tecleado (su propio manejador de Enter) antes de mover el foco.
 components.html("""
 <script>
 (function() {
@@ -399,8 +402,25 @@ components.html("""
         });
     }
 
+    function focusNextOnEnter(e) {
+        if (e.key !== 'Enter') return;
+        var target = e.target;
+        if (!target || !target.matches || !target.matches('div[data-testid="stTextInput"] input')) return;
+        var inputs = Array.prototype.slice.call(
+            window.parent.document.querySelectorAll('div[data-testid="stTextInput"] input')
+        );
+        var idx = inputs.indexOf(target);
+        if (idx === -1 || idx === inputs.length - 1) return;
+        var next = inputs[idx + 1];
+        setTimeout(function() {
+            next.focus();
+            next.select();
+        }, 0);
+    }
+
     applyInputMode();
     new MutationObserver(applyInputMode).observe(window.parent.document.body, {childList: true, subtree: true});
+    window.parent.document.addEventListener('keydown', focusNextOnEnter, true);
 })();
 </script>
 """, height=0)
