@@ -15,6 +15,7 @@ from io import BytesIO
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from openpyxl import load_workbook
 
 import db
@@ -365,6 +366,44 @@ st.markdown(f"""
     }}
 </style>
 """, unsafe_allow_html=True)
+
+# Los campos numéricos de la app (pesos, temperaturas, lecturas de tamiz, etc.) son todos
+# st.text_input con placeholder "0.00" / "0.0" / "0" / "001" — Streamlit no tiene un widget de
+# texto con teclado numérico nativo, así que se marca por JS (vía un iframe de components.html,
+# que sí puede tocar el DOM del documento padre por ser mismo origen) usando esa convención de
+# placeholder para poner inputmode="decimal"/"numeric" solo ahí. El resto de campos de texto
+# (nombre, dirección, correo...) no calzan el patrón y se quedan con el teclado normal.
+components.html("""
+<script>
+(function() {
+    if (window.parent.__geodeltaInputModeInit) return;
+    window.parent.__geodeltaInputModeInit = true;
+
+    function applyInputMode() {
+        var inputs = window.parent.document.querySelectorAll(
+            'div[data-testid="stTextInput"] input[type="text"]'
+        );
+        inputs.forEach(function(input) {
+            var ph = (input.getAttribute('placeholder') || '').trim();
+            var mode = null;
+            if (/^-?\\d+[.,]\\d+$/.test(ph)) {
+                mode = 'decimal';
+            } else if (/^\\d[\\d\\s]*$/.test(ph)) {
+                mode = 'numeric';
+            }
+            if (mode) {
+                if (input.getAttribute('inputmode') !== mode) input.setAttribute('inputmode', mode);
+            } else if (input.hasAttribute('inputmode')) {
+                input.removeAttribute('inputmode');
+            }
+        });
+    }
+
+    applyInputMode();
+    new MutationObserver(applyInputMode).observe(window.parent.document.body, {childList: true, subtree: true});
+})();
+</script>
+""", height=0)
 
 # ════════════════════════════════════════════════════════════════════
 # CONSTANTES DEL DOMINIO
@@ -2955,7 +2994,7 @@ def render_humedad_form(data, assay_id):
             data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
                                            label_visibility="collapsed", placeholder=placeholder)
 
-        _campo("hum_recipiente", "Recipiente no.", placeholder="Ej: 839")
+        _campo("hum_recipiente", "Recipiente no.", placeholder="839")
         _campo("hum_masa_recipiente", "Masa del recipiente (g)")
         _campo("hum_masa_humedo_mas_recipiente", "Masa suelo húmedo + recipiente (g)")
 
