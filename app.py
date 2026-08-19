@@ -66,7 +66,15 @@ st.markdown(f"""
     [data-testid="stMarkdownContainer"] span, [data-testid="stMarkdownContainer"] li {{
         font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif !important;
     }}
-    .stApp {{ background-color: {BG}; }}
+    /* Fondo de cuadrícula sutil (papel milimetrado) solo en el fondo de la página — las tarjetas
+       son opacas ({SURFACE}) así que la cuadrícula solo asoma en los márgenes/espacios entre ellas. */
+    .stApp {{
+        background-color: {BG};
+        background-image:
+            linear-gradient(rgba(33,33,33,0.05) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(33,33,33,0.05) 1px, transparent 1px);
+        background-size: 26px 26px;
+    }}
     [data-testid="collapsedControl"] {{ display: none; }}
     section[data-testid="stSidebar"] {{ display: none; }}
     .font-mono {{ font-family: 'JetBrains Mono', monospace; }}
@@ -141,7 +149,11 @@ st.markdown(f"""
        Ojo: 0 puro también aplastaba las columnas angostas de badges/botones ("Abrir", el badge de
        Estado) en tablas como "Ensayos asignados" — el botón/badge se encogía por debajo de su
        contenido y el texto quedaba amontonado. Esas columnas (con :has) se excluyen del encogido:
-       mantienen su tamaño natural y son las columnas de texto/etiqueta las que ceden espacio. */
+       mantienen su tamaño natural y son las columnas de texto/etiqueta las que ceden espacio.
+       Los encabezados de tabla (.assigned-th, ej. "ID PROYECTO") NO se excluyen del encogido —
+       su columna tiene que encogerse igual que la columna de datos de abajo (misma proporción),
+       si no, encabezado y dato quedan desalineados. En vez de eso, se le quita el nowrap más abajo
+       para que el texto pase a dos líneas dentro del fondo verde en vez de desbordarse cortado. */
     div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] [data-testid="stHorizontalBlock"] {{
         flex-wrap: nowrap !important;
     }}
@@ -352,7 +364,8 @@ st.markdown(f"""
     .assigned-th {{
         background: {SECONDARY_CONTAINER}; color: {PRIMARY}; font-family: 'JetBrains Mono', monospace;
         font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
-        padding: 8px 10px; border-radius: 6px; margin-bottom: 4px; white-space: nowrap;
+        padding: 8px 10px; border-radius: 6px; margin-bottom: 4px; white-space: normal;
+        overflow-wrap: break-word; line-height: 1.3;
     }}
     .assigned-chip {{
         background: {BG}; border: 1px solid {BORDER}; color: {PRIMARY}; font-size: 12px; font-weight: 700;
