@@ -134,9 +134,15 @@ st.markdown(f"""
        arman el layout con st.columns para que etiqueta y campo queden lado a lado — pero Streamlit
        las apila solo (etiqueta arriba, campo abajo a todo el ancho) en pantallas angostas, que es
        justo lo que se ve "apachurrado"/mal alineado en tablet. Se fuerza a que sigan en fila dentro
-       de las tarjetas; en celular muy angosto (420px) se deja el apilado nativo como respaldo. */
+       de las tarjetas; en celular muy angosto (420px) se deja el apilado nativo como respaldo.
+       min-width:0 es clave: sin eso, la columna de la etiqueta no se encoge por debajo del ancho
+       de su texto más largo y la fila se desborda de la tarjeta en vez de acomodarse (la etiqueta
+       larga como "Masa suelo seco + recipiente (g) (16 hrs)" empuja el campo fuera de pantalla). */
     div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] [data-testid="stHorizontalBlock"] {{
         flex-wrap: nowrap !important;
+    }}
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {{
+        min-width: 0 !important;
     }}
     @media (max-width: 420px) {{
         div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] [data-testid="stHorizontalBlock"] {{
