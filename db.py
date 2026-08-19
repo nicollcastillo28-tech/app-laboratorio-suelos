@@ -359,7 +359,7 @@ def list_all_assays(include_archived: bool = False) -> list[dict]:
 
 
 def list_profiles() -> list[dict]:
-    return get_client().table("profiles").select("id, full_name, role").execute().data
+    return get_client().table("profiles").select("id, full_name, role, active").execute().data
 
 
 # ════════════════════════════════════════════════════════════════════

@@ -36,16 +36,16 @@ ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "laboratorista": "Laboratorista", 
 ROLE_INICIALES = {"jefe": "JL", "laboratorista": "LB", "ingeniero": "DT"}
 
 # ════════════════════════════════════════════════════════════════════
-# ESTILOS — paleta del brief SoilLab Pro (Primary #1B365D · Secondary #4A6278 · Tertiary #005EB8 · Neutral #64748B)
+# ESTILOS — paleta "Verdant Precision" (Primary #007A33 · Secondary #4A7862 · Tertiary #D1E8D5 · Neutral #212121)
 # ════════════════════════════════════════════════════════════════════
-PRIMARY, PRIMARY_DARK, PRIMARY_CONTAINER = "#002046", "#001B3D", "#1B365D"
-SECONDARY, SECONDARY_CONTAINER = "#496177", "#C9E2FD"
-TERTIARY = "#005EB8"
-NEUTRAL = "#64748B"
+PRIMARY, PRIMARY_DARK, PRIMARY_CONTAINER = "#007A33", "#00591F", "#0B3D22"
+SECONDARY, SECONDARY_CONTAINER = "#4A7862", "#D1E8D5"
+TERTIARY = "#D1E8D5"
+NEUTRAL = "#6B7570"
 SUCCESS, SUCCESS_LIGHT = "#16A34A", "#DCFCE7"
 WARNING, WARNING_LIGHT = "#D97706", "#FEF3C7"
 DANGER, DANGER_LIGHT = "#DC2626", "#FEE2E2"
-SURFACE, BG, BORDER, TEXT = "#FFFFFF", "#F8F9FF", "#C4C6CF", "#0B1C30"
+SURFACE, BG, BORDER, TEXT = "#FFFFFF", "#F7FAF8", "#D6D9D5", "#212121"
 MUTED = NEUTRAL
 
 st.markdown(f"""
@@ -137,12 +137,21 @@ st.markdown(f"""
        de las tarjetas; en celular muy angosto (420px) se deja el apilado nativo como respaldo.
        min-width:0 es clave: sin eso, la columna de la etiqueta no se encoge por debajo del ancho
        de su texto más largo y la fila se desborda de la tarjeta en vez de acomodarse (la etiqueta
-       larga como "Masa suelo seco + recipiente (g) (16 hrs)" empuja el campo fuera de pantalla). */
+       larga como "Masa suelo seco + recipiente (g) (16 hrs)" empuja el campo fuera de pantalla).
+       Ojo: 0 puro también aplastaba las columnas angostas de badges/botones ("Abrir", el badge de
+       Estado) en tablas como "Ensayos asignados" — el botón/badge se encogía por debajo de su
+       contenido y el texto quedaba amontonado. Esas columnas (con :has) se excluyen del encogido:
+       mantienen su tamaño natural y son las columnas de texto/etiqueta las que ceden espacio. */
     div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] [data-testid="stHorizontalBlock"] {{
         flex-wrap: nowrap !important;
     }}
     div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {{
         min-width: 0 !important;
+    }}
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:has(.stButton),
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:has(.badge) {{
+        min-width: fit-content !important;
+        flex-shrink: 0 !important;
     }}
     @media (max-width: 420px) {{
         div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] [data-testid="stHorizontalBlock"] {{
@@ -928,6 +937,16 @@ def get_project(codigo):
     return next((p for p in st.session_state.projects if p["codigo_interno"] == codigo), None)
 
 
+@st.cache_data(ttl=30)
+def list_laboratoristas():
+    """Nombres de los laboratoristas activos, para el selector de asignación —
+    reemplaza el texto libre de antes, que aceptaba cualquier cosa."""
+    return sorted(
+        p["full_name"] for p in db.list_profiles()
+        if p["role"] == "laboratorista" and p.get("active", True)
+    )
+
+
 def get_muestra(codigo, perforacion_codigo, muestra_id):
     for m in st.session_state.muestras.get(f"{codigo}::{perforacion_codigo}", []):
         if m["id_unico"] == muestra_id:
@@ -1286,7 +1305,12 @@ def render_home():
                 st.markdown(f'<div class="activity-footer">Mostrando {len(recientes)} de {len(todos_los_ensayos)} ensayo(s)</div>',
                             unsafe_allow_html=True)
     else:
-        pendientes = [a for a in todos_los_ensayos if a["status"] != "finalizado"]
+        mi_nombre = st.session_state.profile.get("full_name", "")
+        pendientes = [
+            a for a in todos_los_ensayos
+            if a["status"] != "finalizado"
+            and (get_project(a["codigo_interno"]) or {}).get("laboratorista_asignado") == mi_nombre
+        ]
         with st.container(border=True):
             h1, h2 = st.columns([4, 1])
             with h1:
@@ -1588,11 +1612,14 @@ def render_new_project():
             st.session_state["new_fecha_final_proyecto"] = date.today()
         fecha_final_proyecto = st.date_input("Fecha final proyecto", key="new_fecha_final_proyecto", format="DD/MM/YYYY")
 
-    laboratorista_asignado = st.text_input(
-        "Asignar bitácora a laboratorista (opcional)", placeholder="Nombre del laboratorista",
-        help="Es solo una referencia informativa: como todos los laboratoristas comparten la misma clave, "
-             "esto no restringe quién puede ver o digitar el proyecto.",
+    opciones_lab = list_laboratoristas()
+    laboratorista_asignado = st.selectbox(
+        "Asignar bitácora a laboratorista", ["(sin asignar)"] + opciones_lab,
+        help="Solo esa persona verá este proyecto en su lista de 'Ensayos asignados'. "
+             "Mientras no se asigne, no aparece en la lista de nadie.",
     )
+    if laboratorista_asignado == "(sin asignar)":
+        laboratorista_asignado = ""
 
     # Perforaciones y muestras se arman aquí mismo, antes de crear el proyecto formalmente —
     # en estado de borrador propio (no en st.session_state.perforaciones/muestras, que ahora
@@ -1978,8 +2005,16 @@ def render_edit_project():
     with dc4:
         fecha_final_proyecto = st.date_input("Fecha final proyecto", key=f"edit_fecha_final_proyecto_{codigo}", format="DD/MM/YYYY")
 
-    laboratorista_asignado = st.text_input(
-        "Asignar bitácora a laboratorista (opcional)", value=project.get("laboratorista_asignado", ""))
+    opciones_lab = ["(sin asignar)"] + list_laboratoristas()
+    actual_lab = project.get("laboratorista_asignado") or "(sin asignar)"
+    idx_lab = opciones_lab.index(actual_lab) if actual_lab in opciones_lab else 0
+    laboratorista_asignado = st.selectbox(
+        "Asignar bitácora a laboratorista", opciones_lab, index=idx_lab,
+        key=f"edit_lab_asignado_{codigo}",
+        help="Solo esa persona verá este proyecto en su lista de 'Ensayos asignados'.",
+    )
+    if laboratorista_asignado == "(sin asignar)":
+        laboratorista_asignado = ""
 
     st.markdown("<br>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
@@ -2090,7 +2125,7 @@ def render_perforacion_detail():
                 col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
             for i, m in enumerate(muestras):
                 if i:
-                    st.markdown('<hr style="margin:8px 0;border-color:#C4C6CF;">', unsafe_allow_html=True)
+                    st.markdown(f'<hr style="margin:8px 0;border-color:{BORDER};">', unsafe_allow_html=True)
                 cols = st.columns(col_ratios, vertical_alignment="center")
                 cols[0].markdown(f'<span class="cell-id">M-{html.escape(str(m["numero"]))}</span>', unsafe_allow_html=True)
                 cols[1].markdown(f'<span class="cell-muted">{html.escape(m["tipo_muestra"])}</span>', unsafe_allow_html=True)
