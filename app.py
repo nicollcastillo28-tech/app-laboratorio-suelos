@@ -2859,7 +2859,7 @@ def render_muestra_detail():
             descripcion_val = muestra.get("descripcion_visual")
             if descripcion_val:
                 st.markdown(f'<div style="display:flex;gap:10px;align-items:flex-start;background:{BG};'
-                             f'border-radius:10px;padding:12px 14px;">'
+                             f'border-radius:10px;padding:12px 14px;margin-bottom:4px;">'
                              f'<span style="margin-top:2px;">{icon("visibility", size=18)}</span>'
                              f'<div style="font-weight:600;line-height:1.5;">{html.escape(descripcion_val)}</div></div>',
                              unsafe_allow_html=True)
