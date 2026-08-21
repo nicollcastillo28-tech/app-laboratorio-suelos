@@ -2886,8 +2886,9 @@ def render_muestra_detail():
             if observaciones_val:
                 st.markdown(f'<div class="cell-muted">{html.escape(observaciones_val)}</div>', unsafe_allow_html=True)
             else:
-                st.markdown(f'<div style="display:flex;align-items:center;gap:6px;color:{NEUTRAL};font-style:italic;">'
-                             f'{icon("inbox", size=16)} Sin observaciones</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="display:flex;align-items:center;gap:8px;background:{BG};'
+                             f'border-radius:10px;padding:12px 14px;margin-bottom:4px;color:{NEUTRAL};font-style:italic;">'
+                             f'{icon("inbox", size=18)} Sin observaciones</div>', unsafe_allow_html=True)
 
     if muestra["ensayos"].get("Granulometría"):
         with st.container(border=True):
@@ -2922,9 +2923,13 @@ def render_muestra_detail():
                     st.markdown(f'<div class="cell-muted" style="margin-top:10px;">{" · ".join(detalles)}</div>',
                                 unsafe_allow_html=True)
             else:
-                for razon in resultado.get("faltantes") or ["Aún no hay datos suficientes para calcularla."]:
-                    st.markdown(f'<div style="display:flex;align-items:center;gap:6px;color:{NEUTRAL};font-style:italic;">'
-                                 f'{icon("hourglass_empty", size=16)} {html.escape(razon)}</div>', unsafe_allow_html=True)
+                razones = resultado.get("faltantes") or ["Aún no hay datos suficientes para calcularla."]
+                st.markdown(
+                    f'<div style="display:flex;flex-direction:column;gap:8px;background:{BG};border-radius:10px;'
+                    f'padding:12px 14px;margin-bottom:4px;">' + "".join(
+                        f'<div style="display:flex;align-items:center;gap:8px;color:{NEUTRAL};font-style:italic;">'
+                        f'{icon("hourglass_empty", size=18)} {html.escape(razon)}</div>' for razon in razones
+                    ) + '</div>', unsafe_allow_html=True)
 
     # Filtra por si la muestra guarda un ensayo que ya no es seleccionable (p. ej. "Pasa 200",
     # que quedó incluido dentro de Granulometría) — no se muestra aunque quede marcado en datos viejos.
