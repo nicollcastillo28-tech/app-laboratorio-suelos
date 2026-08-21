@@ -409,12 +409,12 @@ st.markdown(f"""
     .assigned-chip-success {{ background: {SUCCESS_LIGHT}; border-color: {SUCCESS}; color: {SUCCESS}; }}
     .assigned-chip-warning {{ background: {WARNING_LIGHT}; border-color: {WARNING}; color: {WARNING}; }}
     .assigned-chip-danger {{ background: {DANGER_LIGHT}; border-color: {DANGER}; color: {DANGER}; }}
-    /* Versión compacta para filas de tabla densas (ej. "Ensayos asignados" en la lista de
-       muestras): más chicos para que los 3 quepan en una sola fila sin desbordar su columna.
-       .assigned-chip-row los mantiene en línea y, si de plano no caben ni así (pantalla muy
-       angosta), deja scroll horizontal contenido en esa celda en vez de desbordar la tabla. */
+    /* Versión compacta para la columna "Ensayos asignados" de la lista de muestras: uno debajo
+       del otro (Humedad, Granulometría, Límites...) en vez de lado a lado — así la columna solo
+       necesita el ancho del chip más largo, no el de los 3 juntos, y le deja espacio de sobra a
+       "Tipo"/"Profundidad" al lado para no partirse en varias líneas. */
     .assigned-chip-sm {{ font-size: 10px; padding: 2px 6px; white-space: nowrap; }}
-    .assigned-chip-row {{ display: flex; flex-wrap: nowrap; gap: 4px; overflow-x: auto; }}
+    .assigned-chip-row {{ display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }}
 
     /* ---- TARJETAS DE PROYECTO (Proyectos en ejecución) ---- */
     .code-badge {{
@@ -2270,14 +2270,13 @@ def render_perforacion_detail():
         st.info("Esta perforación todavía no tiene muestras. Usa la Bitácora para agregarlas.")
     else:
         with st.container(border=True):
-            # Los encabezados van cortos a propósito ("ID", "Prof.") aunque el nombre completo
-            # sea más claro: con la columna angosta que necesita "Ensayos asignados" para no
-            # desbordarse, un encabezado largo como "Muestra ID" se parte en varias líneas
-            # (llegó a verse letra por letra) y esa fila, al ser la más alta, deja un hueco vacío
-            # en todos los demás encabezados — que es justo lo que se veía "apachurrado".
-            col_ratios = [0.7, 0.9, 1.2, 4.3, 1.0]
+            # Los ensayos asignados van apilados uno debajo del otro (ver .assigned-chip-row),
+            # así que la columna ya no necesita ancho para 3 chips lado a lado — se le puede
+            # devolver espacio a "Tipo"/"Profundidad" sin que sus encabezados se partan en
+            # varias líneas (con la columna muy angosta, hasta "Tipo" se partía letra por letra).
+            col_ratios = [0.8, 1.3, 1.4, 2.6, 1.0]
             headers = st.columns(col_ratios)
-            for col, label in zip(headers, ["ID", "Tipo", "Prof.", "Ensayos asignados", "Acción"]):
+            for col, label in zip(headers, ["ID", "Tipo", "Profundidad", "Ensayos asignados", "Acción"]):
                 col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
             for i, m in enumerate(muestras):
                 if i:
