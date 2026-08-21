@@ -323,8 +323,19 @@ st.markdown(f"""
     }}
     .bento-light h3 {{ color: {PRIMARY}; margin: 4px 0 6px 0; font-size: 18px; }}
 
-    /* Tarjetas de la fila de acciones de Inicio, todas del mismo alto y alineadas */
-    .st-key-home-actions [data-testid="stHorizontalBlock"] {{ align-items: stretch; }}
+    /* Tarjetas de la fila de acciones de Inicio, todas del mismo alto y alineadas.
+       El wrap nativo de Streamlit para st.columns() se activa según el ancho de la ventana, no
+       según el espacio real disponible en esta fila — en una tablet ancha (pero no tan ancha como
+       para que quepan cómodas 3 tarjetas con su texto) no llegaba a activarse y la fila se
+       desbordaba, obligando a hacer scroll horizontal para ver la tercera tarjeta. Se le da a cada
+       columna un ancho mínimo propio y se fuerza el wrap explícitamente: sobran 3 en pantallas
+       anchas, se acomodan 2+1 o 1+1+1 en las angostas. */
+    .st-key-home-actions [data-testid="stHorizontalBlock"] {{
+        align-items: stretch; flex-wrap: wrap !important; row-gap: 16px;
+    }}
+    .st-key-home-actions [data-testid="stColumn"] {{
+        flex: 1 1 260px !important; min-width: 260px !important; width: auto !important;
+    }}
     .st-key-home-actions [data-testid="stElementContainer"]:has(.bento-primary),
     .st-key-home-actions [data-testid="stElementContainer"]:has(.bento-light) {{ flex: 1 1 auto; }}
     .st-key-home-actions [data-testid="stElementContainer"]:has(.bento-primary) .stMarkdown,
