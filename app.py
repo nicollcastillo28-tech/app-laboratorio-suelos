@@ -1795,6 +1795,14 @@ def render_new_project():
         if "new_fecha_final_proyecto" not in st.session_state:
             st.session_state["new_fecha_final_proyecto"] = date.today()
         fecha_final_proyecto = st.date_input("Fecha final proyecto", key="new_fecha_final_proyecto", format="DD/MM/YYYY")
+    # A diferencia de las demás fechas, esta normalmente no se sabe todavía al crear el
+    # proyecto (es cuándo terminó de verdad, no la fecha final planeada) — arranca vacía en
+    # vez de con la fecha de hoy, y se puede completar después desde "Editar proyecto".
+    fecha_final_real = st.date_input(
+        "Fecha final real", key="new_fecha_final_real", format="DD/MM/YYYY", value=None,
+        help="Cuándo terminó de verdad el proyecto — distinta de la fecha final planeada. "
+             "Déjala vacía si todavía no ha terminado.",
+    )
 
     # La asignación ya no es por proyecto entero — se asigna ensayo por ensayo desde el
     # detalle de cada muestra (ver render_muestra_detail), una vez que la bitácora existe.
@@ -1922,6 +1930,7 @@ def render_new_project():
                 "direccion_cliente": direccion_cliente, "telefono_contacto": telefono_contacto,
                 "nombre_contacto": nombre_contacto,
                 "fecha_inicio_proyecto": str(fecha_inicio_proyecto), "fecha_final_proyecto": str(fecha_final_proyecto),
+                "fecha_final_real": str(fecha_final_real) if fecha_final_real else "",
                 "fecha_recepcion": str(fecha_recepcion), "fecha_ejecucion": str(fecha_ejecucion), "fecha_emision": str(fecha_emision),
             }, perforaciones_payload)
             _limpiar_borrador()
@@ -1965,6 +1974,7 @@ def render_project_detail():
             ("move_to_inbox", "Ingreso de muestras", project.get("fecha_ingreso_muestra")),
             ("event", "Fecha inicio proyecto", project.get("fecha_inicio_proyecto")),
             ("event_available", "Fecha final proyecto", project.get("fecha_final_proyecto")),
+            ("event_available", "Fecha final real", project.get("fecha_final_real")),
             ("inbox", "Fecha de recepción", project.get("fecha_recepcion")),
             ("science", "Fecha de ejecución", project.get("fecha_ejecucion")),
             ("outbox", "Fecha de emisión", project.get("fecha_emision")),
@@ -2180,6 +2190,17 @@ def render_edit_project():
         fecha_inicio_proyecto = st.date_input("Fecha inicio proyecto", key=f"edit_fecha_inicio_proyecto_{codigo}", format="DD/MM/YYYY")
     with dc4:
         fecha_final_proyecto = st.date_input("Fecha final proyecto", key=f"edit_fecha_final_proyecto_{codigo}", format="DD/MM/YYYY")
+    # A diferencia de las demás, esta fecha se queda vacía (no en hoy) si el proyecto todavía
+    # no ha terminado de verdad — por eso no usa _parse_fecha (esa cae a hoy si no hay valor).
+    if f"edit_fecha_final_real_{codigo}" not in st.session_state:
+        try:
+            st.session_state[f"edit_fecha_final_real_{codigo}"] = date.fromisoformat(project.get("fecha_final_real"))
+        except (TypeError, ValueError):
+            st.session_state[f"edit_fecha_final_real_{codigo}"] = None
+    fecha_final_real = st.date_input(
+        "Fecha final real", key=f"edit_fecha_final_real_{codigo}", format="DD/MM/YYYY",
+        help="Cuándo terminó de verdad el proyecto — distinta de la fecha final planeada.",
+    )
 
     st.markdown("<br>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
@@ -2195,6 +2216,7 @@ def render_edit_project():
                 muestra_tomada_por=muestra_tomada_por, direccion_cliente=direccion_cliente,
                 telefono_contacto=telefono_contacto, nombre_contacto=nombre_contacto,
                 fecha_inicio_proyecto=str(fecha_inicio_proyecto), fecha_final_proyecto=str(fecha_final_proyecto),
+                fecha_final_real=str(fecha_final_real) if fecha_final_real else None,
                 fecha_recepcion=str(fecha_recepcion), fecha_ejecucion=str(fecha_ejecucion), fecha_emision=str(fecha_emision),
             )
             navigate("project-detail")
