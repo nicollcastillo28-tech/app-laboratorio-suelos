@@ -1970,14 +1970,6 @@ def render_project_detail():
         info_rows = [
             ("location_on", "Ubicación", project.get("localizacion")),
             ("rule", "Norma", project.get("norma")),
-            ("calendar_month", "Fecha de orden", project.get("fecha_bitacora")),
-            ("move_to_inbox", "Ingreso de muestras", project.get("fecha_ingreso_muestra")),
-            ("event", "Fecha inicio proyecto", project.get("fecha_inicio_proyecto")),
-            ("event_available", "Fecha final proyecto", project.get("fecha_final_proyecto")),
-            ("event_available", "Fecha final real", project.get("fecha_final_real")),
-            ("inbox", "Fecha de recepción", project.get("fecha_recepcion")),
-            ("science", "Fecha de ejecución", project.get("fecha_ejecucion")),
-            ("outbox", "Fecha de emisión", project.get("fecha_emision")),
         ]
         # Datos del cliente: los ven Jefe y Director Técnico (roles de consulta/revisión), nunca el laboratorista.
         if st.session_state.role in ("jefe", "ingeniero"):
@@ -1986,11 +1978,35 @@ def render_project_detail():
             info_rows.insert(3, ("home_pin", "Dirección cliente", project.get("direccion_cliente")))
             info_rows.insert(4, ("call", "Teléfono de contacto", project.get("telefono_contacto")))
             info_rows.insert(5, ("contact_page", "Nombre de contacto", project.get("nombre_contacto")))
+
+        def _info_row(icono, label, valor, primera):
+            margen = "" if primera else "margin-top:14px;"
+            return (f'<div class="cell-muted" style="{margen}text-transform:uppercase;letter-spacing:0.04em;font-size:11px;">'
+                    f'{icon(icono, size=14)} {label}</div>'
+                    f'<div style="font-weight:600;font-size:15px;">{html.escape(valor or "—")}</div>')
+
         for i, (icono, label, valor) in enumerate(info_rows):
-            margen = "margin-top:14px;" if i else ""
-            st.markdown(f'<div class="cell-muted" style="{margen}text-transform:uppercase;letter-spacing:0.04em;font-size:11px;">'
-                        f'{icon(icono, size=14)} {label}</div>'
-                        f'<div style="font-weight:600;font-size:15px;">{html.escape(valor or "—")}</div>', unsafe_allow_html=True)
+            st.markdown(_info_row(icono, label, valor, i == 0), unsafe_allow_html=True)
+
+        # Fechas agrupadas en paquetes separados (orden/ingreso, plazos del proyecto, ejecución/emisión)
+        # para que no se vean como una sola lista larga y confusa.
+        date_groups = [
+            [("calendar_month", "Fecha de orden", project.get("fecha_bitacora")),
+             ("move_to_inbox", "Ingreso de muestras", project.get("fecha_ingreso_muestra"))],
+            [("event", "Fecha inicio proyecto", project.get("fecha_inicio_proyecto")),
+             ("event_available", "Fecha final proyecto", project.get("fecha_final_proyecto")),
+             ("event_available", "Fecha final real", project.get("fecha_final_real"))],
+            [("inbox", "Fecha de recepción", project.get("fecha_recepcion")),
+             ("science", "Fecha de ejecución", project.get("fecha_ejecucion")),
+             ("outbox", "Fecha de emisión", project.get("fecha_emision"))],
+        ]
+        for group in date_groups:
+            rows_html = "".join(_info_row(icono, label, valor, i == 0) for i, (icono, label, valor) in enumerate(group))
+            st.markdown(
+                f'<div style="margin-top:16px;padding:10px 12px 12px;border-radius:10px;'
+                f'background:rgba(74,120,98,0.06);border:1px solid rgba(74,120,98,0.16);">{rows_html}</div>',
+                unsafe_allow_html=True,
+            )
 
     if st.session_state.role == "jefe":
         c1, c2 = st.columns(2)
