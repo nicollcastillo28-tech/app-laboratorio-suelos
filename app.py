@@ -1966,10 +1966,11 @@ def render_project_detail():
         </div>
     ''', unsafe_allow_html=True)
 
-    # Alerta de plazo: solo Jefe y Director Técnico la ven, y solo mientras el proyecto sigue
-    # abierto (si ya tiene fecha final real, ya se sabe cómo terminó y contar días no aporta).
-    if st.session_state.role in ("jefe", "ingeniero") and not project.get("fecha_final_real"):
-        deadline_raw = project.get("fecha_final_proyecto")
+    # Alerta de plazo: solo Jefe y Director Técnico la ven. Se basa en "Fecha final real" (el
+    # plazo que de verdad hay que cumplir, ajustado a contratiempos) y no en "Fecha final
+    # proyecto" (que es solo la referencia inicial que se le da al cliente).
+    if st.session_state.role in ("jefe", "ingeniero"):
+        deadline_raw = project.get("fecha_final_real")
         dias_restantes = None
         if deadline_raw:
             try:
@@ -1993,7 +1994,7 @@ def render_project_detail():
                 <div style="display:flex;align-items:center;gap:10px;background:{fondo};color:{tono};
                             border-radius:10px;padding:10px 14px;margin-bottom:16px;font-weight:600;font-size:14px;">
                     {icon(icono_alerta, size=18)}
-                    <span>{texto} para la fecha límite del proyecto ({deadline_raw})</span>
+                    <span>{texto} para la fecha final real del proyecto ({deadline_raw})</span>
                 </div>
             ''', unsafe_allow_html=True)
 
