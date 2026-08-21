@@ -1726,7 +1726,7 @@ def render_new_project():
     require_role("jefe")
     if st.button("← Atrás"):
         go_back()
-    st.markdown("## Nuevo proyecto")
+    st.markdown("## Bitácora de proyecto")
 
     st.markdown('<div class="section-title">Código interno</div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1, 1, 1])
