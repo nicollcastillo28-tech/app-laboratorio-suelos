@@ -401,10 +401,14 @@ st.markdown(f"""
     }}
     .activity-table tbody tr:last-child td {{ border-bottom: none; }}
     .activity-table tbody tr:hover {{ background: {BG}; }}
-    .activity-table .cell-id {{ font-family: 'JetBrains Mono', monospace; color: {PRIMARY}; font-weight: 800; font-size: 15px; }}
-    .activity-table .cell-title {{ font-weight: 600; color: {TEXT}; }}
-    .activity-table .cell-sub {{ font-size: 12px; color: {NEUTRAL}; margin-top: 1px; }}
-    .activity-table .cell-muted {{ color: {NEUTRAL}; font-size: 13px; }}
+    /* OJO: estas 4 clases se usan sueltas (Actividad reciente, Ensayos asignados, Buscar...)
+    fuera de cualquier ".activity-table" — ese wrapper ya no existe en ningún lado del código,
+    así que iban sin aplicar (texto a tamaño por defecto, más grande de lo pensado) hasta que
+    se les quitó el prefijo muerto. */
+    .cell-id {{ font-family: 'JetBrains Mono', monospace; color: {PRIMARY}; font-weight: 800; font-size: 14px; }}
+    .cell-title {{ font-weight: 600; color: {TEXT}; font-size: 14px; }}
+    .cell-sub {{ font-size: 11.5px; color: {NEUTRAL}; margin-top: 1px; }}
+    .cell-muted {{ color: {NEUTRAL}; font-size: 12px; }}
     .activity-footer {{
         display: flex; justify-content: space-between; align-items: center; padding: 10px 14px;
         color: {NEUTRAL}; font-size: 13px;
