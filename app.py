@@ -745,6 +745,31 @@ def _set_session_cookie(access_token, refresh_token):
     """, height=0)
 
 
+def _set_remember_user_cookie(codigo):
+    """Guarda el código de usuario (no la clave) en una cookie aparte de la de sesión, para
+    precargar el campo "Código de usuario" del login la próxima vez que haga falta iniciar
+    sesión — checkbox "Recordar mi usuario" en render_login()."""
+    components.html(f"""
+    <script>
+    (function() {{
+        var maxAge = {SESSION_COOKIE_MAX_AGE};
+        var u = {json.dumps(codigo)};
+        window.parent.document.cookie = "gdl_user=" + encodeURIComponent(u) + "; max-age=" + maxAge + "; path=/; SameSite=Lax";
+    }})();
+    </script>
+    """, height=0)
+
+
+def _clear_remember_user_cookie():
+    components.html("""
+    <script>
+    (function() {
+        window.parent.document.cookie = "gdl_user=; max-age=0; path=/; SameSite=Lax";
+    })();
+    </script>
+    """, height=0)
+
+
 def _clear_session_cookie():
     components.html("""
     <script>
@@ -848,6 +873,11 @@ def init_state():
         if profile:
             st.session_state.profile = profile
             st.session_state.role = profile["role"]
+            # restore_session() refresca el token si el access_token de la cookie ya había
+            # vencido — Supabase rota el refresh_token en ese refresh, así que hay que
+            # reescribir la cookie con los tokens nuevos (ver _tokens_rotated en el router
+            # principal) o el siguiente recargo fallaría con un refresh_token ya inválido.
+            st.session_state["_tokens_rotated"] = True
 
 
 init_state()
@@ -1211,8 +1241,10 @@ def render_login():
         with st.container(border=True, key="login-card"):
             st.markdown("#### Bienvenido de nuevo")
             st.caption("Ingresa tu código de usuario y tu clave para acceder al sistema.")
-            codigo = st.text_input("Código de usuario", placeholder="ej. jperez", autocomplete="off")
+            codigo_recordado = st.context.cookies.get("gdl_user") or ""
+            codigo = st.text_input("Código de usuario", value=codigo_recordado, placeholder="ej. jperez", autocomplete="off")
             password = st.text_input("Clave de acceso", type="password", placeholder="••••••••")
+            recordar = st.checkbox("Recordar mi usuario", value=True)
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("INGRESAR", type="primary", use_container_width=True):
                 if not codigo or not password:
@@ -1231,6 +1263,7 @@ def render_login():
                         # puesta). Se guarda el token pendiente y se escribe la cookie en el
                         # siguiente rerun, cuando ya no hay un rerun inmediato después que lo corte.
                         st.session_state._pending_cookie_tokens = db.get_session_tokens()
+                        st.session_state._pending_remember_user = codigo.strip() if recordar else ""
                         st.rerun()
             st.markdown('<hr style="margin:16px 0 4px 0;">', unsafe_allow_html=True)
             if st.button("¿Olvidaste tu clave?", key="forgot_pwd", type="secondary", use_container_width=True):
@@ -4168,9 +4201,22 @@ else:
     if st.session_state.get("_pending_cookie_tokens"):
         tokens = st.session_state.pop("_pending_cookie_tokens")
         _set_session_cookie(tokens["access_token"], tokens["refresh_token"])
+    if "_pending_remember_user" in st.session_state:
+        codigo_a_recordar = st.session_state.pop("_pending_remember_user")
+        if codigo_a_recordar:
+            _set_remember_user_cookie(codigo_a_recordar)
+        else:
+            _clear_remember_user_cookie()
     if st.session_state.pop("_pending_history_push", False):
         _push_history_entry()
     _load_data()
+    # Si algo de lo anterior refrescó el token (ver _tokens_rotated en db._refresh_if_needed
+    # y en el restore de cookie de init_state), la cookie del navegador queda con un
+    # refresh_token ya rotado/vencido si no se vuelve a guardar aquí con el vigente.
+    if st.session_state.pop("_tokens_rotated", False):
+        tokens_vigentes = db.get_session_tokens()
+        if tokens_vigentes:
+            _set_session_cookie(tokens_vigentes["access_token"], tokens_vigentes["refresh_token"])
     render_topbar()
     SCREENS = {
         "home": render_home, "new-project": render_new_project, "project-detail": render_project_detail,

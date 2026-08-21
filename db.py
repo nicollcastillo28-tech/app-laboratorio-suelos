@@ -40,7 +40,14 @@ def _refresh_if_needed(client: Client):
     """Solo refresca cuando el token está por vencer (no en cada llamada) — refrescar
     de más puede invalidar momentáneamente la sesión entre dos operaciones seguidas de
     la misma acción, y esa ventana hace que la siguiente llamada corra como anónimo
-    (RLS la rechaza en vez de dar un error de autenticación claro)."""
+    (RLS la rechaza en vez de dar un error de autenticación claro).
+
+    OJO: Supabase rota el refresh_token cada vez que se refresca la sesión (el viejo queda
+    inválido) — si no se avisa a app.py para que reescriba la cookie del navegador con el
+    token nuevo, la próxima vez que la persona recargue la página, la cookie tendrá un
+    refresh_token ya vencido y la mandará de vuelta al login aunque haya seguido usando la
+    app activamente. `_tokens_rotated` es la señal que app.py revisa en cada rerun para
+    volver a guardar la cookie con los tokens vigentes (ver router principal)."""
     import time
     session = client.auth.get_session()
     if session is None:
@@ -50,6 +57,7 @@ def _refresh_if_needed(client: Client):
         return
     try:
         client.auth.refresh_session()
+        st.session_state["_tokens_rotated"] = True
     except Exception:
         sign_out()
 
