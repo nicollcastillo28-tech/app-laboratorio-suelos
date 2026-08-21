@@ -2466,7 +2466,7 @@ def render_bitacora():
     require_role("jefe")
     if st.button("← Atrás"):
         go_back()
-    st.markdown("## Bitácora orden para ensayos de laboratorio")
+    st.markdown("## Orden de ensayos para laboratorio")
 
     codes = [p["codigo_interno"] for p in st.session_state.projects]
     if not codes:
