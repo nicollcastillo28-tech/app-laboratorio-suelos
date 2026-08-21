@@ -3456,7 +3456,8 @@ def render_read_only_summary(tipo, data, laboratorista="—"):
         # como se llena a mano en la plantilla física: masa suelo seco + recipiente, menos recipiente.
         with st.container(border=True):
             st.markdown(card_header_html("grid_view", "Granulometría (Masa de Suelo Retenido)"), unsafe_allow_html=True)
-            sieve_rows = [(label, data.get(key, "—")) for key, label, _apert, _cell in SIEVES]
+            # Tamiz sin digitar = no se pesó nada retenido ahí, no un dato faltante -> se muestra 0.
+            sieve_rows = [(label, data.get(key) if data.get(key) not in (None, "") else 0) for key, label, _apert, _cell in SIEVES]
             st.markdown(param_table_html(sieve_rows, header_left="TAMIZ", header_right="RETENIDO (g)"), unsafe_allow_html=True)
         equipos, norma = data.get("gran_equipos", []), data.get("gran_norma", "—")
     elif tipo == "pasa200":
