@@ -2000,10 +2000,11 @@ def render_project_detail():
              ("science", "Fecha de ejecución", project.get("fecha_ejecucion")),
              ("outbox", "Fecha de emisión", project.get("fecha_emision"))],
         ]
-        for group in date_groups:
+        for gi, group in enumerate(date_groups):
+            margen_inferior = "margin-bottom:6px;" if gi == len(date_groups) - 1 else ""
             rows_html = "".join(_info_row(icono, label, valor, i == 0) for i, (icono, label, valor) in enumerate(group))
             st.markdown(
-                f'<div style="margin-top:16px;padding:10px 12px 12px;border-radius:10px;'
+                f'<div style="margin-top:16px;{margen_inferior}padding:10px 12px 12px;border-radius:10px;'
                 f'background:rgba(74,120,98,0.06);border:1px solid rgba(74,120,98,0.16);">{rows_html}</div>',
                 unsafe_allow_html=True,
             )
