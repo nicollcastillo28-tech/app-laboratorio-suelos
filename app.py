@@ -3079,13 +3079,17 @@ def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_dat
         masa_inicial_seca = to_float(gran_data.get("masa_inicial_seca"))
         if masa_inicial_seca is not None:
             ws["D17"] = masa_inicial_seca
-        # Si solo se solicitó Pasa 200 (sin Granulometría), `gran_data` no trae los tamices —
-        # se dejan las celdas tal cual trae la plantilla en vez de escribir 0, para no simular
-        # una curva granulométrica falsa ("pasa 100%" en todos los tamices).
+        # Si solo se solicitó Pasa 200 (sin Granulometría), `gran_data` no trae los tamices en
+        # absoluto (nunca pasó por el formulario de Granulometría) — ahí se dejan las celdas tal
+        # cual trae la plantilla, para no simular una curva granulométrica falsa ("pasa 100%" en
+        # todos los tamices). Pero si el tamiz SÍ se digitó (el ensayo de Granulometría existe y
+        # su formulario ya se abrió), un tamiz que quedó en blanco significa "no quedó nada
+        # retenido ahí" y se escribe como 0, igual que en la vista de solo lectura de la app.
         for key, _label, _apert, cell in SIEVES:
+            if key not in gran_data:
+                continue
             valor = to_float(gran_data.get(key))
-            if valor is not None:
-                ws[cell] = valor
+            ws[cell] = valor if valor is not None else 0
 
     if lim_data is not None:
         _escribir_limites(ws, lim_data)
