@@ -2677,8 +2677,7 @@ def render_muestra_detail():
     with st.container(border=True):
         st.markdown('<div class="section-title">Observaciones</div>', unsafe_allow_html=True)
         st.caption("El laboratorista la digita si la muestra presenta fisuras o no se puede realizar el ensayo "
-                   "por alguna razón. Se guarda para todos los ensayos de esta muestra. El Jefe deja instrucciones "
-                   "para el laboratorista desde la Bitácora, al crear o editar la muestra.")
+                   "por alguna razón.")
         if st.session_state.role == "laboratorista":
             with st.container(key="muestra-obs-box"):
                 observacion = st.text_area(
@@ -2690,8 +2689,12 @@ def render_muestra_detail():
                 st.success("Observación guardada.")
                 st.rerun()
         else:
-            st.markdown(f'<div class="cell-muted">{html.escape(muestra.get("observaciones") or "— Sin observaciones —")}</div>',
-                        unsafe_allow_html=True)
+            observaciones_val = muestra.get("observaciones")
+            if observaciones_val:
+                st.markdown(f'<div class="cell-muted">{html.escape(observaciones_val)}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div style="display:flex;align-items:center;gap:6px;color:{NEUTRAL};font-style:italic;">'
+                             f'{icon("inbox", size=16)} Sin observaciones</div>', unsafe_allow_html=True)
 
     # Filtra por si la muestra guarda un ensayo que ya no es seleccionable (p. ej. "Pasa 200",
     # que quedó incluido dentro de Granulometría) — no se muestra aunque quede marcado en datos viejos.
