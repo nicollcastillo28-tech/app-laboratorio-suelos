@@ -147,6 +147,14 @@ st.markdown(f"""
         border-radius: 12px !important; border: 1px solid {BORDER} !important;
         box-shadow: 0 1px 4px rgba(11,28,48,0.08) !important; background: {SURFACE} !important;
     }}
+    /* Barra de título del expander (ej. "S1 — Sondeo · 2 muestra(s)") en verde, para que cada
+    perforación se distinga de un vistazo dentro de la lista. */
+    [data-testid="stExpander"] summary {{
+        background: {SECONDARY_CONTAINER} !important; border-radius: 11px 11px 0 0 !important;
+    }}
+    [data-testid="stExpander"] summary, [data-testid="stExpander"] summary * {{
+        color: {PRIMARY} !important;
+    }}
     /* Las filas "etiqueta + campo" de los formularios de ensayo (humedad, límites, granulometría...)
        arman el layout con st.columns para que etiqueta y campo queden lado a lado — pero Streamlit
        las apila solo (etiqueta arriba, campo abajo a todo el ancho) en pantallas angostas, que es
