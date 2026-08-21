@@ -165,6 +165,17 @@ st.markdown(f"""
         min-width: fit-content !important;
         flex-shrink: 0 !important;
     }}
+    /* La regla de arriba (:has) protege la columna de un botón/badge en la fila de DATOS, pero la
+       fila de ENCABEZADO (.assigned-th, sin botón ni badge) no calzaba con ese :has y se encogía
+       distinto → encabezado y dato quedaban desalineados (ej. "ESTADO"/"ACCIÓN" corridos respecto
+       a su columna real). Se protegen las últimas 2 columnas por posición, no por contenido, y solo
+       dentro de las tarjetas que son tablas (tienen algún .assigned-th) para no tocar los formularios
+       de 2 columnas etiqueta+campo. */
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:has(.assigned-th)
+        [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-last-child(-n+2) {{
+        min-width: fit-content !important;
+        flex-shrink: 0 !important;
+    }}
     @media (max-width: 420px) {{
         div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] [data-testid="stHorizontalBlock"] {{
             flex-wrap: wrap !important;
@@ -774,7 +785,8 @@ def status_badge_html(status, font_size=None):
 
 def status_circle_html(status, size=20):
     circle_class = STATUS_BADGE[status].replace("badge-", "status-circle-")
-    return f'<span class="status-circle {circle_class}">{icon(STATUS_ICON[status], size=size, fill=True)}</span>'
+    return (f'<span class="status-circle {circle_class}" title="{html.escape(STATUS_LABELS[status])}">'
+            f'{icon(STATUS_ICON[status], size=size, fill=True)}</span>')
 
 
 APROBACION_INFO = {
@@ -1310,7 +1322,8 @@ def render_home():
                     cols[1].markdown(f'<div class="cell-title">{titulo}</div>', unsafe_allow_html=True)
                     cols[2].markdown(f'<div class="cell-sub">{subtitulo}</div>', unsafe_allow_html=True)
                     cols[3].markdown(f'<span class="cell-muted">{html.escape(actualizacion)}</span>', unsafe_allow_html=True)
-                    cols[4].markdown(status_badge_html(a["status"]), unsafe_allow_html=True)
+                    with cols[4]:
+                        st.markdown(f'<div style="text-align:center;">{status_circle_html(a["status"], size=16)}</div>', unsafe_allow_html=True)
                     with cols[5]:
                         if st.button("Abrir", key=f"open_recent_{a['id']}", use_container_width=True):
                             st.session_state.selected_codigo = a["codigo_interno"]
@@ -1352,7 +1365,8 @@ def render_home():
                     cols[2].markdown(f'<span class="assigned-chip">{ASSAY_LABELS[a["tipo"]]}</span>', unsafe_allow_html=True)
                     cols[3].markdown(f'<span class="cell-muted">{html.escape(format_dt(a["lastModified"]))}</span>',
                                       unsafe_allow_html=True)
-                    cols[4].markdown(status_badge_html(a["status"]), unsafe_allow_html=True)
+                    with cols[4]:
+                        st.markdown(f'<div style="text-align:center;">{status_circle_html(a["status"], size=16)}</div>', unsafe_allow_html=True)
                     with cols[5]:
                         if st.button("Abrir", key=f"open_assigned_{a['id']}", use_container_width=True):
                             st.session_state.selected_assay_id = a["id"]
@@ -2147,7 +2161,8 @@ def render_perforacion_detail():
                 chips = "".join(f'<span class="assigned-chip" style="margin-right:4px;">{html.escape(e)}</span>' for e in ensayos_sol) \
                     or '<span class="cell-muted">—</span>'
                 cols[3].markdown(chips, unsafe_allow_html=True)
-                cols[4].markdown(status_badge_html(compute_muestra_estado(m)), unsafe_allow_html=True)
+                with cols[4]:
+                    st.markdown(f'<div style="text-align:center;">{status_circle_html(compute_muestra_estado(m), size=16)}</div>', unsafe_allow_html=True)
                 with cols[5]:
                     if st.button("Abrir", key=f"open_muestra_{m['id_unico']}", use_container_width=True):
                         st.session_state.selected_muestra_id = m["id_unico"]
@@ -3602,7 +3617,8 @@ def render_search():
                                   f'<div class="cell-sub">{html.escape(codigo)}</div>', unsafe_allow_html=True)
                 cols[2].markdown(f'<div class="cell-title">{html.escape(ensayo_label)}</div>'
                                   f'<div class="cell-sub">Muestra {html.escape(str(m["numero"]))}</div>', unsafe_allow_html=True)
-                cols[3].markdown(status_badge_html(status), unsafe_allow_html=True)
+                with cols[3]:
+                    st.markdown(f'<div style="text-align:center;">{status_circle_html(status, size=16)}</div>', unsafe_allow_html=True)
                 with cols[4]:
                     if st.button("", key=f"search_open_{m['id_unico']}_{tipo_interno}", icon=":material/chevron_right:",
                                  use_container_width=True, help="Abrir"):
