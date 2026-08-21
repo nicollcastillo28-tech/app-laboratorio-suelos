@@ -8,6 +8,7 @@ Cómo correrla en tu computador:
 
 import html
 import json
+import math
 import os
 import re
 import zipfile
@@ -2622,6 +2623,191 @@ def render_bitacora():
 
 
 # ════════════════════════════════════════════════════════════════════
+# CLASIFICACIÓN USCS (ASTM D2487 / INV E-102), calculada en la app a partir de los datos ya
+# digitados de Granulometría y Límites de Atterberg — para no tener que abrir el Excel solo para
+# ver a qué grupo pertenece la muestra. OJO: no hay ningún dato digitado en la app que permita
+# distinguir un suelo orgánico (color, olor) del inorgánico, así que siempre se asume inorgánico
+# (igual que ya asume la descripción visual del laboratorista); por eso conviene que el Jefe/
+# Director Técnico verifiquen los primeros resultados contra el Excel antes de confiar en ellos.
+# ════════════════════════════════════════════════════════════════════
+USCS_NOMBRES = {
+    "GW": "Grava bien gradada", "GP": "Grava mal gradada",
+    "GM": "Grava limosa", "GC": "Grava arcillosa",
+    "GW-GM": "Grava bien gradada con limo", "GW-GC": "Grava bien gradada con arcilla",
+    "GP-GM": "Grava mal gradada con limo", "GP-GC": "Grava mal gradada con arcilla",
+    "SW": "Arena bien gradada", "SP": "Arena mal gradada",
+    "SM": "Arena limosa", "SC": "Arena arcillosa",
+    "SW-SM": "Arena bien gradada con limo", "SW-SC": "Arena bien gradada con arcilla",
+    "SP-SM": "Arena mal gradada con limo", "SP-SC": "Arena mal gradada con arcilla",
+    "CL": "Arcilla de baja plasticidad", "ML": "Limo de baja plasticidad",
+    "CL-ML": "Arcilla limosa de baja plasticidad",
+    "CH": "Arcilla de alta plasticidad", "MH": "Limo de alta plasticidad",
+}
+
+
+def _calcular_limites_atterberg(data):
+    """LL, LP e IP a partir de las lecturas digitadas (INV E-125/E-126, equivalente a ASTM D4318):
+    humedad = (masa húmeda - masa seca) / (masa seca - masa recipiente) x 100 por cada ensayo. El
+    Límite Líquido es la humedad interpolada a 25 golpes sobre la curva de fluidez (humedad vs.
+    log de golpes) — si algún ensayo se hizo exactamente a 25 golpes se usa esa lectura directa en
+    vez de la regresión, igual que la fórmula de la plantilla de Excel. Devuelve (None, None, None)
+    si no hay lecturas suficientes."""
+    puntos = []
+    for i in range(1, LIMITE_LIQUIDO_N + 1):
+        golpes = to_float(data.get(f"lim_ll_golpes_{i}"))
+        humedo = to_float(data.get(f"lim_ll_humedo_{i}"))
+        seco = to_float(data.get(f"lim_ll_seco_{i}"))
+        recip = to_float(data.get(f"lim_ll_recip_masa_{i}"))
+        if None in (golpes, humedo, seco, recip) or golpes <= 0 or (seco - recip) <= 0:
+            continue
+        puntos.append((golpes, (humedo - seco) / (seco - recip) * 100))
+
+    ll = None
+    if puntos:
+        exacto25 = [w for g, w in puntos if abs(g - 25) < 0.5]
+        if exacto25:
+            ll = exacto25[0]
+        elif len(puntos) >= 2:
+            xs = [math.log10(g) for g, _ in puntos]
+            ys = [w for _, w in puntos]
+            n = len(xs)
+            mean_x, mean_y = sum(xs) / n, sum(ys) / n
+            sxx = sum((x - mean_x) ** 2 for x in xs)
+            if sxx == 0:
+                ll = ys[0]
+            else:
+                pendiente = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / sxx
+                intercepto = mean_y - pendiente * mean_x
+                ll = intercepto + pendiente * math.log10(25)
+        else:
+            ll = puntos[0][1]
+
+    humedades_lp = []
+    for i in range(1, LIMITE_PLASTICO_N + 1):
+        humedo = to_float(data.get(f"lim_lp_humedo_{i}"))
+        seco = to_float(data.get(f"lim_lp_seco_{i}"))
+        recip = to_float(data.get(f"lim_lp_recip_masa_{i}"))
+        if None in (humedo, seco, recip) or (seco - recip) <= 0:
+            continue
+        humedades_lp.append((humedo - seco) / (seco - recip) * 100)
+    lp = sum(humedades_lp) / len(humedades_lp) if humedades_lp else None
+
+    if ll is None or lp is None:
+        return None, None, None
+    ll_i, lp_i = int(ll), int(lp)
+    return ll_i, lp_i, max(ll_i - lp_i, 0)
+
+
+def _calcular_curva_granulometrica(gran_data):
+    """% que pasa cada tamiz, a partir de las masas retenidas digitadas y la masa inicial seca
+    (derivada de las lecturas de Pasa No. 200 — la misma base que ya usa el Excel en D17). Un
+    tamiz sin digitar cuenta como 0 g retenido, igual que en la tabla de solo lectura. Devuelve
+    None si todavía no hay masa inicial válida (Pasa No. 200 sin digitar)."""
+    masa_seco_mas_recip = to_float(gran_data.get("p200_seco_mas_recipiente_antes"))
+    masa_recip = to_float(gran_data.get("p200_masa_recipiente_antes"))
+    if masa_seco_mas_recip is None or masa_recip is None:
+        return None
+    masa_inicial = masa_seco_mas_recip - masa_recip
+    if masa_inicial <= 0:
+        return None
+
+    puntos = []  # (apertura_mm, % que pasa), en orden de tamiz más grande a más chico
+    acumulado = 0.0
+    for key, _label, apert, _cell in SIEVES:
+        retenido = to_float(gran_data.get(key)) or 0.0
+        acumulado += retenido
+        puntos.append((float(apert), max(0.0, 100 - acumulado / masa_inicial * 100)))
+
+    pct_finos = puntos[-1][1]
+    pct_pasa_4 = next((p for d, p in puntos if abs(d - 4.76) < 0.001), None)
+    pct_grava = (100 - pct_pasa_4) if pct_pasa_4 is not None else None
+    pct_arena = (pct_pasa_4 - pct_finos) if pct_pasa_4 is not None else None
+    return {"puntos": puntos, "pct_finos": pct_finos, "pct_grava": pct_grava, "pct_arena": pct_arena}
+
+
+def _interpolar_diametro(puntos, objetivo):
+    """Diámetro (mm) para un % que pasa dado, interpolando log-lineal sobre la curva granulométrica
+    (igual que se lee a mano sobre el papel semilogarítmico). None si el % pedido queda fuera del
+    rango de tamices digitados."""
+    crecientes = sorted(puntos, key=lambda t: t[0])  # de tamiz más chico a más grande
+    for (d1, p1), (d2, p2) in zip(crecientes, crecientes[1:]):
+        if p1 == p2 == objetivo:
+            return d1
+        if p1 <= objetivo <= p2 and p2 > p1:
+            frac = (objetivo - p1) / (p2 - p1)
+            return 10 ** (math.log10(d1) + frac * (math.log10(d2) - math.log10(d1)))
+    return None
+
+
+def clasificar_uscs(gran_data, lim_data):
+    """Clasificación USCS (ASTM D2487) a partir de los datos ya digitados. Devuelve un dict con
+    el símbolo y los valores intermedios (para verificarlos contra el Excel), o con la lista
+    "faltantes" si todavía no hay datos suficientes para completarla."""
+    curva = _calcular_curva_granulometrica(gran_data) if gran_data else None
+    if curva is None:
+        return {"faltantes": ["Faltan las lecturas de Pasa No. 200 (masa inicial de la muestra)."]}
+
+    pct_finos, pct_grava, pct_arena = curva["pct_finos"], curva["pct_grava"], curva["pct_arena"]
+    if pct_grava is None:
+        return {"faltantes": ["Falta el retenido del tamiz No. 4."]}
+
+    ll = lp = ip = None
+    if lim_data:
+        ll, lp, ip = _calcular_limites_atterberg(lim_data)
+
+    def _simbolo_fino(ll, ip):
+        a_line = 0.73 * (ll - 20)
+        if ip < 4 or ip < a_line:
+            return "M"
+        if ip > 7 and ip >= a_line:
+            return "C"
+        return "C-M"  # zona rayada CL-ML
+
+    resultado = {"faltantes": [], "pct_grava": pct_grava, "pct_arena": pct_arena, "pct_finos": pct_finos,
+                 "ll": ll, "lp": lp, "ip": ip, "cu": None, "cc": None}
+
+    if pct_finos >= 50:
+        if ll is None:
+            resultado["faltantes"].append("Falta digitar Límites de Atterberg — la muestra tiene 50% o más "
+                                           "de finos y la clasificación depende de ellos.")
+            return resultado
+        base = _simbolo_fino(ll, ip)
+        resultado["simbolo"] = "CL-ML" if base == "C-M" else f"{base}{'H' if ll >= 50 else 'L'}"
+        return resultado
+
+    d10 = _interpolar_diametro(curva["puntos"], 10)
+    d30 = _interpolar_diametro(curva["puntos"], 30)
+    d60 = _interpolar_diametro(curva["puntos"], 60)
+    cu = (d60 / d10) if (d10 and d60) else None
+    cc = ((d30 ** 2) / (d10 * d60)) if (d10 and d30 and d60) else None
+    resultado["cu"], resultado["cc"] = cu, cc
+
+    prefijo = "G" if pct_grava >= pct_arena else "S"
+    umbral_cu = 4 if prefijo == "G" else 6
+    bien_gradada = cu is not None and cc is not None and cu >= umbral_cu and 1 <= cc <= 3
+    simbolo_gradacion = f"{prefijo}{'W' if bien_gradada else 'P'}"
+
+    if pct_finos < 5:
+        resultado["simbolo"] = simbolo_gradacion
+    elif pct_finos > 12:
+        if ll is None:
+            resultado["faltantes"].append("Falta digitar Límites de Atterberg — la fracción fina de esta "
+                                           "muestra supera el 12% y la clasificación depende de ellos.")
+            return resultado
+        base = _simbolo_fino(ll, ip)
+        resultado["simbolo"] = f"{prefijo}{'C' if base == 'C-M' else base}"
+    else:
+        if ll is None:
+            resultado["faltantes"].append("Falta digitar Límites de Atterberg — la fracción fina de esta "
+                                           "muestra está entre 5% y 12% y la clasificación depende de ellos.")
+            return resultado
+        base = _simbolo_fino(ll, ip)
+        resultado["simbolo"] = f"{simbolo_gradacion}-{prefijo}{'C' if base == 'C-M' else base}"
+
+    return resultado
+
+
+# ════════════════════════════════════════════════════════════════════
 # DETALLE DE MUESTRA → LISTA DE ENSAYOS SOLICITADOS
 # ════════════════════════════════════════════════════════════════════
 def render_muestra_detail():
@@ -2702,6 +2888,43 @@ def render_muestra_detail():
             else:
                 st.markdown(f'<div style="display:flex;align-items:center;gap:6px;color:{NEUTRAL};font-style:italic;">'
                              f'{icon("inbox", size=16)} Sin observaciones</div>', unsafe_allow_html=True)
+
+    if muestra["ensayos"].get("Granulometría"):
+        with st.container(border=True):
+            st.markdown('<div class="section-title">Clasificación USCS</div>', unsafe_allow_html=True)
+            st.caption("Calculada en la app con los datos ya digitados de Granulometría y Límites de "
+                       "Atterberg — verifícala contra el Excel antes de usarla en un informe.")
+            gran_assay = get_assay(muestra_id, "granulometria")
+            lim_assay = get_assay(muestra_id, "limites")
+            resultado = clasificar_uscs(
+                gran_assay.get("data") if gran_assay else None,
+                lim_assay.get("data") if lim_assay else None,
+            )
+            simbolo = resultado.get("simbolo")
+            if simbolo:
+                nombre = USCS_NOMBRES.get(simbolo, "")
+                st.markdown(f'''
+                    <div style="display:flex;align-items:center;gap:14px;background:{SECONDARY_CONTAINER};
+                                border-radius:10px;padding:14px 16px;">
+                        <div style="font-size:28px;font-weight:800;color:{PRIMARY};">{simbolo}</div>
+                        <div style="font-weight:600;color:{PRIMARY};">{html.escape(nombre)}</div>
+                    </div>
+                ''', unsafe_allow_html=True)
+                detalles = []
+                if resultado.get("pct_grava") is not None:
+                    detalles.append(f'Grava {resultado["pct_grava"]:.0f}% · Arena {resultado["pct_arena"]:.0f}% '
+                                     f'· Finos {resultado["pct_finos"]:.0f}%')
+                if resultado.get("ll") is not None:
+                    detalles.append(f'LL {resultado["ll"]} · LP {resultado["lp"]} · IP {resultado["ip"]}')
+                if resultado.get("cu") is not None and resultado.get("cc") is not None:
+                    detalles.append(f'Cu {resultado["cu"]:.1f} · Cc {resultado["cc"]:.1f}')
+                if detalles:
+                    st.markdown(f'<div class="cell-muted" style="margin-top:10px;">{" · ".join(detalles)}</div>',
+                                unsafe_allow_html=True)
+            else:
+                for razon in resultado.get("faltantes") or ["Aún no hay datos suficientes para calcularla."]:
+                    st.markdown(f'<div style="display:flex;align-items:center;gap:6px;color:{NEUTRAL};font-style:italic;">'
+                                 f'{icon("hourglass_empty", size=16)} {html.escape(razon)}</div>', unsafe_allow_html=True)
 
     # Filtra por si la muestra guarda un ensayo que ya no es seleccionable (p. ej. "Pasa 200",
     # que quedó incluido dentro de Granulometría) — no se muestra aunque quede marcado en datos viejos.
