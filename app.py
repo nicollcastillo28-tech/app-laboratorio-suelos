@@ -153,15 +153,20 @@ st.markdown(f"""
        Los encabezados de tabla (.assigned-th, ej. "ID PROYECTO") NO se excluyen del encogido —
        su columna tiene que encogerse igual que la columna de datos de abajo (misma proporción),
        si no, encabezado y dato quedan desalineados. En vez de eso, se le quita el nowrap más abajo
-       para que el texto pase a dos líneas dentro del fondo verde en vez de desbordarse cortado. */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] [data-testid="stHorizontalBlock"] {{
+       para que el texto pase a dos líneas dentro del fondo verde en vez de desbordarse cortado.
+       :not(.st-key-home-actions): la fila de tarjetas de Inicio también tiene
+       data-test-scroll-behavior="normal" (no es exclusivo de tarjetas con borde, como se asumía
+       antes) y quedaba atrapada por estas reglas de "no encoger" pensadas para tablas — con más
+       especificidad que las reglas propias de home-actions más abajo, ganaban ellas y la fila de
+       Inicio nunca podía hacer wrap (se quedaba desbordada, exigiendo scroll horizontal). */
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-home-actions) [data-testid="stHorizontalBlock"] {{
         flex-wrap: nowrap !important;
     }}
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-home-actions) [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {{
         min-width: 0 !important;
     }}
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:has(.stButton),
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:has(.badge) {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-home-actions) [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:has(.stButton),
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-home-actions) [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:has(.badge) {{
         min-width: fit-content !important;
         flex-shrink: 0 !important;
     }}
