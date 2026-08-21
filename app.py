@@ -402,6 +402,13 @@ st.markdown(f"""
         background: {BG}; border: 1px solid {BORDER}; color: {PRIMARY}; font-size: 12px; font-weight: 700;
         padding: 3px 10px; border-radius: 6px; display: inline-block;
     }}
+    /* Variantes de color para la columna "Ensayos asignados" de la tabla de muestras — cada
+       chip refleja el estado de ESE ensayo puntual (verde finalizado / amarillo en proceso /
+       rojo sin iniciar), reemplazando la columna "Estado" aparte que mostraba solo un estado
+       agregado de toda la muestra. */
+    .assigned-chip-success {{ background: {SUCCESS_LIGHT}; border-color: {SUCCESS}; color: {SUCCESS}; }}
+    .assigned-chip-warning {{ background: {WARNING_LIGHT}; border-color: {WARNING}; color: {WARNING}; }}
+    .assigned-chip-danger {{ background: {DANGER_LIGHT}; border-color: {DANGER}; color: {DANGER}; }}
 
     /* ---- TARJETAS DE PROYECTO (Proyectos en ejecución) ---- */
     .code-badge {{
@@ -2257,9 +2264,9 @@ def render_perforacion_detail():
         st.info("Esta perforación todavía no tiene muestras. Usa la Bitácora para agregarlas.")
     else:
         with st.container(border=True):
-            col_ratios = [0.9, 1.1, 1.4, 2.5, 1.2, 1.1]
+            col_ratios = [0.9, 1.1, 1.4, 3.6, 1.1]
             headers = st.columns(col_ratios)
-            for col, label in zip(headers, ["Muestra ID", "Tipo", "Profundidad", "Ensayos asignados", "Estado", "Acción"]):
+            for col, label in zip(headers, ["Muestra ID", "Tipo", "Profundidad", "Ensayos asignados", "Acción"]):
                 col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
             for i, m in enumerate(muestras):
                 if i:
@@ -2269,12 +2276,16 @@ def render_perforacion_detail():
                 cols[1].markdown(f'<span class="cell-muted">{html.escape(m["tipo_muestra"])}</span>', unsafe_allow_html=True)
                 cols[2].markdown(f'<span class="cell-muted">{m["profundidad_de"]}–{m["profundidad_hasta"]} m</span>', unsafe_allow_html=True)
                 ensayos_sol = [e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS]
-                chips = "".join(f'<span class="assigned-chip" style="margin-right:4px;">{html.escape(e)}</span>' for e in ensayos_sol) \
-                    or '<span class="cell-muted">—</span>'
+                chip_parts = []
+                for e in ensayos_sol:
+                    tipo_interno = SUPPORTED_ASSAY_MAP.get(e)
+                    existing = get_assay(m["id_unico"], tipo_interno) if tipo_interno else None
+                    status = existing["status"] if existing else "sin-iniciar"
+                    chip_class = "assigned-chip " + STATUS_BADGE[status].replace("badge-", "assigned-chip-")
+                    chip_parts.append(f'<span class="{chip_class}" style="margin-right:4px;">{html.escape(e)}</span>')
+                chips = "".join(chip_parts) or '<span class="cell-muted">—</span>'
                 cols[3].markdown(chips, unsafe_allow_html=True)
                 with cols[4]:
-                    st.markdown(f'<div style="text-align:center;">{status_circle_html(compute_muestra_estado(m), size=16)}</div>', unsafe_allow_html=True)
-                with cols[5]:
                     if st.button("Abrir", key=f"open_muestra_{m['id_unico']}", use_container_width=True):
                         st.session_state.selected_muestra_id = m["id_unico"]
                         navigate("muestra-detail")
