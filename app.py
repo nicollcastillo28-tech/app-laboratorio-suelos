@@ -1455,12 +1455,35 @@ def render_home():
                 st.markdown(f'<div class="activity-footer">Mostrando {len(recientes)} de {len(todos_los_ensayos)} ensayo(s)</div>',
                             unsafe_allow_html=True)
     else:
+        # La asignación es por ensayo puntual (ver muestras.ensayo_asignado_a / render_muestra_detail),
+        # no por proyecto entero — por eso se recorren las muestras y su checklist de ensayos
+        # directamente, en vez de filtrar st.session_state.assays (que solo trae ensayos que YA
+        # tienen una fila creada, es decir que alguien ya abrió al menos una vez). Un ensayo recién
+        # asignado por el Jefe debe aparecer aquí de inmediato, aunque nadie lo haya abierto todavía.
         mi_nombre = st.session_state.profile.get("full_name", "")
-        pendientes = [
-            a for a in todos_los_ensayos
-            if a["status"] != "finalizado"
-            and (get_project(a["codigo_interno"]) or {}).get("laboratorista_asignado") == mi_nombre
-        ]
+        pendientes = []
+        for key, muestras_perf in st.session_state.muestras.items():
+            codigo_proyecto, perf_codigo = key.split("::", 1)
+            for m in muestras_perf:
+                asignaciones = m.get("ensayo_asignado_a") or {}
+                for ensayo_label, asignado_a in asignaciones.items():
+                    if asignado_a != mi_nombre or not m["ensayos"].get(ensayo_label):
+                        continue
+                    tipo_interno = SUPPORTED_ASSAY_MAP.get(ensayo_label)
+                    if not tipo_interno:
+                        continue  # sin formulario propio, no hay nada que "Abrir"
+                    existing = get_assay(m["id_unico"], tipo_interno)
+                    status = existing["status"] if existing else "sin-iniciar"
+                    if status == "finalizado":
+                        continue
+                    pendientes.append({
+                        "id": existing["id"] if existing else None,
+                        "codigo_interno": codigo_proyecto, "perforacion_codigo": perf_codigo,
+                        "muestra_id": m["id_unico"], "muestra_db_id": m["id"], "muestra_numero": m["numero"],
+                        "tipo": tipo_interno, "status": status,
+                        "lastModified": existing["lastModified"] if existing else m.get("updated_at", ""),
+                    })
+        pendientes.sort(key=lambda a: a["lastModified"], reverse=True)
         with st.container(border=True):
             h1, h2 = st.columns([4, 1])
             with h1:
@@ -1492,8 +1515,12 @@ def render_home():
                     with cols[4]:
                         st.markdown(f'<div style="text-align:center;">{status_circle_html(a["status"], size=16)}</div>', unsafe_allow_html=True)
                     with cols[5]:
-                        if st.button("Abrir", key=f"open_assigned_{a['id']}", use_container_width=True):
-                            st.session_state.selected_assay_id = a["id"]
+                        if st.button("Abrir", key=f"open_assigned_{a['muestra_id']}_{a['tipo']}", use_container_width=True):
+                            if a["id"]:
+                                st.session_state.selected_assay_id = a["id"]
+                            else:
+                                nuevo = db.create_assay(a["muestra_db_id"], a["tipo"])
+                                st.session_state.selected_assay_id = nuevo["id"]
                             st.session_state.selected_codigo = a["codigo_interno"]
                             st.session_state.selected_perforacion = a["perforacion_codigo"]
                             st.session_state.selected_muestra_id = a["muestra_id"]
@@ -1763,14 +1790,8 @@ def render_new_project():
             st.session_state["new_fecha_final_proyecto"] = date.today()
         fecha_final_proyecto = st.date_input("Fecha final proyecto", key="new_fecha_final_proyecto", format="DD/MM/YYYY")
 
-    opciones_lab = list_laboratoristas()
-    laboratorista_asignado = st.selectbox(
-        "Asignar bitácora a laboratorista", ["(sin asignar)"] + opciones_lab,
-        help="Solo esa persona verá este proyecto en su lista de 'Ensayos asignados'. "
-             "Mientras no se asigne, no aparece en la lista de nadie.",
-    )
-    if laboratorista_asignado == "(sin asignar)":
-        laboratorista_asignado = ""
+    # La asignación ya no es por proyecto entero — se asigna ensayo por ensayo desde el
+    # detalle de cada muestra (ver render_muestra_detail), una vez que la bitácora existe.
 
     # Perforaciones y muestras se arman aquí mismo, antes de crear el proyecto formalmente —
     # en estado de borrador propio (no en st.session_state.perforaciones/muestras, que ahora
@@ -1891,7 +1912,6 @@ def render_new_project():
                 "codigo_interno": codigo_interno, "numero": numero, "anio": anio, "nombre": nombre,
                 "localizacion": localizacion, "norma": norma,
                 "fecha_bitacora": str(fecha_bitacora), "fecha_ingreso_muestra": str(fecha_ingreso),
-                "laboratorista_asignado": laboratorista_asignado,
                 "cliente": cliente, "correo_cliente": correo_cliente, "muestra_tomada_por": muestra_tomada_por,
                 "direccion_cliente": direccion_cliente, "telefono_contacto": telefono_contacto,
                 "nombre_contacto": nombre_contacto,
@@ -1942,7 +1962,6 @@ def render_project_detail():
             ("inbox", "Fecha de recepción", project.get("fecha_recepcion")),
             ("science", "Fecha de ejecución", project.get("fecha_ejecucion")),
             ("outbox", "Fecha de emisión", project.get("fecha_emision")),
-            ("person", "Asignado a", project.get("laboratorista_asignado")),
         ]
         # Datos del cliente: los ven Jefe y Director Técnico (roles de consulta/revisión), nunca el laboratorista.
         if st.session_state.role in ("jefe", "ingeniero"):
@@ -2156,17 +2175,6 @@ def render_edit_project():
     with dc4:
         fecha_final_proyecto = st.date_input("Fecha final proyecto", key=f"edit_fecha_final_proyecto_{codigo}", format="DD/MM/YYYY")
 
-    opciones_lab = ["(sin asignar)"] + list_laboratoristas()
-    actual_lab = project.get("laboratorista_asignado") or "(sin asignar)"
-    idx_lab = opciones_lab.index(actual_lab) if actual_lab in opciones_lab else 0
-    laboratorista_asignado = st.selectbox(
-        "Asignar bitácora a laboratorista", opciones_lab, index=idx_lab,
-        key=f"edit_lab_asignado_{codigo}",
-        help="Solo esa persona verá este proyecto en su lista de 'Ensayos asignados'.",
-    )
-    if laboratorista_asignado == "(sin asignar)":
-        laboratorista_asignado = ""
-
     st.markdown("<br>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     with c1:
@@ -2177,7 +2185,7 @@ def render_edit_project():
             db.update_project(
                 project["id"], nombre=nombre, localizacion=localizacion, norma=norma,
                 fecha_bitacora=str(fecha_bitacora), fecha_ingreso_muestra=str(fecha_ingreso),
-                laboratorista_asignado=laboratorista_asignado, cliente=cliente, correo_cliente=correo_cliente,
+                cliente=cliente, correo_cliente=correo_cliente,
                 muestra_tomada_por=muestra_tomada_por, direccion_cliente=direccion_cliente,
                 telefono_contacto=telefono_contacto, nombre_contacto=nombre_contacto,
                 fecha_inicio_proyecto=str(fecha_inicio_proyecto), fecha_final_proyecto=str(fecha_final_proyecto),
@@ -2751,6 +2759,21 @@ def render_muestra_detail():
                                 st.session_state.selected_assay_id = nuevo["id"]
                             st.session_state.selected_assay_type = tipo_interno
                             navigate("assay-form")
+
+                if tipo_interno and st.session_state.role == "jefe":
+                    opciones_lab = ["(sin asignar)"] + list_laboratoristas()
+                    actual_asignado = (muestra.get("ensayo_asignado_a") or {}).get(ensayo_label) or "(sin asignar)"
+                    idx_asignado = opciones_lab.index(actual_asignado) if actual_asignado in opciones_lab else 0
+                    nuevo_asignado = st.selectbox(
+                        "Asignar a", opciones_lab, index=idx_asignado,
+                        key=f"asignar_{muestra_id}_{ensayo_label}",
+                        help="Solo esa persona verá este ensayo en su lista de 'Ensayos asignados'. "
+                             "Mientras no se asigne, no aparece en la lista de nadie.",
+                    )
+                    if nuevo_asignado != actual_asignado:
+                        laboratorista = None if nuevo_asignado == "(sin asignar)" else nuevo_asignado
+                        db.asignar_ensayo(muestra["id"], ensayo_label, laboratorista)
+                        st.rerun()
 
                 if existing:
                     motivo = existing.get("motivo_rechazo")

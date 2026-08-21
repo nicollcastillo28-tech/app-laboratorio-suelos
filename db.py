@@ -211,6 +211,20 @@ def update_muestra(muestra_id: str, **fields) -> dict:
     return res.data[0]
 
 
+def asignar_ensayo(muestra_id: str, ensayo_label: str, laboratorista: str | None) -> dict:
+    """Asigna (o desasigna, si laboratorista es None) un laboratorista a un ensayo puntual de
+    una muestra — no a toda la muestra ni al proyecto entero. Se guarda en el jsonb
+    muestras.ensayo_asignado_a en vez de en assays porque el Jefe debe poder asignar antes de
+    que exista una fila de assay (esa solo se crea cuando alguien abre el formulario)."""
+    muestra = get_muestra(muestra_id)
+    asignaciones = dict(muestra.get("ensayo_asignado_a") or {})
+    if laboratorista:
+        asignaciones[ensayo_label] = laboratorista
+    else:
+        asignaciones.pop(ensayo_label, None)
+    return update_muestra(muestra_id, ensayo_asignado_a=asignaciones)
+
+
 def archive_muestra(muestra_id: str):
     client = get_client()
     client.table("muestras").update({"archived": True}).eq("id", muestra_id).execute()
