@@ -2270,9 +2270,14 @@ def render_perforacion_detail():
         st.info("Esta perforación todavía no tiene muestras. Usa la Bitácora para agregarlas.")
     else:
         with st.container(border=True):
+            # Los encabezados van cortos a propósito ("ID", "Prof.") aunque el nombre completo
+            # sea más claro: con la columna angosta que necesita "Ensayos asignados" para no
+            # desbordarse, un encabezado largo como "Muestra ID" se parte en varias líneas
+            # (llegó a verse letra por letra) y esa fila, al ser la más alta, deja un hueco vacío
+            # en todos los demás encabezados — que es justo lo que se veía "apachurrado".
             col_ratios = [0.7, 0.9, 1.2, 4.3, 1.0]
             headers = st.columns(col_ratios)
-            for col, label in zip(headers, ["Muestra ID", "Tipo", "Profundidad", "Ensayos asignados", "Acción"]):
+            for col, label in zip(headers, ["ID", "Tipo", "Prof.", "Ensayos asignados", "Acción"]):
                 col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
             for i, m in enumerate(muestras):
                 if i:
