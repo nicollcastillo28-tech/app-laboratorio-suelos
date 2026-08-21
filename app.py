@@ -139,6 +139,14 @@ st.markdown(f"""
         border-radius: 12px !important; border: 1px solid {BORDER} !important;
         box-shadow: 0 1px 4px rgba(11,28,48,0.08) !important; background: {SURFACE} !important;
     }}
+    /* st.expander (tarjetas de "Perforaciones y muestras", "Historial de Cambios", etc.) trae de
+    fábrica un borde casi invisible (20% de opacidad) y sin sombra ni fondo propio — se pierde
+    contra el fondo cuadriculado de la app. Se le da el mismo tratamiento de tarjeta que a los
+    st.container(border=True) de arriba, para que se distinga igual de bien. */
+    [data-testid="stExpander"] details {{
+        border-radius: 12px !important; border: 1px solid {BORDER} !important;
+        box-shadow: 0 1px 4px rgba(11,28,48,0.08) !important; background: {SURFACE} !important;
+    }}
     /* Las filas "etiqueta + campo" de los formularios de ensayo (humedad, límites, granulometría...)
        arman el layout con st.columns para que etiqueta y campo queden lado a lado — pero Streamlit
        las apila solo (etiqueta arriba, campo abajo a todo el ancho) en pantallas angostas, que es
