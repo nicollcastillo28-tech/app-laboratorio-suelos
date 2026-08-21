@@ -192,8 +192,10 @@ st.markdown(f"""
        (esas no son "otra tarjeta más", son campos de captura). home-actions tampoco: es un
        contenedor que envuelve varias tarjetas propias (cada una ya tiene su estilo, gradiente
        o borde), no una tarjeta en sí — el acento le quedaba como una barra verde de borde a
-       borde tapando el grupo entero en vez de resaltar una sola tarjeta. */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-desc-visual-box):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-notif-card-"]) {{
+       borde tapando el grupo entero en vez de resaltar una sola tarjeta. bell-alert/bell-quiet
+       (el botón-contenedor de la campana en el topbar) tampoco: es un ícono, no una tarjeta —
+       se veía como una rayita verde suelta pegada a la campana. */
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-desc-visual-box):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not(.st-key-bell-alert):not(.st-key-bell-quiet):not([class*="st-key-notif-card-"]) {{
         border-left: 4px solid {PRIMARY} !important;
     }}
     /* Tarjetas de "Ensayos asignados" (una por ensayo): más separación entre sí y sombra
