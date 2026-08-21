@@ -1922,6 +1922,10 @@ def render_new_project():
         st.session_state.draft_muestras = {}
         st.session_state.bitacora_draft = {k: v for k, v in st.session_state.bitacora_draft.items()
                                             if not k.startswith(f"{codigo_interno}::")}
+        # El número sugerido se calcula una sola vez por visita a esta pantalla (ver arriba) — hay
+        # que olvidarlo al salir para que la próxima vez se recalcule contra la lista de proyectos
+        # ya actualizada (si no, seguiría sugiriendo el mismo número recién usado).
+        st.session_state.pop("new_numero", None)
 
     st.markdown("<br>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
