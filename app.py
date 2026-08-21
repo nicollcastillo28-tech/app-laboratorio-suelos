@@ -189,8 +189,11 @@ st.markdown(f"""
     }}
     /* Acento azul a la izquierda solo en tarjetas de contenido — se excluyen la barra de
        navegación, las tarjetas de notificaciones y las cajas donde se digita información
-       (esas no son "otra tarjeta más", son campos de captura). */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-desc-visual-box):not(.st-key-muestra-obs-box):not([class*="st-key-notif-card-"]) {{
+       (esas no son "otra tarjeta más", son campos de captura). home-actions tampoco: es un
+       contenedor que envuelve varias tarjetas propias (cada una ya tiene su estilo, gradiente
+       o borde), no una tarjeta en sí — el acento le quedaba como una barra verde de borde a
+       borde tapando el grupo entero en vez de resaltar una sola tarjeta. */
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-desc-visual-box):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-notif-card-"]) {{
         border-left: 4px solid {PRIMARY} !important;
     }}
     /* Tarjetas de "Ensayos asignados" (una por ensayo): más separación entre sí y sombra
