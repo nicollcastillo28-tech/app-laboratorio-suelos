@@ -2658,8 +2658,7 @@ def render_muestra_detail():
 
     with st.container(border=True):
         st.markdown('<div class="section-title">Descripción visual de la muestra</div>', unsafe_allow_html=True)
-        st.caption("Cómo se ve físicamente la muestra (color, textura, humedad, etc.). Esta es la que se lleva "
-                   "al campo \"DESCRIPCIÓN VISUAL\" del Excel oficial — es independiente de las observaciones.")
+        st.caption("Cómo se ve físicamente la muestra (color, textura, humedad, etc.).")
         if st.session_state.role == "laboratorista":
             with st.container(key="muestra-desc-visual-box"):
                 descripcion_visual = st.text_area(
@@ -2671,8 +2670,16 @@ def render_muestra_detail():
                 st.success("Descripción visual guardada.")
                 st.rerun()
         else:
-            st.markdown(f'<div class="cell-muted">{html.escape(muestra.get("descripcion_visual") or "— (el laboratorista aún no la digita) —")}</div>',
-                        unsafe_allow_html=True)
+            descripcion_val = muestra.get("descripcion_visual")
+            if descripcion_val:
+                st.markdown(f'<div style="display:flex;gap:10px;align-items:flex-start;background:{BG};'
+                             f'border-radius:10px;padding:12px 14px;">'
+                             f'<span style="margin-top:2px;">{icon("visibility", size=18)}</span>'
+                             f'<div style="font-weight:600;line-height:1.5;">{html.escape(descripcion_val)}</div></div>',
+                             unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div style="display:flex;align-items:center;gap:6px;color:{NEUTRAL};font-style:italic;">'
+                             f'{icon("visibility_off", size=16)} El laboratorista aún no la digita</div>', unsafe_allow_html=True)
 
     with st.container(border=True):
         st.markdown('<div class="section-title">Observaciones</div>', unsafe_allow_html=True)
