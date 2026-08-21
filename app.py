@@ -1434,7 +1434,9 @@ def render_home():
                 headers = st.columns(col_ratios)
                 for col, label in zip(headers, ["ID proyecto", "Nombre del proyecto", "Sondeo / Muestra", "Última actualización", "Estado", "Acción"]):
                     col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
-                for a in recientes:
+                for i, a in enumerate(recientes):
+                    if i:
+                        st.markdown(f'<hr style="margin:8px 0;border-color:{BORDER};">', unsafe_allow_html=True)
                     proyecto = get_project(a["codigo_interno"])
                     titulo = html.escape(proyecto["nombre"] if proyecto else a["codigo_interno"])
                     subtitulo = html.escape(f'{a["perforacion_codigo"]} · Muestra {a["muestra_numero"]} · {ASSAY_LABELS[a["tipo"]]}')
@@ -1500,7 +1502,9 @@ def render_home():
                 headers = st.columns(col_ratios)
                 for col, label in zip(headers, ["ID ensayo", "Proyecto", "Tipo de ensayo", "Última actualización", "Estado", "Acción"]):
                     col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
-                for a in pendientes:
+                for i, a in enumerate(pendientes):
+                    if i:
+                        st.markdown(f'<hr style="margin:8px 0;border-color:{BORDER};">', unsafe_allow_html=True)
                     proyecto = get_project(a["codigo_interno"])
                     cols = st.columns(col_ratios, vertical_alignment="center")
                     ensayo_id = f'{a["codigo_interno"]}-{a["perforacion_codigo"]}-M{a["muestra_numero"]}'
@@ -3763,7 +3767,9 @@ def render_search():
             page = min(st.session_state.get("search_page", 0), total_pages - 1)
             st.session_state["search_page"] = page
             start = page * SEARCH_PAGE_SIZE
-            for perf, m, ensayo_label, tipo_interno in rows[start:start + SEARCH_PAGE_SIZE]:
+            for i, (perf, m, ensayo_label, tipo_interno) in enumerate(rows[start:start + SEARCH_PAGE_SIZE]):
+                if i:
+                    st.markdown(f'<hr style="margin:8px 0;border-color:{BORDER};">', unsafe_allow_html=True)
                 existing = get_assay(m["id_unico"], tipo_interno)
                 status = existing["status"] if existing else "sin-iniciar"
                 ensayo_id = f'{codigo}-{perf["codigo"]}-M{m["numero"]}'
