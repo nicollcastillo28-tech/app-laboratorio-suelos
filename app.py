@@ -409,6 +409,12 @@ st.markdown(f"""
     .assigned-chip-success {{ background: {SUCCESS_LIGHT}; border-color: {SUCCESS}; color: {SUCCESS}; }}
     .assigned-chip-warning {{ background: {WARNING_LIGHT}; border-color: {WARNING}; color: {WARNING}; }}
     .assigned-chip-danger {{ background: {DANGER_LIGHT}; border-color: {DANGER}; color: {DANGER}; }}
+    /* Versión compacta para filas de tabla densas (ej. "Ensayos asignados" en la lista de
+       muestras): más chicos para que los 3 quepan en una sola fila sin desbordar su columna.
+       .assigned-chip-row los mantiene en línea y, si de plano no caben ni así (pantalla muy
+       angosta), deja scroll horizontal contenido en esa celda en vez de desbordar la tabla. */
+    .assigned-chip-sm {{ font-size: 10px; padding: 2px 6px; white-space: nowrap; }}
+    .assigned-chip-row {{ display: flex; flex-wrap: nowrap; gap: 4px; overflow-x: auto; }}
 
     /* ---- TARJETAS DE PROYECTO (Proyectos en ejecución) ---- */
     .code-badge {{
@@ -2264,7 +2270,7 @@ def render_perforacion_detail():
         st.info("Esta perforación todavía no tiene muestras. Usa la Bitácora para agregarlas.")
     else:
         with st.container(border=True):
-            col_ratios = [0.9, 1.1, 1.4, 3.6, 1.1]
+            col_ratios = [0.7, 0.9, 1.2, 4.3, 1.0]
             headers = st.columns(col_ratios)
             for col, label in zip(headers, ["Muestra ID", "Tipo", "Profundidad", "Ensayos asignados", "Acción"]):
                 col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
@@ -2281,9 +2287,10 @@ def render_perforacion_detail():
                     tipo_interno = SUPPORTED_ASSAY_MAP.get(e)
                     existing = get_assay(m["id_unico"], tipo_interno) if tipo_interno else None
                     status = existing["status"] if existing else "sin-iniciar"
-                    chip_class = "assigned-chip " + STATUS_BADGE[status].replace("badge-", "assigned-chip-")
-                    chip_parts.append(f'<span class="{chip_class}" style="margin-right:4px;">{html.escape(e)}</span>')
-                chips = "".join(chip_parts) or '<span class="cell-muted">—</span>'
+                    chip_class = "assigned-chip assigned-chip-sm " + STATUS_BADGE[status].replace("badge-", "assigned-chip-")
+                    chip_parts.append(f'<span class="{chip_class}">{html.escape(e)}</span>')
+                chips = (f'<div class="assigned-chip-row">{"".join(chip_parts)}</div>' if chip_parts
+                         else '<span class="cell-muted">—</span>')
                 cols[3].markdown(chips, unsafe_allow_html=True)
                 with cols[4]:
                     if st.button("Abrir", key=f"open_muestra_{m['id_unico']}", use_container_width=True):
