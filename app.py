@@ -1729,13 +1729,27 @@ def render_new_project():
     st.markdown("## Bitácora de proyecto")
 
     st.markdown('<div class="section-title">Código interno</div>', unsafe_allow_html=True)
+    # Sugerencia de consecutivo: año actual (2 dígitos) y, dentro de los proyectos ya creados con
+    # ese año, el número más alto + 1 — igual que armaría el consecutivo el Jefe a mano. Se
+    # precargan como valor editable (no solo placeholder) para no tener que digitarlos siempre;
+    # el Jefe puede borrarlos y poner otros si el proyecto es de un año distinto.
+    anio_sugerido = str(date.today().year)[-2:]
+    if "new_anio" not in st.session_state:
+        st.session_state["new_anio"] = anio_sugerido
+    if "new_numero" not in st.session_state:
+        numeros_mismo_anio = [
+            int(p["numero"]) for p in st.session_state.projects
+            if str(p.get("anio", "")) == st.session_state["new_anio"] and str(p.get("numero", "")).isdigit()
+        ]
+        st.session_state["new_numero"] = f"{(max(numeros_mismo_anio) + 1):03d}" if numeros_mismo_anio else "001"
+
     c1, c2, c3 = st.columns([1, 1, 1])
     with c1:
         st.text_input("Prefijo", value="GDA", disabled=True, autocomplete="off")
     with c2:
-        numero = st.text_input("Número", placeholder="001", autocomplete="off")
+        numero = st.text_input("Número", key="new_numero", autocomplete="off")
     with c3:
-        anio = st.text_input("Año", placeholder="24", autocomplete="off")
+        anio = st.text_input("Año", key="new_anio", autocomplete="off")
 
     codigo_interno = f"GDA-{numero}-{anio}" if numero and anio else ""
     existing_codes = [p["codigo_interno"] for p in st.session_state.projects]
