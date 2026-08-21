@@ -93,6 +93,27 @@ def get_current_profile(client: Client = None) -> dict | None:
     return rows[0]
 
 
+def get_session_tokens() -> dict | None:
+    """access_token/refresh_token de la sesión actual, para guardarlos en una cookie del
+    navegador y poder restaurar el login tras un recargo de página (ver restore_session)."""
+    session = get_client().auth.get_session()
+    if session is None:
+        return None
+    return {"access_token": session.access_token, "refresh_token": session.refresh_token}
+
+
+def restore_session(access_token: str, refresh_token: str) -> dict | None:
+    """Recrea la sesión a partir de tokens guardados en la cookie del navegador. Si el
+    access_token venció, set_session lo refresca solo usando el refresh_token. Devuelve el
+    perfil si funciona, o None si el refresh_token ya no sirve — ahí toca loguearse de nuevo."""
+    client = get_client()
+    try:
+        client.auth.set_session(access_token, refresh_token)
+    except Exception:
+        return None
+    return get_current_profile(client)
+
+
 # ════════════════════════════════════════════════════════════════════
 # PROYECTOS
 # ════════════════════════════════════════════════════════════════════

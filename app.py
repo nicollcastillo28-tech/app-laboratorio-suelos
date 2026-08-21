@@ -7,6 +7,7 @@ Cómo correrla en tu computador:
 """
 
 import html
+import json
 import os
 import re
 import zipfile
@@ -444,6 +445,13 @@ st.markdown(f"""
 # El mismo script hace que Enter salte al siguiente campo de texto en vez de quedarse quieto
 # (útil digitando tamiz tras tamiz) — el setTimeout deja que Streamlit primero registre el
 # valor tecleado (su propio manejador de Enter) antes de mover el foco.
+# También hace que el gesto de "atrás" (botón del navegador, o el gesto nativo de Android)
+# funcione igual que el botón "← Atrás" de la app — ver _push_history_entry() más abajo, que es
+# quien realmente dispara el pushState (justo después de que navigate()/go_back() terminan de
+# sincronizar la URL). Este bloque solo pone el listener de popstate: al presionar atrás, dispara
+# un recargo completo de la página, que Python resuelve leyendo la URL ya restaurada por el
+# navegador (init_state) — por eso esto necesita ir de la mano con la restauración de sesión por
+# cookie, si no cada "atrás" mandaría de vuelta al login.
 components.html("""
 <script>
 (function() {
@@ -489,6 +497,9 @@ components.html("""
     applyInputMode();
     new MutationObserver(applyInputMode).observe(window.parent.document.body, {childList: true, subtree: true});
     window.parent.document.addEventListener('keydown', focusNextOnEnter, true);
+    window.parent.addEventListener('popstate', function() {
+        window.parent.location.reload();
+    });
 })();
 </script>
 """, height=0)
@@ -678,20 +689,80 @@ def _load_data():
 # ════════════════════════════════════════════════════════════════════
 # ESTADO INICIAL
 # ════════════════════════════════════════════════════════════════════
+SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 30  # 30 días
+
+
+def _set_session_cookie(access_token, refresh_token):
+    """Guarda los tokens de la sesión de Supabase en una cookie del navegador (nunca en la
+    URL — la pantalla actual sí va en la URL, ver _sync_query_params, pero el token no) para
+    poder restaurar el login solo tras un recargo de página o una reconexión, en vez de
+    mandar siempre a la persona de vuelta a pedirle código+clave (ver init_state)."""
+    components.html(f"""
+    <script>
+    (function() {{
+        var maxAge = {SESSION_COOKIE_MAX_AGE};
+        var at = {json.dumps(access_token)};
+        var rt = {json.dumps(refresh_token)};
+        window.parent.document.cookie = "gdl_at=" + encodeURIComponent(at) + "; max-age=" + maxAge + "; path=/; SameSite=Lax";
+        window.parent.document.cookie = "gdl_rt=" + encodeURIComponent(rt) + "; max-age=" + maxAge + "; path=/; SameSite=Lax";
+    }})();
+    </script>
+    """, height=0)
+
+
+def _clear_session_cookie():
+    components.html("""
+    <script>
+    (function() {
+        window.parent.document.cookie = "gdl_at=; max-age=0; path=/; SameSite=Lax";
+        window.parent.document.cookie = "gdl_rt=; max-age=0; path=/; SameSite=Lax";
+    })();
+    </script>
+    """, height=0)
+
+
+def _push_history_entry():
+    """Convierte la navegación que acaba de terminar en una entrada de historial de verdad
+    (ver navigate()/go_back() y el router principal, que llaman a esto en el rerun SIGUIENTE
+    al que cambió de pantalla — no en el mismo, por la misma razón que _set_session_cookie no
+    se llama justo antes de un st.rerun(): el iframe no alcanza a montarse y correr su script
+    antes de que el próximo rerun lo reemplace). Para cuando esto corre, _sync_query_params()
+    ya terminó de aplicar sus 6 asignaciones en un rerun previo y completo, así que la URL del
+    navegador ya es la definitiva — no hace falta ninguna espera ni detección de estabilidad.
+    Se vio en pruebas que esto se termina llamando 2 veces por una sola navegación (probable
+    doble rerun del click del botón) — se compara contra la última URL empujada para no dejar
+    una entrada de historial duplicada, que obligaría a presionar "atrás" dos veces seguidas
+    para moverse una sola pantalla."""
+    components.html("""
+    <script>
+    (function() {
+        var href = window.parent.location.href;
+        if (window.parent.__geodeltaLastPushedHref === href) return;
+        window.parent.__geodeltaLastPushedHref = href;
+        window.parent.history.pushState({geodelta: true}, '', href);
+    })();
+    </script>
+    """, height=0)
+
+
 def _sync_query_params():
-    """Guarda la pantalla actual en la URL (nunca el token de sesión — ver decisión de
-    migración a Supabase Auth). Si la conexión se corta (celular que se bloquea, wifi
-    inestable) y el navegador reconecta, Streamlit abre una sesión nueva sin el login;
-    la persona tiene que volver a entrar con su código+clave, pero al hacerlo se le
-    devuelve a la misma pantalla en vez de mandarla a Inicio. Al cerrar sesión se limpia
-    todo, así que la sesión solo termina cuando el usuario le da a "Cerrar sesión"."""
+    """Guarda la pantalla actual en la URL (nunca el token de sesión — eso vive en una
+    cookie aparte, ver _set_session_cookie). Al cerrar sesión se limpia todo, así que la
+    sesión solo termina cuando el usuario le da a "Cerrar sesión" o la cookie vence (30 días).
+    Se actualizan los 6 parámetros de una sola vez con .update(): asignarlos uno por uno
+    (st.query_params["x"] = y) manda un ForwardMsg — y dispara una re-sincronización del
+    navegador — por cada asignación; con 6 asignaciones seguidas eso se notó como hasta 7
+    entradas de historial por cada navegación (ver _push_history_entry). .update() está
+    documentado en el propio Streamlit para mandar un solo mensaje."""
     if st.session_state.role:
-        st.query_params["screen"] = st.session_state.screen
-        st.query_params["codigo"] = st.session_state.selected_codigo or ""
-        st.query_params["perf"] = st.session_state.selected_perforacion or ""
-        st.query_params["muestra"] = st.session_state.selected_muestra_id or ""
-        st.query_params["assay"] = st.session_state.selected_assay_id or ""
-        st.query_params["atipo"] = st.session_state.selected_assay_type or ""
+        st.query_params.update({
+            "screen": st.session_state.screen,
+            "codigo": st.session_state.selected_codigo or "",
+            "perf": st.session_state.selected_perforacion or "",
+            "muestra": st.session_state.selected_muestra_id or "",
+            "assay": st.session_state.selected_assay_id or "",
+            "atipo": st.session_state.selected_assay_type or "",
+        })
     else:
         st.query_params.clear()
 
@@ -721,15 +792,27 @@ def init_state():
     st.session_state.selected_assay_type = None
     st.session_state.read_only_view = False
 
-    # Restaura la posición de navegación desde la URL tras una reconexión (ver
-    # _sync_query_params) — el login sigue siendo necesario, pero la persona vuelve
-    # a la misma pantalla en vez de a Inicio una vez que entra de nuevo.
+    # Restaura la posición de navegación desde la URL tras un recargo o reconexión (ver
+    # _sync_query_params) — la persona vuelve a la misma pantalla en vez de a Inicio.
     st.session_state.screen = st.query_params.get("screen") or "home"
     st.session_state.selected_codigo = st.query_params.get("codigo") or ""
     st.session_state.selected_perforacion = st.query_params.get("perf") or ""
     st.session_state.selected_muestra_id = st.query_params.get("muestra") or ""
     st.session_state.selected_assay_id = st.query_params.get("assay") or None
     st.session_state.selected_assay_type = st.query_params.get("atipo") or None
+
+    # Restaura el login desde la cookie del navegador (ver _set_session_cookie) — antes,
+    # cualquier recargo de página (F5, reconexión) mandaba de vuelta al login aunque la
+    # sesión de Supabase siguiera siendo válida. Si el refresh_token ya no sirve (venció,
+    # se cerró sesión en otro dispositivo), restore_session devuelve None y simplemente se
+    # queda en la pantalla de login, como antes.
+    at = st.context.cookies.get("gdl_at")
+    rt = st.context.cookies.get("gdl_rt")
+    if at and rt:
+        profile = db.restore_session(at, rt)
+        if profile:
+            st.session_state.profile = profile
+            st.session_state.role = profile["role"]
 
 
 init_state()
@@ -741,6 +824,7 @@ def navigate(screen):
         st.session_state.nav_stack.append(actual)
     st.session_state.screen = screen
     _sync_query_params()
+    st.session_state._pending_history_push = True
     st.rerun()
 
 
@@ -751,6 +835,7 @@ def go_back(fallback="home"):
     else:
         st.session_state.screen = fallback
     _sync_query_params()
+    st.session_state._pending_history_push = True
     st.rerun()
 
 
@@ -1105,6 +1190,12 @@ def render_login():
                     else:
                         st.session_state.profile = profile
                         st.session_state.role = profile["role"]
+                        # No se guarda la cookie aquí mismo: el st.rerun() de abajo corta la
+                        # ejecución antes de que el iframe de components.html llegue a montarse
+                        # y correr su script en el navegador (se probó y la cookie nunca quedaba
+                        # puesta). Se guarda el token pendiente y se escribe la cookie en el
+                        # siguiente rerun, cuando ya no hay un rerun inmediato después que lo corte.
+                        st.session_state._pending_cookie_tokens = db.get_session_tokens()
                         st.rerun()
             st.markdown('<hr style="margin:16px 0 4px 0;">', unsafe_allow_html=True)
             if st.button("¿Olvidaste tu clave?", key="forgot_pwd", type="secondary", use_container_width=True):
@@ -1175,6 +1266,7 @@ def render_topbar():
         with c_logout:
             if st.button("", key="logout_top", help="Cerrar sesión", use_container_width=True, icon=":material/logout:"):
                 db.sign_out()
+                _clear_session_cookie()
                 st.session_state.role = None
                 st.session_state.profile = None
                 st.session_state.nav_stack = []
@@ -3669,6 +3761,11 @@ def render_search():
 if st.session_state.role is None:
     render_login()
 else:
+    if st.session_state.get("_pending_cookie_tokens"):
+        tokens = st.session_state.pop("_pending_cookie_tokens")
+        _set_session_cookie(tokens["access_token"], tokens["refresh_token"])
+    if st.session_state.pop("_pending_history_push", False):
+        _push_history_entry()
     _load_data()
     render_topbar()
     SCREENS = {
