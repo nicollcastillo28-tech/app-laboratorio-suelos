@@ -1553,7 +1553,7 @@ def render_home():
             if not pendientes:
                 st.info("No tienes ensayos pendientes por ahora.")
             else:
-                col_ratios = [1.5, 2.6, 1.6, 1.8, 1.2, 0.9]
+                col_ratios = [1.2, 2.0, 1.9, 1.5, 1.1, 0.9]
                 headers = st.columns(col_ratios)
                 for col, label in zip(headers, ["ID ensayo", "Proyecto", "Tipo de ensayo", "Última actualización", "Estado", "Acción"]):
                     col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
