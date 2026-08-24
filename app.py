@@ -2037,10 +2037,13 @@ def render_project_detail():
         </div>
     ''', unsafe_allow_html=True)
 
-    # Alerta de plazo: solo Jefe y Director Técnico la ven. Se basa en "Fecha final real" (el
-    # plazo que de verdad hay que cumplir, ajustado a contratiempos) y no en "Fecha final
-    # proyecto" (que es solo la referencia inicial que se le da al cliente).
-    if st.session_state.role in ("jefe", "ingeniero"):
+    # Alerta de plazo: solo Jefe y Director Técnico la ven, y solo mientras el proyecto sigue sin
+    # entregarse del todo — project_status devuelve "ejecutado" solo cuando TODAS las muestras
+    # están finalizadas Y TODOS los ensayos tienen el visto bueno del Director Técnico; si ya se
+    # entregó todo, seguir advirtiendo sobre la fecha límite no aporta nada, aunque haya pasado.
+    # Se basa en "Fecha final real" (el plazo que de verdad hay que cumplir, ajustado a
+    # contratiempos) y no en "Fecha final proyecto" (la referencia inicial que se le da al cliente).
+    if st.session_state.role in ("jefe", "ingeniero") and project_status(codigo) != "ejecutado":
         deadline_raw = project.get("fecha_final_real")
         dias_restantes = None
         if deadline_raw:
@@ -2048,19 +2051,32 @@ def render_project_detail():
                 dias_restantes = (date.fromisoformat(deadline_raw) - date.today()).days
             except ValueError:
                 dias_restantes = None
-        if dias_restantes is not None:
-            if dias_restantes < 0:
-                tono, fondo, icono_alerta = DANGER, DANGER_LIGHT, "report"
-                texto = f"Vencido hace {abs(dias_restantes)} día(s)"
-            elif dias_restantes == 0:
-                tono, fondo, icono_alerta = DANGER, DANGER_LIGHT, "report"
-                texto = "Vence hoy"
-            elif dias_restantes <= 5:
+        if dias_restantes is not None and dias_restantes <= 0:
+            # Vencida (o vence hoy) y todavía faltan entregas: se resalta mucho más fuerte que
+            # los demás estados — encabezado propio en mayúsculas + detalle, en vez de la línea
+            # sencilla que usan los casos "faltan X días".
+            sub = (f"Pasaron {abs(dias_restantes)} día(s) desde la fecha final real y todavía "
+                   f"faltan ensayos por entregar." if dias_restantes < 0 else
+                   "Hoy es la fecha final real y todavía faltan ensayos por entregar.")
+            st.markdown(f'''
+                <div style="display:flex;align-items:flex-start;gap:10px;background:{DANGER_LIGHT};
+                            color:{DANGER};border-radius:10px;border:1.5px solid {DANGER};
+                            padding:12px 14px;margin-bottom:16px;">
+                    {icon("report", size=22)}
+                    <div>
+                        <div style="font-weight:800;font-size:15px;">
+                            {"¡FECHA LÍMITE VENCIDA!" if dias_restantes < 0 else "¡VENCE HOY!"}
+                        </div>
+                        <div style="font-size:13px;margin-top:2px;">{sub} ({deadline_raw})</div>
+                    </div>
+                </div>
+            ''', unsafe_allow_html=True)
+        elif dias_restantes is not None:
+            if dias_restantes <= 5:
                 tono, fondo, icono_alerta = WARNING, WARNING_LIGHT, "schedule"
-                texto = f"Faltan {dias_restantes} día(s)"
             else:
                 tono, fondo, icono_alerta = SUCCESS, SUCCESS_LIGHT, "event_available"
-                texto = f"Faltan {dias_restantes} día(s)"
+            texto = f"Faltan {dias_restantes} día(s)"
             st.markdown(f'''
                 <div style="display:flex;align-items:center;gap:10px;background:{fondo};color:{tono};
                             border-radius:10px;padding:10px 14px;margin-bottom:16px;font-weight:600;font-size:14px;">
