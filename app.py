@@ -12,9 +12,10 @@ import math
 import os
 import re
 import zipfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from io import BytesIO
 
+import extra_streamlit_components as stx
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -728,7 +729,18 @@ def _load_data():
 # ════════════════════════════════════════════════════════════════════
 # ESTADO INICIAL
 # ════════════════════════════════════════════════════════════════════
-SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 30  # 30 días
+SESSION_COOKIE_MAX_AGE_DAYS = 30
+
+# OJO: Streamlit Community Cloud filtra casi todas las cookies en su capa de proxy antes de que
+# lleguen al backend de la app — st.context.cookies (lo que se usaba antes acá) da un dict vacío
+# una vez desplegado, aunque funcione perfecto corriendo local. Por eso la sesión nunca se
+# restauraba al recargar la página en producción, solo en las pruebas locales. CookieManager
+# (extra_streamlit_components) evita el problema porque lee la cookie con JS en el navegador y
+# se la manda a Python como el valor de un componente — nunca pasa por el proxy del servidor.
+# NO envolver esto en @st.fragment: cuando el componente entrega su valor real de forma asíncrona,
+# el rerun automático que dispara Streamlit quedaría acotado al fragmento y el resto del script
+# (_try_restore_session_from_cookie, más abajo) nunca se enteraría del valor nuevo.
+cookie_manager = stx.CookieManager(key="gdl_cookie_manager")
 
 
 def _set_session_cookie(access_token, refresh_token):
@@ -736,53 +748,25 @@ def _set_session_cookie(access_token, refresh_token):
     URL — la pantalla actual sí va en la URL, ver _sync_query_params, pero el token no) para
     poder restaurar el login solo tras un recargo de página o una reconexión, en vez de
     mandar siempre a la persona de vuelta a pedirle código+clave (ver init_state)."""
-    components.html(f"""
-    <script>
-    (function() {{
-        var maxAge = {SESSION_COOKIE_MAX_AGE};
-        var at = {json.dumps(access_token)};
-        var rt = {json.dumps(refresh_token)};
-        window.parent.document.cookie = "gdl_at=" + encodeURIComponent(at) + "; max-age=" + maxAge + "; path=/; SameSite=Lax";
-        window.parent.document.cookie = "gdl_rt=" + encodeURIComponent(rt) + "; max-age=" + maxAge + "; path=/; SameSite=Lax";
-    }})();
-    </script>
-    """, height=0)
+    expira = datetime.now() + timedelta(days=SESSION_COOKIE_MAX_AGE_DAYS)
+    cookie_manager.batch_set({"gdl_at": access_token, "gdl_rt": refresh_token}, expires_at=expira)
+
+
+def _clear_session_cookie():
+    cookie_manager.delete("gdl_at", key="del_gdl_at")
+    cookie_manager.delete("gdl_rt", key="del_gdl_rt")
 
 
 def _set_remember_user_cookie(codigo):
     """Guarda el código de usuario (no la clave) en una cookie aparte de la de sesión, para
     precargar el campo "Código de usuario" del login la próxima vez que haga falta iniciar
     sesión — checkbox "Recordar mi usuario" en render_login()."""
-    components.html(f"""
-    <script>
-    (function() {{
-        var maxAge = {SESSION_COOKIE_MAX_AGE};
-        var u = {json.dumps(codigo)};
-        window.parent.document.cookie = "gdl_user=" + encodeURIComponent(u) + "; max-age=" + maxAge + "; path=/; SameSite=Lax";
-    }})();
-    </script>
-    """, height=0)
+    expira = datetime.now() + timedelta(days=SESSION_COOKIE_MAX_AGE_DAYS)
+    cookie_manager.set("gdl_user", codigo, key="set_gdl_user", expires_at=expira)
 
 
 def _clear_remember_user_cookie():
-    components.html("""
-    <script>
-    (function() {
-        window.parent.document.cookie = "gdl_user=; max-age=0; path=/; SameSite=Lax";
-    })();
-    </script>
-    """, height=0)
-
-
-def _clear_session_cookie():
-    components.html("""
-    <script>
-    (function() {
-        window.parent.document.cookie = "gdl_at=; max-age=0; path=/; SameSite=Lax";
-        window.parent.document.cookie = "gdl_rt=; max-age=0; path=/; SameSite=Lax";
-    })();
-    </script>
-    """, height=0)
+    cookie_manager.delete("gdl_user", key="del_gdl_user")
 
 
 def _push_history_entry():
@@ -865,26 +849,41 @@ def init_state():
     st.session_state.selected_assay_id = st.query_params.get("assay") or None
     st.session_state.selected_assay_type = st.query_params.get("atipo") or None
 
-    # Restaura el login desde la cookie del navegador (ver _set_session_cookie) — antes,
-    # cualquier recargo de página (F5, reconexión) mandaba de vuelta al login aunque la
-    # sesión de Supabase siguiera siendo válida. Si el refresh_token ya no sirve (venció,
-    # se cerró sesión en otro dispositivo), restore_session devuelve None y simplemente se
-    # queda en la pantalla de login, como antes.
-    at = st.context.cookies.get("gdl_at")
-    rt = st.context.cookies.get("gdl_rt")
-    if at and rt:
-        profile = db.restore_session(at, rt)
-        if profile:
-            st.session_state.profile = profile
-            st.session_state.role = profile["role"]
-            # restore_session() refresca el token si el access_token de la cookie ya había
-            # vencido — Supabase rota el refresh_token en ese refresh, así que hay que
-            # reescribir la cookie con los tokens nuevos (ver _tokens_rotated en el router
-            # principal) o el siguiente recargo fallaría con un refresh_token ya inválido.
-            st.session_state["_tokens_rotated"] = True
+
+def _try_restore_session_from_cookie():
+    """Restaura el login desde la cookie del navegador (ver _set_session_cookie) — antes,
+    cualquier recargo de página (F5, reconexión) mandaba de vuelta al login aunque la sesión de
+    Supabase siguiera siendo válida. Si el refresh_token ya no sirve (venció, se cerró sesión en
+    otro dispositivo), restore_session devuelve None y simplemente se queda en la pantalla de
+    login, como antes.
+
+    OJO: a diferencia del resto de init_state(), esto NO puede correr una sola vez al principio
+    de la sesión — CookieManager lee la cookie de forma asíncrona con JS, así que en el primer
+    rerun todavía no tiene el valor real (solo un default vacío) y recién lo entrega un par de
+    reruns después. Por eso esta función se llama en CADA rerun mientras no haya sesión, hasta
+    que la cookie real llegue. Una vez se intenta con un token real (funcione o no), no se
+    reintenta más en esta sesión de navegador, para no golpear a Supabase en cada rerun si de
+    verdad venció."""
+    if st.session_state.role is not None or st.session_state.get("_cookie_restore_attempted"):
+        return
+    at = cookie_manager.get("gdl_at")
+    rt = cookie_manager.get("gdl_rt")
+    if not (at and rt):
+        return
+    st.session_state["_cookie_restore_attempted"] = True
+    profile = db.restore_session(at, rt)
+    if profile:
+        st.session_state.profile = profile
+        st.session_state.role = profile["role"]
+        # restore_session() refresca el token si el access_token de la cookie ya había
+        # vencido — Supabase rota el refresh_token en ese refresh, así que hay que
+        # reescribir la cookie con los tokens nuevos (ver _tokens_rotated en el router
+        # principal) o el siguiente recargo fallaría con un refresh_token ya inválido.
+        st.session_state["_tokens_rotated"] = True
 
 
 init_state()
+_try_restore_session_from_cookie()
 
 
 def navigate(screen):
@@ -1245,7 +1244,7 @@ def render_login():
         with st.container(border=True, key="login-card"):
             st.markdown("#### Bienvenido de nuevo")
             st.caption("Ingresa tu código de usuario y tu clave para acceder al sistema.")
-            codigo_recordado = st.context.cookies.get("gdl_user") or ""
+            codigo_recordado = cookie_manager.get("gdl_user") or ""
             codigo = st.text_input("Código de usuario", value=codigo_recordado, placeholder="ej. jperez", autocomplete="off")
             password = st.text_input("Clave de acceso", type="password", placeholder="••••••••")
             recordar = st.checkbox("Recordar mi usuario", value=True)
@@ -1338,10 +1337,10 @@ def render_topbar():
         with c_logout:
             if st.button("", key="logout_top", help="Cerrar sesión", use_container_width=True, icon=":material/logout:"):
                 db.sign_out()
-                _clear_session_cookie()
                 st.session_state.role = None
                 st.session_state.profile = None
                 st.session_state.nav_stack = []
+                st.session_state._pending_logout_cookie_clear = True
                 navigate("home")
 
 
@@ -4199,6 +4198,15 @@ def render_search():
 # ════════════════════════════════════════════════════════════════════
 # ENRUTADOR PRINCIPAL
 # ════════════════════════════════════════════════════════════════════
+# El borrado de la cookie de sesión al cerrar sesión tiene el mismo problema de timing que
+# escribirla al iniciar sesión (ver _set_session_cookie/_pending_cookie_tokens): si se llama justo
+# antes de un st.rerun(), el componente no alcanza a mandarle la orden de borrado al navegador
+# antes de que el rerun reemplace la página. Por eso se difiere igual, un rerun después — y como
+# el logout deja st.session_state.role en None, este chequeo va ANTES del if/else de abajo, no
+# adentro del "else" (que solo corre con sesión iniciada).
+if st.session_state.pop("_pending_logout_cookie_clear", False):
+    _clear_session_cookie()
+
 if st.session_state.role is None:
     render_login()
 else:
