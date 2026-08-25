@@ -604,6 +604,65 @@ EQUIPO_LIMITES = [
 # Equipos reales usados en el ensayo de Peso Unitario Parafinado.
 EQUIPO_MASA_UNITARIA = ["Balanza GDA-E-011", "Termómetro GDA-E-126"]
 
+# ════════════════════════════════════════════════════════════════════
+# DESCRIPCIÓN VISUAL ESTRUCTURADA (menús desplegables en vez de texto libre) — para poder
+# comparar de un vistazo la clasificación que hace el laboratorista a ojo con la clasificación
+# USCS que calcula la app a partir de los datos de Granulometría/Límites (ver clasificar_uscs).
+# Las 5 categorías y sus opciones siguen la nomenclatura estándar de descripción visual-manual de
+# suelos (INV E-102 / ASTM D2488), no una lista inventada.
+DESC_TIPO_SUELO_OPTIONS = ["", "Grava", "Arena", "Limo", "Arcilla", "Orgánico"]
+DESC_COLOR_OPTIONS = [
+    "", "Gris", "Gris oscuro", "Gris claro", "Café", "Café oscuro", "Café claro",
+    "Amarillo", "Amarillento", "Rojizo", "Negro", "Blanco", "Beige", "Naranja",
+]
+DESC_CEMENTACION_OPTIONS = ["", "No cementado", "Débilmente cementado", "Moderadamente cementado", "Fuertemente cementado"]
+# La consistencia se describe distinto según el suelo sea granular (grava/arena, por
+# compacidad/densidad relativa) o cohesivo (limo/arcilla/orgánico, por resistencia al corte) —
+# INV E-102 usa dos escalas separadas, no una sola.
+DESC_CONSISTENCIA_GRANULAR_OPTIONS = ["", "Muy suelta", "Suelta", "Media", "Densa", "Muy densa"]
+DESC_CONSISTENCIA_COHESIVO_OPTIONS = ["", "Muy blanda", "Blanda", "Media", "Firme", "Muy firme", "Dura"]
+DESC_HUMEDAD_OPTIONS = ["", "Húmeda", "Seca"]
+
+
+def _consistencia_options(tipo_suelo):
+    return DESC_CONSISTENCIA_GRANULAR_OPTIONS if tipo_suelo in ("Grava", "Arena") else DESC_CONSISTENCIA_COHESIVO_OPTIONS
+
+
+def descripcion_visual_estructurada(muestra):
+    """Arma la frase legible ('Arena · Color gris oscuro · ...') a partir de los 5 menús
+    desplegables de la muestra — se usa tanto en la vista de solo lectura como en el Excel
+    oficial. None si todavía no se ha elegido ninguna opción."""
+    partes = []
+    tipo = muestra.get("desc_tipo_suelo")
+    if tipo:
+        partes.append(tipo)
+    color = muestra.get("desc_color")
+    if color:
+        partes.append(f"Color {color.lower()}")
+    cementacion = muestra.get("desc_cementacion")
+    if cementacion:
+        partes.append(cementacion)
+    consistencia = muestra.get("desc_consistencia")
+    if consistencia:
+        etiqueta = "Compacidad" if tipo in ("Grava", "Arena") else "Consistencia"
+        partes.append(f"{etiqueta} {consistencia.lower()}")
+    humedad = muestra.get("desc_humedad")
+    if humedad:
+        partes.append(humedad)
+    return " · ".join(partes) if partes else None
+
+
+def descripcion_visual_para_excel(muestra):
+    """Texto que va al campo "DESCRIPCIÓN VISUAL" del Excel oficial: la frase armada de los
+    menús desplegables, seguida de las notas adicionales en texto libre si hay (ver
+    descripcion_visual_estructurada) — None si no hay ni lo uno ni lo otro, para que el llamador
+    pueda caer al respaldo de siempre (observaciones del ensayo, o el tipo de muestra)."""
+    estructurada = descripcion_visual_estructurada(muestra)
+    notas = (muestra.get("descripcion_visual") or "").strip()
+    if estructurada and notas:
+        return f"{estructurada}. {notas}"
+    return estructurada or notas or None
+
 # Filas de Límite Líquido (INV. E-125-13) y Límite Plástico (INV. E-126-13), con las celdas
 # reales de la plantilla CLASIFICACION_DE_SUELOS.xlsm (sección "LIMITES DE ATTERBERG", a la
 # derecha de la tabla de Granulometría en la hoja "MUESTRA"): 3 columnas de ensayo para el
@@ -2896,51 +2955,71 @@ def render_muestra_detail():
 
     with st.container(border=True):
         st.markdown('<div class="section-title">Descripción visual de la muestra</div>', unsafe_allow_html=True)
-        st.caption("Cómo se ve físicamente la muestra (color, textura, humedad, etc.).")
+        st.caption("Cómo se ve la muestra a ojo — para comparar con la clasificación USCS calculada de "
+                   "los datos de laboratorio, justo abajo.")
         if st.session_state.role == "laboratorista":
+            dc1, dc2 = st.columns(2)
+            with dc1:
+                tipo_actual = muestra.get("desc_tipo_suelo") or ""
+                tipo_idx = DESC_TIPO_SUELO_OPTIONS.index(tipo_actual) if tipo_actual in DESC_TIPO_SUELO_OPTIONS else 0
+                desc_tipo = st.selectbox("Tipo de suelo", DESC_TIPO_SUELO_OPTIONS, index=tipo_idx,
+                                          key=f"desc_tipo_{muestra_id}", format_func=lambda v: v or "— Seleccionar —")
+            with dc2:
+                color_actual = muestra.get("desc_color") or ""
+                color_idx = DESC_COLOR_OPTIONS.index(color_actual) if color_actual in DESC_COLOR_OPTIONS else 0
+                desc_color = st.selectbox("Color", DESC_COLOR_OPTIONS, index=color_idx,
+                                           key=f"desc_color_{muestra_id}", format_func=lambda v: v or "— Seleccionar —")
+            dc3, dc4 = st.columns(2)
+            with dc3:
+                cem_actual = muestra.get("desc_cementacion") or ""
+                cem_idx = DESC_CEMENTACION_OPTIONS.index(cem_actual) if cem_actual in DESC_CEMENTACION_OPTIONS else 0
+                desc_cementacion = st.selectbox("Cementación", DESC_CEMENTACION_OPTIONS, index=cem_idx,
+                                                 key=f"desc_cem_{muestra_id}", format_func=lambda v: v or "— Seleccionar —")
+            with dc4:
+                # Grava/Arena se describen por compacidad, Limo/Arcilla/Orgánico por consistencia —
+                # son dos escalas distintas (INV E-102), por eso la key incluye el tipo de suelo:
+                # fuerza un widget nuevo si la persona cambia de tipo, para no arrastrar un valor
+                # de la escala vieja que ya no existe en la lista de opciones nueva.
+                opciones_consistencia = _consistencia_options(desc_tipo)
+                etiqueta_consistencia = "Compacidad" if desc_tipo in ("Grava", "Arena") else "Consistencia"
+                cons_actual = muestra.get("desc_consistencia") or ""
+                cons_idx = opciones_consistencia.index(cons_actual) if cons_actual in opciones_consistencia else 0
+                desc_consistencia = st.selectbox(etiqueta_consistencia, opciones_consistencia, index=cons_idx,
+                                                  key=f"desc_cons_{muestra_id}_{desc_tipo or 'na'}",
+                                                  format_func=lambda v: v or "— Seleccionar —")
+            hum_actual = muestra.get("desc_humedad") or ""
+            hum_idx = DESC_HUMEDAD_OPTIONS.index(hum_actual) if hum_actual in DESC_HUMEDAD_OPTIONS else 0
+            desc_humedad = st.selectbox("Condición de humedad", DESC_HUMEDAD_OPTIONS, index=hum_idx,
+                                         key=f"desc_hum_{muestra_id}", format_func=lambda v: v or "— Seleccionar —")
             with st.container(key="muestra-desc-visual-box"):
-                descripcion_visual = st.text_area(
-                    "Descripción visual de la muestra", value=muestra.get("descripcion_visual", ""), label_visibility="collapsed",
-                    placeholder="Ej: Suelo arcilloso color gris, humedad media, sin fragmentos de roca...", key=f"desc_visual_{muestra_id}",
+                notas = st.text_area(
+                    "Notas adicionales (opcional)", value=muestra.get("descripcion_visual", ""),
+                    placeholder="Ej: Con fragmentos de roca, olor a materia orgánica...", key=f"desc_notas_{muestra_id}",
                 )
             if st.button("Guardar descripción visual", icon=":material/save:", key=f"desc_visual_save_{muestra_id}"):
-                db.update_muestra(muestra["id"], descripcion_visual=descripcion_visual.upper())
+                db.update_muestra(
+                    muestra["id"], desc_tipo_suelo=desc_tipo, desc_color=desc_color,
+                    desc_cementacion=desc_cementacion, desc_consistencia=desc_consistencia,
+                    desc_humedad=desc_humedad, descripcion_visual=notas.upper(),
+                )
                 st.success("Descripción visual guardada.")
                 st.rerun()
         else:
-            descripcion_val = muestra.get("descripcion_visual")
-            if descripcion_val:
+            descripcion_val = descripcion_visual_estructurada(muestra)
+            notas_val = muestra.get("descripcion_visual")
+            if descripcion_val or notas_val:
+                cuerpo = html.escape(descripcion_val) if descripcion_val else ""
+                if notas_val:
+                    cuerpo += (f'<div style="font-weight:400;font-size:13px;margin-top:4px;color:{NEUTRAL};">'
+                               f'{html.escape(notas_val)}</div>')
                 st.markdown(f'<div style="display:flex;gap:10px;align-items:flex-start;background:{BG};'
                              f'border-radius:10px;padding:12px 14px;margin-bottom:4px;">'
                              f'<span style="margin-top:2px;">{icon("visibility", size=18)}</span>'
-                             f'<div style="font-weight:600;line-height:1.5;">{html.escape(descripcion_val)}</div></div>',
+                             f'<div style="font-weight:600;line-height:1.5;">{cuerpo}</div></div>',
                              unsafe_allow_html=True)
             else:
                 st.markdown(f'<div style="display:flex;align-items:center;gap:6px;color:{NEUTRAL};font-style:italic;">'
                              f'{icon("visibility_off", size=16)} El laboratorista aún no la digita</div>', unsafe_allow_html=True)
-
-    with st.container(border=True):
-        st.markdown('<div class="section-title">Observaciones</div>', unsafe_allow_html=True)
-        st.caption("El laboratorista la digita si la muestra presenta fisuras o no se puede realizar el ensayo "
-                   "por alguna razón.")
-        if st.session_state.role == "laboratorista":
-            with st.container(key="muestra-obs-box"):
-                observacion = st.text_area(
-                    "Observaciones", value=muestra.get("observaciones", ""), label_visibility="collapsed",
-                    placeholder="Ej: Muestra con fisuras visibles, no fue posible completar el ensayo...", key=f"obs_{muestra_id}",
-                )
-            if st.button("Guardar observación", icon=":material/save:", key=f"obs_save_{muestra_id}"):
-                db.update_muestra(muestra["id"], observaciones=observacion)
-                st.success("Observación guardada.")
-                st.rerun()
-        else:
-            observaciones_val = muestra.get("observaciones")
-            if observaciones_val:
-                st.markdown(f'<div class="cell-muted">{html.escape(observaciones_val)}</div>', unsafe_allow_html=True)
-            else:
-                st.markdown(f'<div style="display:flex;align-items:center;gap:8px;background:{BG};'
-                             f'border-radius:10px;padding:12px 14px;margin-bottom:4px;color:{NEUTRAL};font-style:italic;">'
-                             f'{icon("inbox", size=18)} Sin observaciones</div>', unsafe_allow_html=True)
 
     if muestra["ensayos"].get("Granulometría"):
         with st.container(border=True):
@@ -2982,6 +3061,29 @@ def render_muestra_detail():
                         f'<div style="display:flex;align-items:center;gap:8px;color:{NEUTRAL};font-style:italic;">'
                         f'{icon("hourglass_empty", size=18)} {html.escape(razon)}</div>' for razon in razones
                     ) + '</div>', unsafe_allow_html=True)
+
+    with st.container(border=True):
+        st.markdown('<div class="section-title">Observaciones</div>', unsafe_allow_html=True)
+        st.caption("El laboratorista la digita si la muestra presenta fisuras o no se puede realizar el ensayo "
+                   "por alguna razón.")
+        if st.session_state.role == "laboratorista":
+            with st.container(key="muestra-obs-box"):
+                observacion = st.text_area(
+                    "Observaciones", value=muestra.get("observaciones", ""), label_visibility="collapsed",
+                    placeholder="Ej: Muestra con fisuras visibles, no fue posible completar el ensayo...", key=f"obs_{muestra_id}",
+                )
+            if st.button("Guardar observación", icon=":material/save:", key=f"obs_save_{muestra_id}"):
+                db.update_muestra(muestra["id"], observaciones=observacion)
+                st.success("Observación guardada.")
+                st.rerun()
+        else:
+            observaciones_val = muestra.get("observaciones")
+            if observaciones_val:
+                st.markdown(f'<div class="cell-muted">{html.escape(observaciones_val)}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div style="display:flex;align-items:center;gap:8px;background:{BG};'
+                             f'border-radius:10px;padding:12px 14px;margin-bottom:4px;color:{NEUTRAL};font-style:italic;">'
+                             f'{icon("inbox", size=18)} Sin observaciones</div>', unsafe_allow_html=True)
 
     # Filtra por si la muestra guarda un ensayo que ya no es seleccionable (p. ej. "Pasa 200",
     # que quedó incluido dentro de Granulometría) — no se muestra aunque quede marcado en datos viejos.
@@ -3289,11 +3391,11 @@ def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observ
     ws["H12"] = muestra["numero"]
     ws["K12"] = to_float(muestra.get("profundidad_de"))
     ws["M12"] = to_float(muestra.get("profundidad_hasta"))
-    # Descripción visual: primero lo que se digitó en "Descripción visual de la muestra" (Bitácora)
-    # —independiente de las Observaciones—, si no hay, lo que el laboratorista escribió en
-    # "Observaciones" del propio ensayo, y solo si ninguna de las dos existe, el tipo de muestra
-    # como último recurso.
-    ws["D13"] = muestra.get("descripcion_visual") or observaciones_ensayo or f"Tipo de muestra: {muestra.get('tipo_muestra','')}"
+    # Descripción visual: primero la frase armada de los menús desplegables (+ notas
+    # adicionales si hay, ver descripcion_visual_para_excel) — independiente de las
+    # Observaciones—, si no hay nada de eso, lo que el laboratorista escribió en "Observaciones"
+    # del propio ensayo, y solo si ninguna de las dos existe, el tipo de muestra como último recurso.
+    ws["D13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or f"Tipo de muestra: {muestra.get('tipo_muestra','')}"
 
 
 def _escribir_limites(ws, data):
@@ -3491,7 +3593,7 @@ def _llenar_encabezado_masa_unitaria(ws, codigo, perf_codigo, muestra, project, 
     ws["F12"] = muestra["numero"]  # Muestra No.
     ws["I12"] = to_float(muestra.get("profundidad_de"))
     ws["K12"] = to_float(muestra.get("profundidad_hasta"))
-    ws["C13"] = muestra.get("descripcion_visual") or observaciones_ensayo or f"Tipo de muestra: {muestra.get('tipo_muestra','')}"
+    ws["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or f"Tipo de muestra: {muestra.get('tipo_muestra','')}"
 
 
 def generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
@@ -3894,7 +3996,7 @@ def render_assay_form():
                     unsafe_allow_html=True)
         if muestra is not None:
             st.markdown(f'<div class="cell-muted" style="margin-top:12px;">Descripción visual de la muestra</div>'
-                        f'<div style="font-weight:600;">{html.escape(muestra.get("descripcion_visual") or "— (el laboratorista aún no la digita) —")}</div>',
+                        f'<div style="font-weight:600;">{html.escape(descripcion_visual_para_excel(muestra) or "— (el laboratorista aún no la digita) —")}</div>',
                         unsafe_allow_html=True)
 
     if muestra is not None:
