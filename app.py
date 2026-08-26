@@ -3653,6 +3653,58 @@ PASA_200_FILAS = [
     ("p200_masa_recipiente", "Masa del recipiente"),
 ]
 
+# ════════════════════════════════════════════════════════════════════
+# CAMPOS REQUERIDOS POR ENSAYO — antes de "Enviar a revisión" se valida que estén digitados; si
+# falta alguno, no se manda y ese campo se resalta en rojo (ver render_assay_form/campos_faltantes).
+# Los 14h/15h/16h de Pasa 200 y Humedad NO están acá: son solo lecturas de verificación que se
+# autocompletan de la lectura base, no algo que el laboratorista tenga que digitar aparte. Igual
+# los tamices de Granulometría: un tamiz vacío es un dato válido (nada quedó retenido ahí), no un
+# dato faltante — ver el "0 en vez de guion" ya implementado para esa tabla.
+# ════════════════════════════════════════════════════════════════════
+CAMPOS_REQUERIDOS_PASA200 = [
+    (f"p200_{campo}_{suf}", f"{label} ({'antes' if suf == 'antes' else 'después'} del lavado)")
+    for campo, label in (("recipiente", "Recipiente No."), ("seco_mas_recipiente", "Masa suelo seco + recipiente"),
+                          ("masa_recipiente", "Masa del recipiente"))
+    for suf in ("antes", "despues")
+]
+CAMPOS_REQUERIDOS_HUMEDAD = [
+    ("hum_recipiente", "Recipiente No."),
+    ("hum_masa_recipiente", "Masa del recipiente (g)"),
+    ("hum_masa_humedo_mas_recipiente", "Masa suelo húmedo + recipiente (g)"),
+    ("hum_seco_mas_recipiente", "Masa suelo seco + recipiente (g)"),
+]
+CAMPOS_REQUERIDOS_LIMITES = (
+    [(f"lim_ll_{campo}_{i}", f"{label} — Límite Líquido, ensayo {i}")
+     for campo, label in (("recipiente", "Recipiente No."), ("golpes", "No. de golpes"),
+                           ("humedo", "Masa húmedo + recipiente"), ("seco", "Masa seco + recipiente"),
+                           ("recip_masa", "Masa recipiente"))
+     for i in range(1, LIMITE_LIQUIDO_N + 1)]
+    + [(f"lim_lp_{campo}_{i}", f"{label} — Límite Plástico, ensayo {i}")
+       for campo, label in (("recipiente", "Recipiente No."), ("humedo", "Masa húmedo + recipiente"),
+                             ("seco", "Masa seco + recipiente"), ("recip_masa", "Masa recipiente"))
+       for i in range(1, LIMITE_PLASTICO_N + 1)]
+)
+CAMPOS_REQUERIDOS_MASA_UNITARIA = [
+    ("mu_peso_aire", "Masa en el aire (g)"),
+    ("mu_peso_agua_par", "Masa en el agua parafinado (g)"),
+    ("mu_peso_aire_par", "Masa en el aire parafinado (g)"),
+    ("mu_temp_agua", "Temperatura del agua (°C)"),
+]
+CAMPOS_REQUERIDOS_POR_TIPO = {
+    "humedad": CAMPOS_REQUERIDOS_HUMEDAD,
+    "pasa200": CAMPOS_REQUERIDOS_PASA200,
+    "granulometria": CAMPOS_REQUERIDOS_PASA200,  # comparte los mismos campos de Pasa 200 (embebido y "Requerido")
+    "limites": CAMPOS_REQUERIDOS_LIMITES,
+    "masa-unitaria": CAMPOS_REQUERIDOS_MASA_UNITARIA,
+}
+
+
+def campos_faltantes(tipo, data):
+    """Campos requeridos que todavía están vacíos para este tipo de ensayo — lista de
+    (clave, etiqueta) en el mismo orden en que se digitan en el formulario."""
+    return [(key, label) for key, label in CAMPOS_REQUERIDOS_POR_TIPO.get(tipo, [])
+            if not str(data.get(key, "")).strip()]
+
 
 def render_pasa200_section(data, assay_id, requerido=True):
     """Campos de "Determinación Pasa No. 200". Se usa tanto embebido dentro del formulario de
@@ -3801,15 +3853,19 @@ def render_humedad_form(data, assay_id):
             data["hum_metodo"] = st.selectbox("Método del Ensayo", METODO_HUMEDAD, index=midx, key=f"hum_metodo_{assay_id}")
 
 
-def render_masa_unitaria_form(data):
+def render_masa_unitaria_form(data, assay_id):
     st.info("Estos datos se guardan tal cual, sin calcular el peso unitario dentro de la app.")
     c1, c2 = st.columns(2)
     with c1:
-        data["mu_peso_aire"] = st.text_input("Masa en el aire (g)", value=data.get("mu_peso_aire", ""), placeholder="245.80")
-        data["mu_peso_agua_par"] = st.text_input("Masa en el agua parafinado (g)", value=data.get("mu_peso_agua_par", ""), placeholder="138.20")
+        data["mu_peso_aire"] = st.text_input("Masa en el aire (g)", value=data.get("mu_peso_aire", ""),
+                                              key=f"mu_peso_aire_{assay_id}", placeholder="245.80")
+        data["mu_peso_agua_par"] = st.text_input("Masa en el agua parafinado (g)", value=data.get("mu_peso_agua_par", ""),
+                                                  key=f"mu_peso_agua_par_{assay_id}", placeholder="138.20")
     with c2:
-        data["mu_peso_aire_par"] = st.text_input("Masa en el aire parafinado (g)", value=data.get("mu_peso_aire_par", ""), placeholder="258.30")
-        data["mu_temp_agua"] = st.text_input("Temperatura del agua (°C)", value=data.get("mu_temp_agua", ""), placeholder="22.0")
+        data["mu_peso_aire_par"] = st.text_input("Masa en el aire parafinado (g)", value=data.get("mu_peso_aire_par", ""),
+                                                  key=f"mu_peso_aire_par_{assay_id}", placeholder="258.30")
+        data["mu_temp_agua"] = st.text_input("Temperatura del agua (°C)", value=data.get("mu_temp_agua", ""),
+                                              key=f"mu_temp_agua_{assay_id}", placeholder="22.0")
 
     render_equipo(data, "mu", EQUIPO_MASA_UNITARIA)
     render_norma_selector("masa-unitaria", data, "mu")
@@ -4051,6 +4107,22 @@ def render_assay_form():
                 st.success("Ensayo habilitado — el laboratorista ya puede volver a digitar los datos.")
                 st.rerun()
     else:
+        intento_incompleto_key = f"_intento_incompleto_{assay_id}"
+        if st.session_state.get(intento_incompleto_key):
+            faltantes_actuales = campos_faltantes(assay["tipo"], data)
+            if faltantes_actuales:
+                css_reglas = "".join(
+                    f'.st-key-{key}_{assay_id} input {{ border: 2px solid #d32f2f !important; '
+                    f'background-color: #fdecea !important; }}\n'
+                    for key, _ in faltantes_actuales
+                )
+                st.markdown(f"<style>{css_reglas}</style>", unsafe_allow_html=True)
+                st.error("⚠️ Faltan datos por digitar antes de poder enviar este ensayo a revisión "
+                          "(resaltados en rojo abajo):\n\n"
+                          + "\n".join(f"- {label}" for _, label in faltantes_actuales))
+            else:
+                st.session_state.pop(intento_incompleto_key, None)
+
         if assay["tipo"] == "granulometria":
             render_granulometria_form(data, assay_id)
         elif assay["tipo"] == "pasa200":
@@ -4060,7 +4132,7 @@ def render_assay_form():
         elif assay["tipo"] == "limites":
             render_limites_form(data, assay_id)
         elif assay["tipo"] == "masa-unitaria":
-            render_masa_unitaria_form(data)
+            render_masa_unitaria_form(data, assay_id)
 
         with st.expander("Observaciones (opcional)", icon=":material/notes:", expanded=bool(assay.get("observations"))):
             observations = st.text_area("Observaciones", value=assay.get("observations", ""), label_visibility="collapsed",
@@ -4095,25 +4167,31 @@ def render_assay_form():
                 navigate("muestra-detail")
         with col2:
             if st.button("Enviar a revisión", type="primary", use_container_width=True, icon=":material/send:"):
-                ya_estaba_finalizado = assay["status"] == "finalizado"
-                db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status="finalizado")
-                assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado")
-                if pasa200_gran_sibling:
-                    db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
-                if muestra:
-                    actor_lab = f"{laboratorist} (Laboratorista)" if laboratorist else "Laboratorista"
-                    add_historial(assay, "Enviado a Revisión", actor_lab, icono="science", tono="primary")
-                    # Cada ensayo que el laboratorista termina se avisa al Jefe (nunca al Director Técnico,
-                    # que solo entra en juego cuando el Jefe confirma ese ensayo individual).
-                    if not ya_estaba_finalizado:
-                        add_notification("jefe", f"El laboratorista terminó {ASSAY_LABELS[assay['tipo']]} de la Muestra "
-                                                  f"{muestra['numero']} de {codigo}.", codigo, perf_codigo, muestra_id)
-                        # Si este era el último ensayo pendiente, la muestra completa su ciclo en el
-                        # laboratorio (semáforo en rojo) — se avisa aparte para que la confirme.
-                        if compute_muestra_estado(muestra) == "finalizado":
-                            add_notification("jefe", f"La Muestra {muestra['numero']} de {codigo} ya completó todos sus "
-                                                      f"ensayos — está lista para tu confirmación.", codigo, perf_codigo, muestra_id)
-                navigate("muestra-detail")
+                faltantes = campos_faltantes(assay["tipo"], data)
+                if faltantes:
+                    st.session_state[intento_incompleto_key] = True
+                    st.rerun()
+                else:
+                    st.session_state.pop(intento_incompleto_key, None)
+                    ya_estaba_finalizado = assay["status"] == "finalizado"
+                    db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status="finalizado")
+                    assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado")
+                    if pasa200_gran_sibling:
+                        db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
+                    if muestra:
+                        actor_lab = f"{laboratorist} (Laboratorista)" if laboratorist else "Laboratorista"
+                        add_historial(assay, "Enviado a Revisión", actor_lab, icono="science", tono="primary")
+                        # Cada ensayo que el laboratorista termina se avisa al Jefe (nunca al Director Técnico,
+                        # que solo entra en juego cuando el Jefe confirma ese ensayo individual).
+                        if not ya_estaba_finalizado:
+                            add_notification("jefe", f"El laboratorista terminó {ASSAY_LABELS[assay['tipo']]} de la Muestra "
+                                                      f"{muestra['numero']} de {codigo}.", codigo, perf_codigo, muestra_id)
+                            # Si este era el último ensayo pendiente, la muestra completa su ciclo en el
+                            # laboratorio (semáforo en rojo) — se avisa aparte para que la confirme.
+                            if compute_muestra_estado(muestra) == "finalizado":
+                                add_notification("jefe", f"La Muestra {muestra['numero']} de {codigo} ya completó todos sus "
+                                                          f"ensayos — está lista para tu confirmación.", codigo, perf_codigo, muestra_id)
+                    navigate("muestra-detail")
 
     if es_supervisor and assay["tipo"] == "granulometria" and muestra:
         st.markdown("---")
