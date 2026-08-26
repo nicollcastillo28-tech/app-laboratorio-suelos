@@ -641,9 +641,9 @@ def _es_grueso(tipo_suelo):
 
 def descripcion_visual_estructurada(muestra):
     """Arma la frase legible en mayúscula (ej. 'LIMO DE COLOR MARRÓN ROJIZO DE CONSISTENCIA DURA
-    EN CONDICIÓN DE HUMEDAD SECA') a partir de los menús desplegables de la muestra — se usa
-    tanto en la vista de solo lectura como en el Excel oficial. None si todavía no se ha elegido
-    ninguna opción."""
+    EN CONDICIÓN SECA') a partir de los menús desplegables de la muestra — se usa tanto en la
+    vista de solo lectura como en el Excel oficial. None si todavía no se ha elegido ninguna
+    opción."""
     # .upper(): datos de antes de este cambio (migración 0015) se guardaron en minúscula/mixta
     # (ej. "Limo", "Café oscuro") — se normalizan al leer para que la frase salga toda en
     # mayúscula igual que los datos nuevos, sin tener que migrar filas viejas en la base de datos.
@@ -673,9 +673,12 @@ def descripcion_visual_estructurada(muestra):
         if consistencia:
             partes.append(f"DE CONSISTENCIA {consistencia}")
 
+    # "CONDICIÓN {ESTADO}", no "CONDICIÓN DE HUMEDAD {ESTADO}" — el estado (SECA/HÚMEDA/
+    # SATURADA) ya funciona como adjetivo de "condición", "condición de humedad húmeda" suena
+    # redundante.
     humedad = (muestra.get("desc_humedad") or "").upper() or None
     if humedad:
-        partes.append(f"EN CONDICIÓN DE HUMEDAD {humedad}")
+        partes.append(f"EN CONDICIÓN {humedad}")
 
     return " ".join(partes) if partes else None
 
