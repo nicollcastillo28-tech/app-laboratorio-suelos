@@ -213,7 +213,7 @@ st.markdown(f"""
        borde tapando el grupo entero en vez de resaltar una sola tarjeta. bell-alert/bell-quiet
        (el botón-contenedor de la campana en el topbar) tampoco: es un ícono, no una tarjeta —
        se veía como una rayita verde suelta pegada a la campana. */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-desc-visual-box):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not(.st-key-bell-alert):not(.st-key-bell-quiet):not([class*="st-key-notif-card-"]) {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not(.st-key-bell-alert):not(.st-key-bell-quiet):not([class*="st-key-notif-card-"]) {{
         border-left: 4px solid {PRIMARY} !important;
     }}
     /* Tarjetas de "Ensayos asignados" (una por ensayo): más separación entre sí y sombra
@@ -259,9 +259,6 @@ st.markdown(f"""
     /* Tarjeta con acento a la izquierda, para encabezados de detalle (ej. Detalle de Muestra) */
     .st-key-muestra-header-card {{ border-left: 4px solid {PRIMARY} !important; }}
     .st-key-muestra-obs-box .stTextArea textarea {{ background-color: {SECONDARY_CONTAINER} !important; }}
-    /* El laboratorista puede escribir en minúscula — se ve en mayúscula de una vez (el texto
-       que se guarda también se normaliza a mayúscula al hacer clic en "Guardar"). */
-    .st-key-muestra-desc-visual-box .stTextArea textarea {{ text-transform: uppercase; }}
     /* Botones dentro de la campana de notificaciones — por defecto salen blancos/planos y se
        pierden contra el fondo del popover. */
     .st-key-notif-popover-body .stButton button {{
@@ -612,61 +609,84 @@ EQUIPO_MASA_UNITARIA = ["Balanza GDA-E-011", "Termómetro GDA-E-126"]
 # ════════════════════════════════════════════════════════════════════
 # DESCRIPCIÓN VISUAL ESTRUCTURADA (menús desplegables en vez de texto libre) — para poder
 # comparar de un vistazo la clasificación que hace el laboratorista a ojo con la clasificación
-# USCS que calcula la app a partir de los datos de Granulometría/Límites (ver clasificar_uscs).
-# Las 5 categorías y sus opciones siguen la nomenclatura estándar de descripción visual-manual de
-# suelos (INV E-102 / ASTM D2488), no una lista inventada.
-DESC_TIPO_SUELO_OPTIONS = ["", "Grava", "Arena", "Limo", "Arcilla", "Orgánico"]
-DESC_COLOR_OPTIONS = [
-    "", "Gris", "Gris oscuro", "Gris claro", "Café", "Café oscuro", "Café claro",
-    "Amarillo", "Amarillento", "Rojizo", "Negro", "Blanco", "Beige", "Naranja",
-]
-DESC_CEMENTACION_OPTIONS = ["", "No cementado", "Débilmente cementado", "Moderadamente cementado", "Fuertemente cementado"]
-# La consistencia se describe distinto según el suelo sea granular (grava/arena, por
-# compacidad/densidad relativa) o cohesivo (limo/arcilla/orgánico, por resistencia al corte) —
-# INV E-102 usa dos escalas separadas, no una sola.
-DESC_CONSISTENCIA_GRANULAR_OPTIONS = ["", "Muy suelta", "Suelta", "Media", "Densa", "Muy densa"]
-DESC_CONSISTENCIA_COHESIVO_OPTIONS = ["", "Muy blanda", "Blanda", "Media", "Firme", "Muy firme", "Dura"]
-DESC_HUMEDAD_OPTIONS = ["", "Húmeda", "Seca"]
+# USCS/AASHTO que calcula la app a partir de los datos de Granulometría/Límites (ver
+# clasificar_uscs/clasificar_aashto). Todas las opciones van en MAYÚSCULA (así se escribe en el
+# informe oficial) y siguen la nomenclatura estándar de descripción visual-manual de suelos
+# (INV E-102 / ASTM D2488), no una lista inventada. No hay campo de texto libre — la frase final
+# se arma solo con lo elegido en estos menús (ver descripcion_visual_estructurada).
+DESC_TIPO_SUELO_OPTIONS = ["", "GRAVA", "ARENA", "LIMO", "ARCILLA", "ORGÁNICO"]
+# Color principal y subtonalidad van separados (antes venían mezclados como "Café oscuro"): el
+# color base es el matiz dominante, la subtonalidad es el matiz que lo modifica (ej. "MARRÓN
+# ROJIZO", "GRIS AMARILLENTO") — así se puede combinar cualquier color con cualquier matiz en vez
+# de tener que enumerar cada combinación como una opción aparte.
+DESC_COLOR_OPTIONS = ["", "GRIS", "MARRÓN", "AMARILLO", "ROJO", "NEGRO", "BLANCO", "BEIGE", "NARANJA", "VERDE"]
+DESC_SUBTONALIDAD_OPTIONS = ["", "CLARO", "OSCURO", "ROJIZO", "AMARILLENTO", "VERDOSO", "GRISÁCEO", "BLANQUECINO"]
+# Suelos gruesos (grava/arena) se describen por cementación; suelos finos (limo/arcilla/orgánico)
+# por consistencia — son dos propiedades distintas, no dos escalas de lo mismo, por eso solo se
+# despliega una u otra según el tipo de grano elegido (ver _es_grueso).
+DESC_CEMENTACION_OPTIONS = ["", "DÉBIL", "MODERADA", "FUERTE"]
+DESC_CONSISTENCIA_OPTIONS = ["", "MUY BLANDA", "BLANDA", "FIRME", "DURA", "MUY DURA"]
+# Forma solo aplica a grava (partículas lo bastante grandes para juzgar su forma a ojo);
+# angulosidad aplica a cualquier suelo grueso (grava o arena).
+DESC_FORMA_OPTIONS = ["", "PLANAS", "ALARGADAS", "PLANAS Y ALARGADAS"]
+DESC_ANGULOSIDAD_OPTIONS = ["", "ANGULOSA", "SUB ANGULOSA", "SUB REDONDEADA", "REDONDEADA"]
+DESC_HUMEDAD_OPTIONS = ["", "SECA", "HÚMEDA", "SATURADA"]
 
 
-def _consistencia_options(tipo_suelo):
-    return DESC_CONSISTENCIA_GRANULAR_OPTIONS if tipo_suelo in ("Grava", "Arena") else DESC_CONSISTENCIA_COHESIVO_OPTIONS
+def _es_grueso(tipo_suelo):
+    """Grava/Arena = grano grueso (cementación, angulosidad); Limo/Arcilla/Orgánico = grano fino
+    (consistencia). Ver INV E-102."""
+    return tipo_suelo in ("GRAVA", "ARENA")
 
 
 def descripcion_visual_estructurada(muestra):
-    """Arma la frase legible ('Arena · Color gris oscuro · ...') a partir de los 5 menús
-    desplegables de la muestra — se usa tanto en la vista de solo lectura como en el Excel
-    oficial. None si todavía no se ha elegido ninguna opción."""
-    partes = []
-    tipo = muestra.get("desc_tipo_suelo")
-    if tipo:
-        partes.append(tipo)
-    color = muestra.get("desc_color")
+    """Arma la frase legible en mayúscula (ej. 'LIMO DE COLOR MARRÓN ROJIZO DE CONSISTENCIA DURA
+    EN CONDICIÓN DE HUMEDAD SECA') a partir de los menús desplegables de la muestra — se usa
+    tanto en la vista de solo lectura como en el Excel oficial. None si todavía no se ha elegido
+    ninguna opción."""
+    # .upper(): datos de antes de este cambio (migración 0015) se guardaron en minúscula/mixta
+    # (ej. "Limo", "Café oscuro") — se normalizan al leer para que la frase salga toda en
+    # mayúscula igual que los datos nuevos, sin tener que migrar filas viejas en la base de datos.
+    tipo = (muestra.get("desc_tipo_suelo") or "").upper() or None
+    partes = [tipo] if tipo else []
+
+    angulosidad = (muestra.get("desc_angulosidad") or "").upper() if _es_grueso(tipo) else None
+    if angulosidad:
+        partes.append(angulosidad)
+    forma = (muestra.get("desc_forma") or "").upper() if tipo == "GRAVA" else None
+    if forma:
+        partes.append(f"DE FORMA {forma}")
+
+    color = (muestra.get("desc_color") or "").upper() or None
+    subtonalidad = (muestra.get("desc_subtonalidad") or "").upper() or None
     if color:
-        partes.append(f"Color {color.lower()}")
-    cementacion = muestra.get("desc_cementacion")
-    if cementacion:
-        partes.append(cementacion)
-    consistencia = muestra.get("desc_consistencia")
-    if consistencia:
-        etiqueta = "Compacidad" if tipo in ("Grava", "Arena") else "Consistencia"
-        partes.append(f"{etiqueta} {consistencia.lower()}")
-    humedad = muestra.get("desc_humedad")
+        partes.append(f"DE COLOR {color}" + (f" {subtonalidad}" if subtonalidad else ""))
+    elif subtonalidad:
+        partes.append(f"DE COLOR {subtonalidad}")
+
+    if _es_grueso(tipo):
+        cementacion = (muestra.get("desc_cementacion") or "").upper() or None
+        if cementacion:
+            partes.append(f"CON CEMENTACIÓN {cementacion}")
+    else:
+        consistencia = (muestra.get("desc_consistencia") or "").upper() or None
+        if consistencia:
+            partes.append(f"DE CONSISTENCIA {consistencia}")
+
+    humedad = (muestra.get("desc_humedad") or "").upper() or None
     if humedad:
-        partes.append(humedad)
-    return " · ".join(partes) if partes else None
+        partes.append(f"EN CONDICIÓN DE HUMEDAD {humedad}")
+
+    return " ".join(partes) if partes else None
 
 
 def descripcion_visual_para_excel(muestra):
     """Texto que va al campo "DESCRIPCIÓN VISUAL" del Excel oficial: la frase armada de los
-    menús desplegables, seguida de las notas adicionales en texto libre si hay (ver
-    descripcion_visual_estructurada) — None si no hay ni lo uno ni lo otro, para que el llamador
-    pueda caer al respaldo de siempre (observaciones del ensayo, o el tipo de muestra)."""
-    estructurada = descripcion_visual_estructurada(muestra)
-    notas = (muestra.get("descripcion_visual") or "").strip()
-    if estructurada and notas:
-        return f"{estructurada}. {notas}"
-    return estructurada or notas or None
+    menús desplegables — None si todavía no hay ninguna opción elegida, para que el llamador
+    pueda caer al respaldo de siempre (observaciones del ensayo, o el tipo de muestra). Si la
+    muestra viene de antes de quitar el campo de notas libres (ver migración 0016), esas notas
+    viejas se siguen mostrando como respaldo en vez de perderse."""
+    return descripcion_visual_estructurada(muestra) or (muestra.get("descripcion_visual") or "").strip() or None
 
 # Filas de Límite Líquido (INV. E-125-13) y Límite Plástico (INV. E-126-13), con las celdas
 # reales de la plantilla CLASIFICACION_DE_SUELOS.xlsm (sección "LIMITES DE ATTERBERG", a la
@@ -2932,6 +2952,72 @@ def clasificar_uscs(gran_data, lim_data):
     return resultado
 
 
+AASHTO_NOMBRES = {
+    "A-1-a": "Fragmentos de piedra, grava y arena", "A-1-b": "Grava y arena fina",
+    "A-3": "Arena fina",
+    "A-2-4": "Grava y arena limosa o arcillosa", "A-2-5": "Grava y arena limosa o arcillosa",
+    "A-2-6": "Grava y arena limosa o arcillosa", "A-2-7": "Grava y arena limosa o arcillosa",
+    "A-4": "Suelo limoso", "A-5": "Suelo limoso",
+    "A-6": "Suelo arcilloso", "A-7-5": "Suelo arcilloso", "A-7-6": "Suelo arcilloso",
+}
+
+
+def _grupo_aashto_a2(ll, indice_p):
+    if indice_p < 10.5:
+        return "A-2-4" if ll < 40.5 else "A-2-5"
+    return "A-2-6" if ll < 40.5 else "A-2-7"
+
+
+def clasificar_aashto(gran_data, lim_data):
+    """Clasificación AASHTO (M 145) a partir de los mismos datos de Granulometría y Límites de
+    Atterberg que la USCS — reimplementación fiel de la función AASH() de la plantilla oficial
+    CLASIFICACION_DE_SUELOS.xlsm (Módulo11 del macro; ver oletools.olevba si hace falta releerla),
+    para poder mostrarla también dentro de la app sin tener que abrir el Excel. Devuelve un dict
+    con el símbolo y los valores intermedios, o con "faltantes" si aún no hay datos suficientes."""
+    curva = _calcular_curva_granulometrica(gran_data) if gran_data else None
+    if curva is None:
+        return {"faltantes": ["Faltan las lecturas de Pasa No. 200 (masa inicial de la muestra)."]}
+
+    pasa200 = curva["pct_finos"]
+    pasa40 = next((p for d, p in curva["puntos"] if abs(d - 0.42) < 0.001), None)
+    pasa10 = next((p for d, p in curva["puntos"] if abs(d - 2.00) < 0.001), None)
+    if pasa40 is None or pasa10 is None:
+        return {"faltantes": ["Faltan los retenidos de los tamices No. 10 y No. 40."]}
+
+    ll = lp = None
+    if lim_data:
+        ll, lp, _ip = _calcular_limites_atterberg(lim_data)
+
+    resultado = {"faltantes": [], "pasa200": pasa200, "pasa40": pasa40, "pasa10": pasa10, "ll": ll, "lp": lp}
+    if ll is None or lp is None:
+        resultado["faltantes"].append("Falta digitar Límites de Atterberg — la clasificación AASHTO "
+                                       "siempre los necesita, incluso para suelos granulares.")
+        return resultado
+
+    indice_p = ll - lp
+    if pasa200 <= 35:
+        if pasa200 <= 25 and indice_p <= 6:
+            if pasa40 <= 30:
+                simbolo = ("A-1-a" if pasa10 <= 50 else "A-1-b") if pasa200 <= 15 else "A-1-b"
+            elif pasa40 <= 50:
+                simbolo = "A-1-b"
+            elif pasa200 <= 10 and indice_p == 0:
+                simbolo = "A-3"
+            else:
+                simbolo = _grupo_aashto_a2(ll, indice_p)
+        else:
+            simbolo = _grupo_aashto_a2(ll, indice_p)
+    elif indice_p < 10.5:
+        simbolo = "A-4" if ll < 40.5 else "A-5"
+    elif ll < 40.5:
+        simbolo = "A-6"
+    else:
+        simbolo = "A-7-5" if lp >= 30 else "A-7-6"
+
+    resultado["simbolo"] = simbolo
+    return resultado
+
+
 # ════════════════════════════════════════════════════════════════════
 # DETALLE DE MUESTRA → LISTA DE ENSAYOS SOLICITADOS
 # ════════════════════════════════════════════════════════════════════
@@ -2972,64 +3058,60 @@ def render_muestra_detail():
         st.caption("Cómo se ve la muestra a ojo — para comparar con la clasificación USCS calculada de "
                    "los datos de laboratorio, justo abajo.")
         if st.session_state.role == "laboratorista":
-            dc1, dc2 = st.columns(2)
-            with dc1:
-                tipo_actual = muestra.get("desc_tipo_suelo") or ""
-                tipo_idx = DESC_TIPO_SUELO_OPTIONS.index(tipo_actual) if tipo_actual in DESC_TIPO_SUELO_OPTIONS else 0
-                desc_tipo = st.selectbox("Tipo de suelo", DESC_TIPO_SUELO_OPTIONS, index=tipo_idx,
-                                          key=f"desc_tipo_{muestra_id}", format_func=lambda v: v or "— Seleccionar —")
-            with dc2:
-                color_actual = muestra.get("desc_color") or ""
-                color_idx = DESC_COLOR_OPTIONS.index(color_actual) if color_actual in DESC_COLOR_OPTIONS else 0
-                desc_color = st.selectbox("Color", DESC_COLOR_OPTIONS, index=color_idx,
-                                           key=f"desc_color_{muestra_id}", format_func=lambda v: v or "— Seleccionar —")
-            dc3, dc4 = st.columns(2)
-            with dc3:
-                cem_actual = muestra.get("desc_cementacion") or ""
-                cem_idx = DESC_CEMENTACION_OPTIONS.index(cem_actual) if cem_actual in DESC_CEMENTACION_OPTIONS else 0
-                desc_cementacion = st.selectbox("Cementación", DESC_CEMENTACION_OPTIONS, index=cem_idx,
-                                                 key=f"desc_cem_{muestra_id}", format_func=lambda v: v or "— Seleccionar —")
-            with dc4:
-                # Grava/Arena se describen por compacidad, Limo/Arcilla/Orgánico por consistencia —
-                # son dos escalas distintas (INV E-102), por eso la key incluye el tipo de suelo:
-                # fuerza un widget nuevo si la persona cambia de tipo, para no arrastrar un valor
-                # de la escala vieja que ya no existe en la lista de opciones nueva.
-                opciones_consistencia = _consistencia_options(desc_tipo)
-                etiqueta_consistencia = "Compacidad" if desc_tipo in ("Grava", "Arena") else "Consistencia"
-                cons_actual = muestra.get("desc_consistencia") or ""
-                cons_idx = opciones_consistencia.index(cons_actual) if cons_actual in opciones_consistencia else 0
-                desc_consistencia = st.selectbox(etiqueta_consistencia, opciones_consistencia, index=cons_idx,
-                                                  key=f"desc_cons_{muestra_id}_{desc_tipo or 'na'}",
-                                                  format_func=lambda v: v or "— Seleccionar —")
-            hum_actual = muestra.get("desc_humedad") or ""
-            hum_idx = DESC_HUMEDAD_OPTIONS.index(hum_actual) if hum_actual in DESC_HUMEDAD_OPTIONS else 0
-            desc_humedad = st.selectbox("Condición de humedad", DESC_HUMEDAD_OPTIONS, index=hum_idx,
-                                         key=f"desc_hum_{muestra_id}", format_func=lambda v: v or "— Seleccionar —")
-            with st.container(key="muestra-desc-visual-box"):
-                notas = st.text_area(
-                    "Notas adicionales (opcional)", value=muestra.get("descripcion_visual", ""),
-                    placeholder="Ej: Con fragmentos de roca, olor a materia orgánica...", key=f"desc_notas_{muestra_id}",
-                )
+            # .upper() al comparar: datos de antes de este cambio (migración 0015) se guardaron
+            # en minúscula/mixta (ej. "Limo") — así se siguen preseleccionando en el menú en vez
+            # de aparecer en blanco solo porque el case no coincide con las opciones nuevas.
+            tipo_actual = (muestra.get("desc_tipo_suelo") or "").upper()
+            tipo_idx = DESC_TIPO_SUELO_OPTIONS.index(tipo_actual) if tipo_actual in DESC_TIPO_SUELO_OPTIONS else 0
+            desc_tipo = st.selectbox("Tipo de grano", DESC_TIPO_SUELO_OPTIONS, index=tipo_idx,
+                                      key=f"desc_tipo_{muestra_id}", format_func=lambda v: v or "— Seleccionar —")
+            grueso = _es_grueso(desc_tipo)
+
+            # Qué campos aparecen después depende del tipo de grano elegido arriba — grueso
+            # (grava/arena) se describe por angulosidad y cementación, fino (limo/arcilla/
+            # orgánico) por consistencia, y forma solo aplica a grava específicamente. Se arman
+            # como lista en vez de columnas fijas porque cuáles aparecen cambia, y se van
+            # dibujando en parejas de 2 columnas.
+            campos = []
+            if desc_tipo == "GRAVA":
+                campos.append(("Forma", DESC_FORMA_OPTIONS, "desc_forma", "forma"))
+            if grueso:
+                campos.append(("Angulosidad", DESC_ANGULOSIDAD_OPTIONS, "desc_angulosidad", "angulosidad"))
+            campos.append(("Color", DESC_COLOR_OPTIONS, "desc_color", "color"))
+            campos.append(("Subtonalidad", DESC_SUBTONALIDAD_OPTIONS, "desc_subtonalidad", "subton"))
+            campos.append(("Cementación", DESC_CEMENTACION_OPTIONS, "desc_cementacion", "cem") if grueso
+                           else ("Consistencia", DESC_CONSISTENCIA_OPTIONS, "desc_consistencia", "cons"))
+            campos.append(("Condición de humedad", DESC_HUMEDAD_OPTIONS, "desc_humedad", "hum"))
+
+            valores = {}
+            for i in range(0, len(campos), 2):
+                for col, (label, opciones, campo_db, campo_key) in zip(st.columns(2), campos[i:i + 2]):
+                    with col:
+                        actual = (muestra.get(campo_db) or "").upper()
+                        idx = opciones.index(actual) if actual in opciones else 0
+                        # La key incluye si el grano es grueso/fino, para forzar un widget nuevo
+                        # si la persona cambia de escala — evita arrastrar en pantalla un valor
+                        # que ya no aplica (ej. una cementación al pasar de grava a limo).
+                        valores[campo_db] = st.selectbox(
+                            label, opciones, index=idx, key=f"{campo_key}_{muestra_id}_{grueso}",
+                            format_func=lambda v: v or "— Seleccionar —")
+
             if st.button("Guardar descripción visual", icon=":material/save:", key=f"desc_visual_save_{muestra_id}"):
-                db.update_muestra(
-                    muestra["id"], desc_tipo_suelo=desc_tipo, desc_color=desc_color,
-                    desc_cementacion=desc_cementacion, desc_consistencia=desc_consistencia,
-                    desc_humedad=desc_humedad, descripcion_visual=notas.upper(),
-                )
+                guardar = {"desc_tipo_suelo": desc_tipo, **valores}
+                # Los campos que no aparecieron arriba para este tipo de grano (ej. forma si no
+                # es grava) se limpian en vez de dejar guardado un valor viejo que ya no se ve.
+                for campo_db in ("desc_forma", "desc_angulosidad", "desc_cementacion", "desc_consistencia"):
+                    guardar.setdefault(campo_db, None)
+                db.update_muestra(muestra["id"], **guardar)
                 st.success("Descripción visual guardada.")
                 st.rerun()
         else:
-            descripcion_val = descripcion_visual_estructurada(muestra)
-            notas_val = muestra.get("descripcion_visual")
-            if descripcion_val or notas_val:
-                cuerpo = html.escape(descripcion_val) if descripcion_val else ""
-                if notas_val:
-                    cuerpo += (f'<div style="font-weight:400;font-size:13px;margin-top:4px;color:{NEUTRAL};">'
-                               f'{html.escape(notas_val)}</div>')
+            descripcion_val = descripcion_visual_para_excel(muestra)
+            if descripcion_val:
                 st.markdown(f'<div style="display:flex;gap:10px;align-items:flex-start;background:{BG};'
                              f'border-radius:10px;padding:12px 14px;margin-bottom:4px;">'
                              f'<span style="margin-top:2px;">{icon("visibility", size=18)}</span>'
-                             f'<div style="font-weight:600;line-height:1.5;">{cuerpo}</div></div>',
+                             f'<div style="font-weight:600;line-height:1.5;">{html.escape(descripcion_val)}</div></div>',
                              unsafe_allow_html=True)
             else:
                 st.markdown(f'<div style="display:flex;align-items:center;gap:6px;color:{NEUTRAL};font-style:italic;">'
@@ -3074,6 +3156,43 @@ def render_muestra_detail():
                     f'padding:12px 14px;margin-bottom:4px;">' + "".join(
                         f'<div style="display:flex;align-items:center;gap:8px;color:{NEUTRAL};font-style:italic;">'
                         f'{icon("hourglass_empty", size=18)} {html.escape(razon)}</div>' for razon in razones
+                    ) + '</div>', unsafe_allow_html=True)
+
+        with st.container(border=True):
+            st.markdown('<div class="section-title">Clasificación AASHTO</div>', unsafe_allow_html=True)
+            st.caption("Calculada igual que la USCS de arriba, con los mismos datos de Granulometría y "
+                       "Límites de Atterberg — verifícala contra el Excel antes de usarla en un informe.")
+            resultado_aashto = clasificar_aashto(
+                gran_assay.get("data") if gran_assay else None,
+                lim_assay.get("data") if lim_assay else None,
+            )
+            simbolo_aashto = resultado_aashto.get("simbolo")
+            if simbolo_aashto:
+                nombre_aashto = AASHTO_NOMBRES.get(simbolo_aashto, "")
+                st.markdown(f'''
+                    <div style="display:flex;align-items:center;gap:14px;background:{SECONDARY_CONTAINER};
+                                border-radius:10px;padding:14px 16px;">
+                        <div style="font-size:28px;font-weight:800;color:{PRIMARY};">{simbolo_aashto}</div>
+                        <div style="font-weight:600;color:{PRIMARY};">{html.escape(nombre_aashto)}</div>
+                    </div>
+                ''', unsafe_allow_html=True)
+                detalles_aashto = []
+                if resultado_aashto.get("pasa200") is not None:
+                    detalles_aashto.append(f'Pasa No. 200 {resultado_aashto["pasa200"]:.0f}% · '
+                                            f'Pasa No. 40 {resultado_aashto["pasa40"]:.0f}% · '
+                                            f'Pasa No. 10 {resultado_aashto["pasa10"]:.0f}%')
+                if resultado_aashto.get("ll") is not None:
+                    detalles_aashto.append(f'LL {resultado_aashto["ll"]} · LP {resultado_aashto["lp"]}')
+                if detalles_aashto:
+                    st.markdown(f'<div class="cell-muted" style="margin-top:10px;">{" · ".join(detalles_aashto)}</div>',
+                                unsafe_allow_html=True)
+            else:
+                razones_aashto = resultado_aashto.get("faltantes") or ["Aún no hay datos suficientes para calcularla."]
+                st.markdown(
+                    f'<div style="display:flex;flex-direction:column;gap:8px;background:{BG};border-radius:10px;'
+                    f'padding:12px 14px;margin-bottom:4px;">' + "".join(
+                        f'<div style="display:flex;align-items:center;gap:8px;color:{NEUTRAL};font-style:italic;">'
+                        f'{icon("hourglass_empty", size=18)} {html.escape(razon)}</div>' for razon in razones_aashto
                     ) + '</div>', unsafe_allow_html=True)
 
     with st.container(border=True):
