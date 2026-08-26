@@ -289,12 +289,17 @@ st.markdown(f"""
 
     /* Campos digitables con fondo distinto al de la página, para que se note qué se puede editar */
     .stTextInput input, .stTextArea textarea, .stNumberInput input,
-    .stDateInput input, .stSelectbox > div > div, .stMultiSelect > div > div {{
+    .stDateInput input, [data-testid="stDateInputField"],
+    .stSelectbox > div > div, .stMultiSelect > div > div {{
         background-color: {SURFACE} !important;
         border: 1px solid {BORDER} !important;
         border-radius: 8px !important;
     }}
-    .stTextInput input:focus, .stTextArea textarea:focus, .stNumberInput input:focus {{
+    /* El date_input de Streamlit ya no usa un <input> normal, sino un grupo de "spinbuttons"
+       (día/mes/año) sin caja propia — sin esto se ve como texto plano sobre el fondo gris. */
+    [data-testid="stDateInputField"] {{ padding: 8px 12px !important; }}
+    .stTextInput input:focus, .stTextArea textarea:focus, .stNumberInput input:focus,
+    [data-testid="stDateInputField"]:focus-within {{
         border-color: {PRIMARY} !important; box-shadow: 0 0 0 1px {PRIMARY} !important;
     }}
     [data-testid="stDataFrameResizable"], [data-testid="stDataEditorGrid"] {{
