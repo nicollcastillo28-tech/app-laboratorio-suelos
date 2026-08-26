@@ -614,7 +614,12 @@ EQUIPO_MASA_UNITARIA = ["Balanza GDA-E-011", "Termómetro GDA-E-126"]
 # informe oficial) y siguen la nomenclatura estándar de descripción visual-manual de suelos
 # (INV E-102 / ASTM D2488), no una lista inventada. No hay campo de texto libre — la frase final
 # se arma solo con lo elegido en estos menús (ver descripcion_visual_estructurada).
-DESC_TIPO_SUELO_OPTIONS = ["", "GRAVA", "ARENA", "LIMO", "ARCILLA", "ORGÁNICO"]
+DESC_TIPO_SUELO_OPTIONS = ["", "GRAVA", "ARENA", "LIMO", "ARCILLA", "ORGÁNICO", "OTROS"]
+# Componente secundario ("grava CON ALGO DE arena", "arcilla CON ALGO DE arena") — mismas
+# opciones que el tipo principal (sin la casilla en blanco, se filtra el tipo principal ya
+# elegido para no dejar escoger "grava con algo de grava"). Es opcional: la casilla
+# "¿tiene un componente secundario?" decide si se muestra o no.
+DESC_TIPO_SECUNDARIO_OPTIONS = ["GRAVA", "ARENA", "LIMO", "ARCILLA", "ORGÁNICO", "OTROS"]
 # Color principal y subtonalidad van separados (antes venían mezclados como "Café oscuro"): el
 # color base es el matiz dominante, la subtonalidad es el matiz que lo modifica (ej. "MARRÓN
 # ROJIZO", "GRIS AMARILLENTO") — así se puede combinar cualquier color con cualquier matiz en vez
@@ -649,6 +654,12 @@ def descripcion_visual_estructurada(muestra):
     # mayúscula igual que los datos nuevos, sin tener que migrar filas viejas en la base de datos.
     tipo = (muestra.get("desc_tipo_suelo") or "").upper() or None
     partes = [tipo] if tipo else []
+
+    # Componente secundario (ej. "GRAVA CON ALGO DE ARENA", "ARCILLA CON ALGO DE ARENA") — un
+    # segundo tipo de grano que también está presente en la muestra, sin ser el dominante.
+    secundario = (muestra.get("desc_tipo_secundario") or "").upper() or None
+    if secundario:
+        partes.append(f"CON ALGO DE {secundario}")
 
     angulosidad = (muestra.get("desc_angulosidad") or "").upper() if _es_grueso(tipo) else None
     if angulosidad:
@@ -3070,6 +3081,21 @@ def render_muestra_detail():
                                       key=f"desc_tipo_{muestra_id}", format_func=lambda v: v or "— Seleccionar —")
             grueso = _es_grueso(desc_tipo)
 
+            # Componente secundario (ej. "grava con algo de arena", "arcilla con algo de arena")
+            # — opcional, se oculta el selectbox si la casilla no está marcada en vez de forzar
+            # a elegir "— Seleccionar —" cada vez. Se excluye el tipo principal de la lista para
+            # no dejar armar "grava con algo de grava".
+            secundario_actual = (muestra.get("desc_tipo_secundario") or "").upper()
+            tiene_secundario = st.checkbox(
+                "¿Tiene un componente secundario? (ej. grava con algo de arena, arcilla con algo de arena)",
+                value=bool(secundario_actual), key=f"desc_tiene_sec_{muestra_id}")
+            desc_secundario = None
+            if tiene_secundario:
+                opciones_sec = [o for o in DESC_TIPO_SECUNDARIO_OPTIONS if o != desc_tipo]
+                sec_idx = opciones_sec.index(secundario_actual) if secundario_actual in opciones_sec else 0
+                desc_secundario = st.selectbox("Componente secundario", opciones_sec, index=sec_idx,
+                                                key=f"desc_sec_{muestra_id}")
+
             # Qué campos aparecen después depende del tipo de grano elegido arriba — grueso
             # (grava/arena) se describe por angulosidad y cementación, fino (limo/arcilla/
             # orgánico) por consistencia, y forma solo aplica a grava específicamente. Se arman
@@ -3100,7 +3126,7 @@ def render_muestra_detail():
                             format_func=lambda v: v or "— Seleccionar —")
 
             if st.button("Guardar descripción visual", icon=":material/save:", key=f"desc_visual_save_{muestra_id}"):
-                guardar = {"desc_tipo_suelo": desc_tipo, **valores}
+                guardar = {"desc_tipo_suelo": desc_tipo, "desc_tipo_secundario": desc_secundario, **valores}
                 # Los campos que no aparecieron arriba para este tipo de grano (ej. forma si no
                 # es grava) se limpian en vez de dejar guardado un valor viejo que ya no se ve.
                 for campo_db in ("desc_forma", "desc_angulosidad", "desc_cementacion", "desc_consistencia"):
