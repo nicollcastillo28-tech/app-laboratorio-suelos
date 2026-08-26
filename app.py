@@ -3620,10 +3620,16 @@ def _restaurar_imagenes_perdidas(xlsx_bytes, template_path):
     archivo drawingN.xml sigue existiendo y las formas/gráficos de adentro se conservan, pero
     las imágenes puntuales se pierden en blanco porque openpyxl no sabe reconstruir esa parte
     del XML al reescribirlo (a diferencia de _reparar_graficos_perdidos, que arregla archivos
-    que openpyxl bota por completo, acá el archivo sigue estando pero vacío de imágenes). Se
-    restaura cada drawingN.xml (y su .rels) tal cual viene en la plantilla original siempre que
-    esta tenga imágenes y la copia que acaba de guardar openpyxl las haya perdido — un drawing
-    que openpyxl sí supo conservar completo no se toca."""
+    que openpyxl bota por completo, acá el archivo sigue estando pero vacío de imágenes).
+
+    Restaurar solo el drawingN.xml (y su .rels) NO basta: openpyxl vuelve a numerar y a mezclar
+    TODOS los archivos xl/media/imageN.png al guardar, así que el "image7.png" que deja openpyxl
+    casi nunca es el mismo contenido que el "image7.png" de la plantilla, aunque el nombre
+    coincida — restaurar solo el drawing dejaba el nombre correcto apuntando a la imagen
+    equivocada (una firma se veía reemplazada por la etiqueta de otra parte de la hoja). Por eso
+    también se restauran, con su contenido original, los xl/media/*.png que el drawing
+    restaurado referencia — así drawing + rels + imagen quedan siempre como un trío consistente
+    sacado íntegro de la plantilla, sin importar qué numeración haya usado openpyxl."""
     with zipfile.ZipFile(template_path) as tpl:
         tpl_names = set(tpl.namelist())
         drawings = {n for n in tpl_names if re.match(r"xl/drawings/drawing\d+\.xml$", n)}
@@ -3639,8 +3645,14 @@ def _restaurar_imagenes_perdidas(xlsx_bytes, template_path):
                     continue  # openpyxl sí las conservó, nada que restaurar
                 parches[nombre] = tpl.read(nombre)
                 rels_nombre = nombre.replace("xl/drawings/", "xl/drawings/_rels/") + ".rels"
-                if rels_nombre in tpl_names:
-                    parches[rels_nombre] = tpl.read(rels_nombre)
+                if rels_nombre not in tpl_names:
+                    continue
+                rels_bytes = tpl.read(rels_nombre)
+                parches[rels_nombre] = rels_bytes
+                for target in re.findall(r'Target="(\.\./media/[^"]+)"', rels_bytes.decode("utf-8")):
+                    media_nombre = "xl/" + target[len("../"):]
+                    if media_nombre in tpl_names:
+                        parches[media_nombre] = tpl.read(media_nombre)
 
             if not parches:
                 return xlsx_bytes
@@ -3649,9 +3661,11 @@ def _restaurar_imagenes_perdidas(xlsx_bytes, template_path):
             with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as z:
                 for item in out.infolist():
                     if item.filename in parches:
-                        z.writestr(item, parches[item.filename])
+                        z.writestr(item, parches.pop(item.filename))
                     else:
                         z.writestr(item, out.read(item.filename))
+                for nombre, data in parches.items():
+                    z.writestr(nombre, data)  # por si openpyxl nunca escribió ese archivo
             bio.seek(0)
             return bio.getvalue()
 
