@@ -494,6 +494,14 @@ st.markdown(f"""
 # un recargo completo de la página, que Python resuelve leyendo la URL ya restaurada por el
 # navegador (init_state) — por eso esto necesita ir de la mano con la restauración de sesión por
 # cookie, si no cada "atrás" mandaría de vuelta al login.
+# Por último, un MutationObserver aparte se encarga de que la barra superior (topbar) y la de
+# navegación inferior (bottomnav) nunca queden duplicadas en pantalla, una encima de otra — se ve
+# reportado en tablet: cuando el WebSocket de Streamlit se reconecta (se cae y se recupera solo,
+# algo normal en redes de datos móviles o al volver de segundo plano), el frontend a veces vuelve
+# a montar el árbol completo sin retirar primero el anterior, y como el topbar es "position:
+# sticky", cada copia se queda pegada arriba — se ven 2 o 3 apiladas. Como .st-key-topbar tiene
+# key="topbar" (única por diseño), cualquier copia de más es sobrante por definición: se deja
+# solo la última (la más reciente) cada vez que el DOM cambia.
 components.html("""
 <script>
 (function() {
@@ -536,8 +544,21 @@ components.html("""
         }, 0);
     }
 
+    function dedupeStickyBars() {
+        ['topbar', 'bottomnav'].forEach(function(key) {
+            var bars = window.parent.document.querySelectorAll('.st-key-' + key);
+            for (var i = 0; i < bars.length - 1; i++) {
+                bars[i].remove();
+            }
+        });
+    }
+
     applyInputMode();
-    new MutationObserver(applyInputMode).observe(window.parent.document.body, {childList: true, subtree: true});
+    dedupeStickyBars();
+    new MutationObserver(function() {
+        applyInputMode();
+        dedupeStickyBars();
+    }).observe(window.parent.document.body, {childList: true, subtree: true});
     window.parent.document.addEventListener('keydown', focusNextOnEnter, true);
     window.parent.addEventListener('popstate', function() {
         window.parent.location.reload();
