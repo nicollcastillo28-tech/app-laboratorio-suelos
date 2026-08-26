@@ -34,6 +34,7 @@ TEMPLATE_GRANULOMETRIA = os.path.join(BASE_DIR, "templates", "CLASIFICACION_DE_S
 TEMPLATE_BITACORA_ORDEN = os.path.join(BASE_DIR, "templates", "GDA-FL-003_bitacora_orden.xlsx")
 TEMPLATE_HUMEDAD = os.path.join(BASE_DIR, "templates", "GDA-FLC-014_humedad_natural.xlsx")
 TEMPLATE_MASA_UNITARIA = os.path.join(BASE_DIR, "templates", "GDA-FLC-004_masa_unitaria.xlsx")
+TEMPLATE_CBR = os.path.join(BASE_DIR, "templates", "GDA-FLC-013_cbr.xlsx")
 
 ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "laboratorista": "Laboratorista", "ingeniero": "Director Técnico"}
 ROLE_INICIALES = {"jefe": "JL", "laboratorista": "LB", "ingeniero": "DT"}
@@ -3868,6 +3869,100 @@ def generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, obs
     return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_MASA_UNITARIA)
 
 
+def _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo=""):
+    """La plantilla oficial de CBR (GDA-FLC-013) usa una distribución de encabezado propia,
+    distinta a la de Granulometría/Límites/Humedad/Masa Unitaria: etiquetas en B/H, valores en
+    C/J en vez de D/K (ver hoja "GUIA" de GDA-FLC-013 CBR INALTERADO.xlsx)."""
+    ws["C6"] = project.get("cliente", "") if project else ""  # Cliente
+    ws["C7"] = project["nombre"] if project else codigo  # Proyecto
+    ws["C8"] = project.get("correo_cliente", "") if project else ""  # Correo electrónico
+    ws["C9"] = project.get("localizacion", "") if project else ""  # Localización
+    ws["C10"] = project.get("muestra_tomada_por", "") if project else ""  # Muestra tomada por
+    ws["J6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""  # Fecha de recepción
+    ws["J7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""  # Fecha de ejecución
+    ws["J8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""  # Fecha de emisión
+    ws["K9"] = project.get("numero", "") if project else ""  # Código interno — número (J9 ya trae "GDA")
+    ws["L9"] = project.get("anio", "") if project else ""  # Código interno — año
+
+    perf = get_perforacion(codigo, perf_codigo)
+    ws["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""  # Tipo de perforación (lista desplegable)
+    ws["F12"] = perf["consecutivo"] if perf else ""  # Número de perforación
+    ws["H12"] = muestra["numero"]  # Muestra No.
+    prof_de, prof_hasta = to_float(muestra.get("profundidad_de")), to_float(muestra.get("profundidad_hasta"))
+    ws["K12"] = f"{prof_de}-{prof_hasta}" if prof_de is not None and prof_hasta is not None else ""
+    ws["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or f"Tipo de muestra: {muestra.get('tipo_muestra','')}"
+
+
+def generar_excel_cbr(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    """CBR (GDA-FLC-013, INV E-148-13). La plantilla real trae ~20 hojas ocultas más (proyectos
+    anteriores, cada uno una copia de "GUIA" ya diligenciada) que no tienen nada que ver con esta
+    muestra — se descartan todas menos "GUIA" antes de guardar, para no mandar datos de otros
+    clientes en cada descarga ni inflar el archivo."""
+    wb = load_workbook(TEMPLATE_CBR)
+    for nombre in list(wb.sheetnames):
+        if nombre != "GUIA":
+            del wb[nombre]
+    ws = wb["GUIA"]
+    _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo)
+
+    ws["D20"] = data.get("cbr_molde", "")
+    ws["D21"] = to_float(data.get("cbr_diametro"))
+    ws["D22"] = to_float(data.get("cbr_altura"))
+    ws["D24"] = to_float(data.get("cbr_masa_molde"))
+    ws["D23"] = to_float(data.get("cbr_masa_muestra_molde_antes"))
+    ws["E23"] = to_float(data.get("cbr_masa_muestra_molde_despues"))
+
+    # Humedad antes de inmersión: no se digita en el formulario de CBR, se comparte con el
+    # ensayo de Contenido de Humedad de la misma muestra (ver render_cbr_form) — se copia acá
+    # porque la plantilla real necesita el valor en su propia celda, no una referencia cruzada
+    # a otro archivo.
+    hum_assay = get_assay(muestra["id_unico"], "humedad")
+    hum_data = hum_assay.get("data", {}) if hum_assay else {}
+    ws["D30"] = hum_data.get("hum_recipiente", "")
+    ws["D31"] = to_float(hum_data.get("hum_masa_humedo_mas_recipiente"))
+    ws["D32"] = to_float(hum_data.get("hum_seco_mas_recipiente"))
+    ws["D33"] = to_float(hum_data.get("hum_masa_recipiente"))
+
+    ws["E30"] = data.get("cbr_desp_recipiente", "")
+    ws["E31"] = to_float(data.get("cbr_desp_masa_humedo"))
+    ws["E32"] = to_float(data.get("cbr_desp_masa_seco"))
+    ws["E33"] = to_float(data.get("cbr_desp_masa_recipiente"))
+
+    ws["D37"] = to_float(data.get("cbr_exp_lectura_inicial"))
+    ws["D38"] = to_float(data.get("cbr_exp_lectura_final"))
+
+    # Pesas de sobrecarga y tiempo de inmersión: la plantilla ya trae un valor por defecto
+    # (4554 g / 4 días) — solo se pisa si el laboratorista digitó algo distinto.
+    pesas_antes = to_float(data.get("cbr_pesas_antes"))
+    if pesas_antes is not None:
+        ws["I39"] = pesas_antes
+    pesas_despues = to_float(data.get("cbr_pesas_despues"))
+    if pesas_despues is not None:
+        ws["I40"] = pesas_despues
+    tiempo_antes = to_float(data.get("cbr_tiempo_inmersion_antes"))
+    if tiempo_antes is not None:
+        ws["J39"] = tiempo_antes
+    tiempo_despues = to_float(data.get("cbr_tiempo_inmersion_despues"))
+    if tiempo_despues is not None:
+        ws["J40"] = tiempo_despues
+
+    # Tabla de penetración: fila 22 es la profundidad "0" (fuerza 0 fija, no se digita); las 12
+    # profundidades reales (CBR_PENETRACION_FILAS) caen en las filas 23 a 34, en el mismo orden.
+    for i in range(1, len(CBR_PENETRACION_FILAS) + 1):
+        fila = 22 + i
+        antes = to_float(data.get(f"cbr_pen_antes_{i}"))
+        if antes is not None:
+            ws[f"I{fila}"] = antes
+        despues = to_float(data.get(f"cbr_pen_despues_{i}"))
+        if despues is not None:
+            ws[f"K{fila}"] = despues
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_CBR)
+
+
 # ════════════════════════════════════════════════════════════════════
 # FORMULARIOS DE ENSAYO (solo captura de datos, sin cálculos)
 # ════════════════════════════════════════════════════════════════════
@@ -3941,28 +4036,38 @@ CAMPOS_REQUERIDOS_MASA_UNITARIA = [
     ("mu_peso_aire_par", "Masa en el aire parafinado (g)"),
     ("mu_temp_agua", "Temperatura del agua (°C)"),
 ]
-# La "Humedad antes de inmersión" del CBR NO está acá: no es un campo propio del CBR, se comparte
-# con el ensayo de Contenido de Humedad de la misma muestra (ver render_cbr_form) — si falta, se
-# marca como faltante allá, no acá. Igual que en Humedad/Pasa 200, las lecturas de verificación
-# de 17/18/19 horas (después de inmersión) tampoco están: se autocompletan de la de 16 horas.
+# Reconstruido a partir de la plantilla oficial real (GDA-FLC-013 CBR INALTERADO.xlsx, hoja
+# "GUIA", INV E-148-13) — la primera versión de este formulario se armó a partir de una captura
+# de pantalla que resultó no coincidir con el formato oficial (traía "No. de golpes"/"No. de
+# capas", que no existen en la plantilla real, y una humedad "después de inmersión" con lecturas
+# de verificación a 16/17/18/19 horas que tampoco están ahí). Ver TEMPLATE_CBR/generar_excel_cbr
+# para el mapeo exacto celda por celda.
+# La "Humedad antes de inmersión" NO está acá ni se digita en el formulario del CBR: se comparte
+# con el ensayo de Contenido de Humedad de la misma muestra (ver render_cbr_form) y se copia sola
+# a la plantilla al exportar — si falta, se marca como faltante allá, no acá. La tabla de
+# penetración (24 lecturas de fuerza) y las "Condiciones del Ensayo" (pesas/tiempo de inmersión,
+# que ya traen un valor por defecto en la plantilla) tampoco son obligatorias.
 CAMPOS_REQUERIDOS_CBR = [
-    ("cbr_golpes", "No. de golpes"),
     ("cbr_molde", "Molde No."),
-    ("cbr_capas", "No. de capas"),
-    ("cbr_masa_humeda_molde", "Masa de la muestra húmeda + molde (g)"),
-    ("cbr_masa_molde", "Masa molde (g)"),
-    ("cbr_altura", "Altura de la muestra (cm)"),
     ("cbr_diametro", "Diámetro de la muestra (cm)"),
-    ("cbr_def_inicial_fecha", "Fecha — Lectura inicial (deformación)"),
-    ("cbr_def_inicial_hora", "Hora — Lectura inicial (deformación)"),
-    ("cbr_def_final_fecha", "Fecha — Lectura final (deformación)"),
-    ("cbr_def_final_hora", "Hora — Lectura final (deformación)"),
-    ("cbr_desp_recipiente", "Recipiente No. (después de inmersión)"),
-    ("cbr_desp_masa_recipiente_humeda", "Masa recipiente + muestra húmeda (g) (después de inmersión)"),
-    ("cbr_desp_seco_16h", "Masa recipiente + seca (g) — 16 horas (después de inmersión)"),
-    ("cbr_desp_masa_recipiente", "Masa del recipiente (g) (después de inmersión)"),
-    ("cbr_desp_no_molde", "No. Molde (después de inmersión)"),
-    ("cbr_desp_masa_molde_muestra", "Masa molde + muestra (g) (después de inmersión)"),
+    ("cbr_altura", "Altura de la muestra (cm)"),
+    ("cbr_masa_molde", "Masa molde (g)"),
+    ("cbr_masa_muestra_molde_antes", "Masa de la muestra + molde (g) — antes de inmersión"),
+    ("cbr_masa_muestra_molde_despues", "Masa de la muestra + molde (g) — después de inmersión"),
+    ("cbr_desp_recipiente", "Recipiente — humedad después de inmersión"),
+    ("cbr_desp_masa_humedo", "Peso recipiente + suelo húmedo (g) — después de inmersión"),
+    ("cbr_desp_masa_seco", "Peso recipiente + suelo seco (g) — después de inmersión"),
+    ("cbr_desp_masa_recipiente", "Peso recipiente (g) — después de inmersión"),
+    ("cbr_exp_lectura_inicial", "Lectura inicial (in) — expansión"),
+    ("cbr_exp_lectura_final", "Lectura final (in) — expansión"),
+]
+# Las 12 profundidades de penetración estándar de INV E-148 (pulgadas), con su equivalente en mm
+# tal como aparece impreso en la plantilla — no se digitan, son fijas; lo que se digita es la
+# Fuerza (kN) leída en cada una, antes y después de inmersión (ver render_cbr_form).
+CBR_PENETRACION_FILAS = [
+    ("0.005", "0.127"), ("0.025", "0.635"), ("0.05", "1.27"), ("0.075", "1.905"),
+    ("0.1", "2.54"), ("0.125", "3.175"), ("0.15", "3.81"), ("0.175", "4.445"),
+    ("0.2", "5.08"), ("0.3", "7.62"), ("0.4", "10.16"), ("0.5", "12.7"),
 ]
 CAMPOS_REQUERIDOS_POR_TIPO = {
     "humedad": CAMPOS_REQUERIDOS_HUMEDAD,
@@ -4147,7 +4252,8 @@ def render_masa_unitaria_form(data, assay_id):
 
 
 def render_cbr_form(data, assay_id, muestra_id):
-    st.info("Estos datos se guardan tal cual y se llevan a la plantilla oficial de Excel — el CBR no lo calcula la app.")
+    st.info("Estos datos se guardan tal cual y se llevan a la plantilla oficial de Excel — el CBR a 0.1\" y 0.2\" "
+            "de penetración, igual que el resto de valores calculados, los saca el Excel, no la app.")
 
     def _campo(key, label, placeholder="0.00"):
         row = st.columns([2.2, 1])
@@ -4155,15 +4261,30 @@ def render_cbr_form(data, assay_id, muestra_id):
         data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
                                        label_visibility="collapsed", placeholder=placeholder)
 
+    def _campo_antes_despues(key_base, label):
+        """Un mismo dato con lectura antes Y después de inmersión (ej. masa de la muestra +
+        molde, que cambia porque la muestra absorbe agua) — dos casillas lado a lado."""
+        row = st.columns([2, 1, 1])
+        row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+        data[f"{key_base}_antes"] = row[1].text_input(f"{label} (antes)", value=data.get(f"{key_base}_antes", ""),
+                                                        key=f"{key_base}_antes_{assay_id}", label_visibility="collapsed",
+                                                        placeholder="Antes")
+        data[f"{key_base}_despues"] = row[2].text_input(f"{label} (después)", value=data.get(f"{key_base}_despues", ""),
+                                                          key=f"{key_base}_despues_{assay_id}", label_visibility="collapsed",
+                                                          placeholder="Después")
+
     with st.container(border=True):
-        st.markdown(card_header_html("science", "Prueba"), unsafe_allow_html=True)
-        _campo("cbr_golpes", "No. de golpes", placeholder="56")
+        st.markdown(card_header_html("science", "Datos Iniciales"), unsafe_allow_html=True)
+        st.caption("Molde, diámetro, altura y masa del molde son los mismos antes y después de inmersión — "
+                   "solo la masa de la muestra + molde cambia (la muestra absorbe agua).")
         _campo("cbr_molde", "Molde No.", placeholder="1")
-        _campo("cbr_capas", "No. de capas", placeholder="5")
-        _campo("cbr_masa_humeda_molde", "Masa de la muestra húmeda + molde (g)")
-        _campo("cbr_masa_molde", "Masa molde (g)")
-        _campo("cbr_altura", "Altura de la muestra (cm)")
         _campo("cbr_diametro", "Diámetro de la muestra (cm)")
+        _campo("cbr_altura", "Altura de la muestra (cm)")
+        _campo("cbr_masa_molde", "Masa molde (g)")
+        head = st.columns([2, 1, 1])
+        head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Antes</div>', unsafe_allow_html=True)
+        head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Después</div>', unsafe_allow_html=True)
+        _campo_antes_despues("cbr_masa_muestra_molde", "Masa de la muestra + molde (g)")
 
     with st.container(border=True):
         st.markdown(card_header_html("water_drop", "Humedad antes de inmersión"), unsafe_allow_html=True)
@@ -4174,9 +4295,9 @@ def render_cbr_form(data, assay_id, muestra_id):
         if hum_data.get("hum_recipiente") or hum_data.get("hum_seco_mas_recipiente"):
             rows = [
                 ("Recipiente no.", hum_data.get("hum_recipiente")),
-                ("Masa del recipiente (g)", hum_data.get("hum_masa_recipiente")),
-                ("Masa suelo húmedo + recipiente (g)", hum_data.get("hum_masa_humedo_mas_recipiente")),
-                ("Masa suelo seco + recipiente (g)", hum_data.get("hum_seco_mas_recipiente")),
+                ("Peso recipiente + suelo húmedo (g)", hum_data.get("hum_masa_humedo_mas_recipiente")),
+                ("Peso recipiente + suelo seco (g)", hum_data.get("hum_seco_mas_recipiente")),
+                ("Peso recipiente (g)", hum_data.get("hum_masa_recipiente")),
                 ("Humedad (%)", fmt_num(calcular_humedad_pct(hum_data), decimals=2)),
             ]
             st.markdown(param_table_html(rows), unsafe_allow_html=True)
@@ -4186,58 +4307,42 @@ def render_cbr_form(data, assay_id, muestra_id):
                          f'todavía no tiene datos</div>', unsafe_allow_html=True)
 
     with st.container(border=True):
-        st.markdown(card_header_html("straighten", "Deformación"), unsafe_allow_html=True)
-        d1, d2 = st.columns(2)
-        with d1:
-            st.markdown('<div style="font-weight:600;margin-bottom:6px;">Lectura inicial</div>', unsafe_allow_html=True)
-            data["cbr_def_inicial_fecha"] = st.text_input("Fecha", value=data.get("cbr_def_inicial_fecha", ""),
-                                                            key=f"cbr_def_inicial_fecha_{assay_id}", placeholder="DD/MM/AAAA")
-            data["cbr_def_inicial_hora"] = st.text_input("Hora", value=data.get("cbr_def_inicial_hora", ""),
-                                                           key=f"cbr_def_inicial_hora_{assay_id}", placeholder="00:00")
-        with d2:
-            st.markdown('<div style="font-weight:600;margin-bottom:6px;">Lectura final</div>', unsafe_allow_html=True)
-            data["cbr_def_final_fecha"] = st.text_input("Fecha", value=data.get("cbr_def_final_fecha", ""),
-                                                          key=f"cbr_def_final_fecha_{assay_id}", placeholder="DD/MM/AAAA")
-            data["cbr_def_final_hora"] = st.text_input("Hora", value=data.get("cbr_def_final_hora", ""),
-                                                         key=f"cbr_def_final_hora_{assay_id}", placeholder="00:00")
+        st.markdown(card_header_html("water_drop", "Humedad después de inmersión"), unsafe_allow_html=True)
+        _campo("cbr_desp_recipiente", "Recipiente", placeholder="839")
+        _campo("cbr_desp_masa_humedo", "Peso recipiente + suelo húmedo (g)")
+        _campo("cbr_desp_masa_seco", "Peso recipiente + suelo seco (g)")
+        _campo("cbr_desp_masa_recipiente", "Peso recipiente (g)")
 
     with st.container(border=True):
-        st.markdown(card_header_html("water_drop", "Datos después de inmersión — Humedad"), unsafe_allow_html=True)
-        _campo("cbr_desp_recipiente", "Recipiente No.", placeholder="839")
-        _campo("cbr_desp_masa_recipiente_humeda", "Masa recipiente + muestra húmeda (g)")
+        st.markdown(card_header_html("straighten", "Datos de Expansión"), unsafe_allow_html=True)
+        _campo("cbr_exp_lectura_inicial", "Lectura inicial (in)")
+        _campo("cbr_exp_lectura_final", "Lectura final (in)")
 
-        # "Masa recipiente + seca (g) (16 horas)" se autocompleta en las 3 lecturas siguientes
-        # apenas se digita, igual que en el ensayo de Humedad (ver render_humedad_form) — si el
-        # laboratorista cambia una lectura a mano, ya no se vuelve a pisar hasta que el valor de
-        # origen vuelva a cambiar.
-        src_key = "cbr_desp_seco_16h"
-        src_widget_key = f"{src_key}_{assay_id}"
-        if src_widget_key not in st.session_state:
-            st.session_state[src_widget_key] = data.get(src_key, "")
-        row = st.columns([2.2, 1])
-        row[0].markdown('<div style="padding-top:8px;">Masa recipiente + seca (g) (16 horas)</div>', unsafe_allow_html=True)
-        data[src_key] = row[1].text_input("Masa recipiente + seca (g) (16 horas)", key=src_widget_key,
-                                           label_visibility="collapsed", placeholder="0.00")
-        current_val = data[src_key]
-        lastsync_key = f"{src_key}_lastsync"
-        if data.get(lastsync_key) != current_val:
-            for hkey in ("cbr_desp_seco_17h", "cbr_desp_seco_18h", "cbr_desp_seco_19h"):
-                st.session_state[f"{hkey}_{assay_id}"] = current_val
-                data[hkey] = current_val
-            data[lastsync_key] = current_val
-        for hkey, hlabel in (("cbr_desp_seco_17h", "Masa recipiente + seca (g) (17 horas)"),
-                              ("cbr_desp_seco_18h", "Masa recipiente + seca (g) (18 horas)"),
-                              ("cbr_desp_seco_19h", "Masa recipiente + seca (g) (19 horas)")):
-            hwidget_key = f"{hkey}_{assay_id}"
-            if hwidget_key not in st.session_state:
-                st.session_state[hwidget_key] = data.get(hkey, "")
-            hrow = st.columns([2.2, 1])
-            hrow[0].markdown(f'<div style="padding-top:8px;">{hlabel}</div>', unsafe_allow_html=True)
-            data[hkey] = hrow[1].text_input(hlabel, key=hwidget_key, label_visibility="collapsed", placeholder="0.00")
+    with st.container(border=True):
+        st.markdown(card_header_html("tune", "Condiciones del Ensayo"), unsafe_allow_html=True)
+        st.caption("La plantilla ya trae un valor por defecto (4554 g / 4 días) — solo digita algo aquí si es distinto.")
+        head = st.columns([2, 1, 1])
+        head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Antes</div>', unsafe_allow_html=True)
+        head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Después</div>', unsafe_allow_html=True)
+        _campo_antes_despues("cbr_pesas", "Pesas de sobrecarga (g)")
+        _campo_antes_despues("cbr_tiempo_inmersion", "Tiempo de inmersión (días)")
 
-        _campo("cbr_desp_masa_recipiente", "Masa del recipiente (g)")
-        _campo("cbr_desp_no_molde", "No. Molde", placeholder="1")
-        _campo("cbr_desp_masa_molde_muestra", "Masa molde + muestra (g)")
+    with st.container(border=True):
+        st.markdown(card_header_html("show_chart", "Penetración"), unsafe_allow_html=True)
+        st.caption("Fuerza (kN) leída en cada profundidad — el esfuerzo (MPa) y el CBR a 0.1\"/0.2\" los calcula el Excel.")
+        head = st.columns([1.2, 1, 1])
+        head[0].markdown('<div class="cell-muted" style="font-weight:700;">Profundidad</div>', unsafe_allow_html=True)
+        head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Fuerza antes (kN)</div>', unsafe_allow_html=True)
+        head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Fuerza después (kN)</div>', unsafe_allow_html=True)
+        for i, (pulg, mm) in enumerate(CBR_PENETRACION_FILAS, start=1):
+            row = st.columns([1.2, 1, 1])
+            row[0].markdown(f'<div style="padding-top:8px;">{pulg}" ({mm} mm)</div>', unsafe_allow_html=True)
+            data[f"cbr_pen_antes_{i}"] = row[1].text_input(f"Fuerza antes {pulg}in", value=data.get(f"cbr_pen_antes_{i}", ""),
+                                                             key=f"cbr_pen_antes_{i}_{assay_id}", label_visibility="collapsed",
+                                                             placeholder="kN")
+            data[f"cbr_pen_despues_{i}"] = row[2].text_input(f"Fuerza después {pulg}in", value=data.get(f"cbr_pen_despues_{i}", ""),
+                                                               key=f"cbr_pen_despues_{i}_{assay_id}", label_visibility="collapsed",
+                                                               placeholder="kN")
 
     render_equipo(data, "cbr", EQUIPO_CBR)
     render_norma_selector("cbr", data, "cbr")
@@ -4372,14 +4477,12 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
         equipos, norma = data.get("mu_equipos", []), data.get("mu_norma", "—")
     else:  # "cbr"
         with st.container(border=True):
-            st.markdown(card_header_html("science", "Prueba"), unsafe_allow_html=True)
+            st.markdown(card_header_html("science", "Datos Iniciales"), unsafe_allow_html=True)
             rows = [
-                ("No. de golpes", data.get("cbr_golpes")), ("Molde No.", data.get("cbr_molde")),
-                ("No. de capas", data.get("cbr_capas")),
-                ("Masa de la muestra húmeda + molde (g)", data.get("cbr_masa_humeda_molde")),
-                ("Masa molde (g)", data.get("cbr_masa_molde")),
-                ("Altura de la muestra (cm)", data.get("cbr_altura")),
-                ("Diámetro de la muestra (cm)", data.get("cbr_diametro")),
+                ("Molde No.", data.get("cbr_molde")), ("Diámetro de la muestra (cm)", data.get("cbr_diametro")),
+                ("Altura de la muestra (cm)", data.get("cbr_altura")), ("Masa molde (g)", data.get("cbr_masa_molde")),
+                ("Masa de la muestra + molde (g) — antes", data.get("cbr_masa_muestra_molde_antes")),
+                ("Masa de la muestra + molde (g) — después", data.get("cbr_masa_muestra_molde_despues")),
             ]
             st.markdown(param_table_html(rows), unsafe_allow_html=True)
         with st.container(border=True):
@@ -4389,37 +4492,45 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             if hum_data.get("hum_recipiente") or hum_data.get("hum_seco_mas_recipiente"):
                 rows = [
                     ("Recipiente no.", hum_data.get("hum_recipiente")),
-                    ("Masa del recipiente (g)", hum_data.get("hum_masa_recipiente")),
-                    ("Masa suelo húmedo + recipiente (g)", hum_data.get("hum_masa_humedo_mas_recipiente")),
-                    ("Masa suelo seco + recipiente (g)", hum_data.get("hum_seco_mas_recipiente")),
+                    ("Peso recipiente + suelo húmedo (g)", hum_data.get("hum_masa_humedo_mas_recipiente")),
+                    ("Peso recipiente + suelo seco (g)", hum_data.get("hum_seco_mas_recipiente")),
+                    ("Peso recipiente (g)", hum_data.get("hum_masa_recipiente")),
                     ("Humedad (%)", fmt_num(calcular_humedad_pct(hum_data), decimals=2)),
                 ]
                 st.markdown(param_table_html(rows), unsafe_allow_html=True)
             else:
                 st.markdown(f'<div style="color:{NEUTRAL};font-style:italic;">— sin datos —</div>', unsafe_allow_html=True)
         with st.container(border=True):
-            st.markdown(card_header_html("straighten", "Deformación"), unsafe_allow_html=True)
+            st.markdown(card_header_html("water_drop", "Humedad después de inmersión"), unsafe_allow_html=True)
             rows = [
-                ("Lectura inicial — Fecha", data.get("cbr_def_inicial_fecha")),
-                ("Lectura inicial — Hora", data.get("cbr_def_inicial_hora")),
-                ("Lectura final — Fecha", data.get("cbr_def_final_fecha")),
-                ("Lectura final — Hora", data.get("cbr_def_final_hora")),
+                ("Recipiente", data.get("cbr_desp_recipiente")),
+                ("Peso recipiente + suelo húmedo (g)", data.get("cbr_desp_masa_humedo")),
+                ("Peso recipiente + suelo seco (g)", data.get("cbr_desp_masa_seco")),
+                ("Peso recipiente (g)", data.get("cbr_desp_masa_recipiente")),
             ]
             st.markdown(param_table_html(rows), unsafe_allow_html=True)
         with st.container(border=True):
-            st.markdown(card_header_html("water_drop", "Datos después de inmersión — Humedad"), unsafe_allow_html=True)
+            st.markdown(card_header_html("straighten", "Datos de Expansión"), unsafe_allow_html=True)
             rows = [
-                ("Recipiente No.", data.get("cbr_desp_recipiente")),
-                ("Masa recipiente + muestra húmeda (g)", data.get("cbr_desp_masa_recipiente_humeda")),
-                ("Masa recipiente + seca (g) (16 horas)", data.get("cbr_desp_seco_16h")),
-                ("Masa recipiente + seca (g) (17 horas)", data.get("cbr_desp_seco_17h")),
-                ("Masa recipiente + seca (g) (18 horas)", data.get("cbr_desp_seco_18h")),
-                ("Masa recipiente + seca (g) (19 horas)", data.get("cbr_desp_seco_19h")),
-                ("Masa del recipiente (g)", data.get("cbr_desp_masa_recipiente")),
-                ("No. Molde", data.get("cbr_desp_no_molde")),
-                ("Masa molde + muestra (g)", data.get("cbr_desp_masa_molde_muestra")),
+                ("Lectura inicial (in)", data.get("cbr_exp_lectura_inicial")),
+                ("Lectura final (in)", data.get("cbr_exp_lectura_final")),
             ]
             st.markdown(param_table_html(rows), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("tune", "Condiciones del Ensayo"), unsafe_allow_html=True)
+            rows = [
+                ("Pesas de sobrecarga (g) — antes", data.get("cbr_pesas_antes") or "4554 (por defecto)"),
+                ("Pesas de sobrecarga (g) — después", data.get("cbr_pesas_despues") or "4554 (por defecto)"),
+                ("Tiempo de inmersión (días) — antes", data.get("cbr_tiempo_inmersion_antes") or "4 (por defecto)"),
+                ("Tiempo de inmersión (días) — después", data.get("cbr_tiempo_inmersion_despues") or "4 (por defecto)"),
+            ]
+            st.markdown(param_table_html(rows), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("show_chart", "Penetración"), unsafe_allow_html=True)
+            headers = ["PROFUNDIDAD (in)", "FUERZA ANTES (kN)", "FUERZA DESPUÉS (kN)"]
+            pen_rows = [(pulg, data.get(f"cbr_pen_antes_{i}"), data.get(f"cbr_pen_despues_{i}"))
+                        for i, (pulg, _mm) in enumerate(CBR_PENETRACION_FILAS, start=1)]
+            st.markdown(param_table_ncol_html(headers, pen_rows), unsafe_allow_html=True)
         equipos, norma = data.get("cbr_equipos", []), data.get("cbr_norma", "—")
 
     with st.container(border=True):
@@ -4665,6 +4776,16 @@ def render_assay_form():
         st.download_button(
             "Descargar Excel (plantilla oficial de Peso Unitario Parafinado)", icon=":material/download:",
             data=excel_bytes, file_name=f"Peso_unitario_parafinado_{muestra['id_unico']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
+        )
+
+    if es_supervisor and assay["tipo"] == "cbr" and muestra:
+        st.markdown("---")
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        excel_bytes = generar_excel_cbr(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
+        st.download_button(
+            "Descargar Excel (plantilla oficial de CBR)", icon=":material/download:",
+            data=excel_bytes, file_name=f"CBR_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
 
