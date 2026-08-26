@@ -588,11 +588,12 @@ SIEVES = [
     ("s_60", "No. 60", "0.25", "E32"), ("s_100", "No. 100", "0.149", "E33"), ("s_200", "No. 200", "0.075", "E34"),
 ]
 
-ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200"}
+ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR"}
 NORMAS_ENSAYO = {
     "granulometria": ["INV-214-13", "INV.E-213-13", "INV.E 123-13"],
     "humedad": ["INV E-122", "ASTM D2216"],
     "masa-unitaria": ["INV E-202", "ASTM D1188"],
+    "cbr": ["INV E-148", "ASTM D1883"],
 }
 STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado"}
 STATUS_BADGE = {"sin-iniciar": "badge-danger", "en-proceso": "badge-warning", "finalizado": "badge-success"}
@@ -636,6 +637,15 @@ EQUIPO_LIMITES = [
 
 # Equipos reales usados en el ensayo de Peso Unitario Parafinado.
 EQUIPO_MASA_UNITARIA = ["Balanza GDA-E-011", "Termómetro GDA-E-126"]
+
+# CBR (INV E-148 / ASTM D1883) — todavía sin código interno asignado (a diferencia de los otros
+# EQUIPO_* de arriba); se deja con nombre genérico igual que EQUIPO_LIST hasta que se tenga el
+# código real de cada equipo.
+EQUIPO_CBR = [
+    "Prensa CBR", "Molde CBR", "Disco espaciador", "Pesas de sobrecarga",
+    "Trípode con extensómetro", "Balanza digital 0.01g", "Balanza digital 0.1g",
+    "Horno de secado", "Cronómetro",
+]
 
 # ════════════════════════════════════════════════════════════════════
 # DESCRIPCIÓN VISUAL ESTRUCTURADA (menús desplegables en vez de texto libre) — para poder
@@ -773,7 +783,7 @@ BITACORA_ENSAYOS = [
 ]
 SUPPORTED_ASSAY_MAP = {
     "Granulometría": "granulometria", "Humedad": "humedad", "Peso unitario": "masa-unitaria",
-    "Límites de Atterberg": "limites", "Pasa 200": "pasa200",
+    "Límites de Atterberg": "limites", "Pasa 200": "pasa200", "CBR": "cbr",
 }
 
 BITACORA_BASE_COLS = ["Número", "Prof. De", "Prof. A", "Tipo de muestra"] + BITACORA_ENSAYOS + ["Observaciones"]
@@ -3931,12 +3941,36 @@ CAMPOS_REQUERIDOS_MASA_UNITARIA = [
     ("mu_peso_aire_par", "Masa en el aire parafinado (g)"),
     ("mu_temp_agua", "Temperatura del agua (°C)"),
 ]
+# La "Humedad antes de inmersión" del CBR NO está acá: no es un campo propio del CBR, se comparte
+# con el ensayo de Contenido de Humedad de la misma muestra (ver render_cbr_form) — si falta, se
+# marca como faltante allá, no acá. Igual que en Humedad/Pasa 200, las lecturas de verificación
+# de 17/18/19 horas (después de inmersión) tampoco están: se autocompletan de la de 16 horas.
+CAMPOS_REQUERIDOS_CBR = [
+    ("cbr_golpes", "No. de golpes"),
+    ("cbr_molde", "Molde No."),
+    ("cbr_capas", "No. de capas"),
+    ("cbr_masa_humeda_molde", "Masa de la muestra húmeda + molde (g)"),
+    ("cbr_masa_molde", "Masa molde (g)"),
+    ("cbr_altura", "Altura de la muestra (cm)"),
+    ("cbr_diametro", "Diámetro de la muestra (cm)"),
+    ("cbr_def_inicial_fecha", "Fecha — Lectura inicial (deformación)"),
+    ("cbr_def_inicial_hora", "Hora — Lectura inicial (deformación)"),
+    ("cbr_def_final_fecha", "Fecha — Lectura final (deformación)"),
+    ("cbr_def_final_hora", "Hora — Lectura final (deformación)"),
+    ("cbr_desp_recipiente", "Recipiente No. (después de inmersión)"),
+    ("cbr_desp_masa_recipiente_humeda", "Masa recipiente + muestra húmeda (g) (después de inmersión)"),
+    ("cbr_desp_seco_16h", "Masa recipiente + seca (g) — 16 horas (después de inmersión)"),
+    ("cbr_desp_masa_recipiente", "Masa del recipiente (g) (después de inmersión)"),
+    ("cbr_desp_no_molde", "No. Molde (después de inmersión)"),
+    ("cbr_desp_masa_molde_muestra", "Masa molde + muestra (g) (después de inmersión)"),
+]
 CAMPOS_REQUERIDOS_POR_TIPO = {
     "humedad": CAMPOS_REQUERIDOS_HUMEDAD,
     "pasa200": CAMPOS_REQUERIDOS_PASA200,
     "granulometria": CAMPOS_REQUERIDOS_PASA200,  # comparte los mismos campos de Pasa 200 (embebido y "Requerido")
     "limites": CAMPOS_REQUERIDOS_LIMITES,
     "masa-unitaria": CAMPOS_REQUERIDOS_MASA_UNITARIA,
+    "cbr": CAMPOS_REQUERIDOS_CBR,
 }
 
 
@@ -4112,6 +4146,103 @@ def render_masa_unitaria_form(data, assay_id):
     render_norma_selector("masa-unitaria", data, "mu")
 
 
+def render_cbr_form(data, assay_id, muestra_id):
+    st.info("Estos datos se guardan tal cual y se llevan a la plantilla oficial de Excel — el CBR no lo calcula la app.")
+
+    def _campo(key, label, placeholder="0.00"):
+        row = st.columns([2.2, 1])
+        row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+        data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                       label_visibility="collapsed", placeholder=placeholder)
+
+    with st.container(border=True):
+        st.markdown(card_header_html("science", "Prueba"), unsafe_allow_html=True)
+        _campo("cbr_golpes", "No. de golpes", placeholder="56")
+        _campo("cbr_molde", "Molde No.", placeholder="1")
+        _campo("cbr_capas", "No. de capas", placeholder="5")
+        _campo("cbr_masa_humeda_molde", "Masa de la muestra húmeda + molde (g)")
+        _campo("cbr_masa_molde", "Masa molde (g)")
+        _campo("cbr_altura", "Altura de la muestra (cm)")
+        _campo("cbr_diametro", "Diámetro de la muestra (cm)")
+
+    with st.container(border=True):
+        st.markdown(card_header_html("water_drop", "Humedad antes de inmersión"), unsafe_allow_html=True)
+        st.caption("Se comparte con el ensayo de Contenido de Humedad de esta muestra — no es un dato "
+                   "propio del CBR. Si falta o está mal, corrígelo desde ese ensayo, no desde aquí.")
+        hum_assay = get_assay(muestra_id, "humedad")
+        hum_data = hum_assay.get("data", {}) if hum_assay else {}
+        if hum_data.get("hum_recipiente") or hum_data.get("hum_seco_mas_recipiente"):
+            rows = [
+                ("Recipiente no.", hum_data.get("hum_recipiente")),
+                ("Masa del recipiente (g)", hum_data.get("hum_masa_recipiente")),
+                ("Masa suelo húmedo + recipiente (g)", hum_data.get("hum_masa_humedo_mas_recipiente")),
+                ("Masa suelo seco + recipiente (g)", hum_data.get("hum_seco_mas_recipiente")),
+                ("Humedad (%)", fmt_num(calcular_humedad_pct(hum_data), decimals=2)),
+            ]
+            st.markdown(param_table_html(rows), unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div style="display:flex;align-items:center;gap:6px;color:{NEUTRAL};font-style:italic;">'
+                         f'{icon("visibility_off", size=16)} El ensayo de Contenido de Humedad de esta muestra '
+                         f'todavía no tiene datos</div>', unsafe_allow_html=True)
+
+    with st.container(border=True):
+        st.markdown(card_header_html("straighten", "Deformación"), unsafe_allow_html=True)
+        d1, d2 = st.columns(2)
+        with d1:
+            st.markdown('<div style="font-weight:600;margin-bottom:6px;">Lectura inicial</div>', unsafe_allow_html=True)
+            data["cbr_def_inicial_fecha"] = st.text_input("Fecha", value=data.get("cbr_def_inicial_fecha", ""),
+                                                            key=f"cbr_def_inicial_fecha_{assay_id}", placeholder="DD/MM/AAAA")
+            data["cbr_def_inicial_hora"] = st.text_input("Hora", value=data.get("cbr_def_inicial_hora", ""),
+                                                           key=f"cbr_def_inicial_hora_{assay_id}", placeholder="00:00")
+        with d2:
+            st.markdown('<div style="font-weight:600;margin-bottom:6px;">Lectura final</div>', unsafe_allow_html=True)
+            data["cbr_def_final_fecha"] = st.text_input("Fecha", value=data.get("cbr_def_final_fecha", ""),
+                                                          key=f"cbr_def_final_fecha_{assay_id}", placeholder="DD/MM/AAAA")
+            data["cbr_def_final_hora"] = st.text_input("Hora", value=data.get("cbr_def_final_hora", ""),
+                                                         key=f"cbr_def_final_hora_{assay_id}", placeholder="00:00")
+
+    with st.container(border=True):
+        st.markdown(card_header_html("water_drop", "Datos después de inmersión — Humedad"), unsafe_allow_html=True)
+        _campo("cbr_desp_recipiente", "Recipiente No.", placeholder="839")
+        _campo("cbr_desp_masa_recipiente_humeda", "Masa recipiente + muestra húmeda (g)")
+
+        # "Masa recipiente + seca (g) (16 horas)" se autocompleta en las 3 lecturas siguientes
+        # apenas se digita, igual que en el ensayo de Humedad (ver render_humedad_form) — si el
+        # laboratorista cambia una lectura a mano, ya no se vuelve a pisar hasta que el valor de
+        # origen vuelva a cambiar.
+        src_key = "cbr_desp_seco_16h"
+        src_widget_key = f"{src_key}_{assay_id}"
+        if src_widget_key not in st.session_state:
+            st.session_state[src_widget_key] = data.get(src_key, "")
+        row = st.columns([2.2, 1])
+        row[0].markdown('<div style="padding-top:8px;">Masa recipiente + seca (g) (16 horas)</div>', unsafe_allow_html=True)
+        data[src_key] = row[1].text_input("Masa recipiente + seca (g) (16 horas)", key=src_widget_key,
+                                           label_visibility="collapsed", placeholder="0.00")
+        current_val = data[src_key]
+        lastsync_key = f"{src_key}_lastsync"
+        if data.get(lastsync_key) != current_val:
+            for hkey in ("cbr_desp_seco_17h", "cbr_desp_seco_18h", "cbr_desp_seco_19h"):
+                st.session_state[f"{hkey}_{assay_id}"] = current_val
+                data[hkey] = current_val
+            data[lastsync_key] = current_val
+        for hkey, hlabel in (("cbr_desp_seco_17h", "Masa recipiente + seca (g) (17 horas)"),
+                              ("cbr_desp_seco_18h", "Masa recipiente + seca (g) (18 horas)"),
+                              ("cbr_desp_seco_19h", "Masa recipiente + seca (g) (19 horas)")):
+            hwidget_key = f"{hkey}_{assay_id}"
+            if hwidget_key not in st.session_state:
+                st.session_state[hwidget_key] = data.get(hkey, "")
+            hrow = st.columns([2.2, 1])
+            hrow[0].markdown(f'<div style="padding-top:8px;">{hlabel}</div>', unsafe_allow_html=True)
+            data[hkey] = hrow[1].text_input(hlabel, key=hwidget_key, label_visibility="collapsed", placeholder="0.00")
+
+        _campo("cbr_desp_masa_recipiente", "Masa del recipiente (g)")
+        _campo("cbr_desp_no_molde", "No. Molde", placeholder="1")
+        _campo("cbr_desp_masa_molde_muestra", "Masa molde + muestra (g)")
+
+    render_equipo(data, "cbr", EQUIPO_CBR)
+    render_norma_selector("cbr", data, "cbr")
+
+
 def render_limites_form(data, assay_id):
     st.info("Estos datos se guardan tal cual y se llevan a la plantilla oficial de Excel — el Límite Líquido, el Límite Plástico y el Índice de Plasticidad los calcula el Excel, no la app.")
 
@@ -4161,7 +4292,7 @@ def render_limites_form(data, assay_id):
     render_equipo(data, "lim", EQUIPO_LIMITES)
 
 
-def render_read_only_summary(tipo, data, laboratorista="—"):
+def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
     """Vista de solo lectura ('Resultados de Ensayo') — la misma para el Jefe (siempre) y para
     el laboratorista cuando el proyecto ya fue ejecutado. Sin casillas de digitación, solo tarjetas
     y tablas con los datos ya registrados."""
@@ -4232,13 +4363,64 @@ def render_read_only_summary(tipo, data, laboratorista="—"):
             st.markdown(card_header_html("info", "Información de Ensayo"), unsafe_allow_html=True)
             st.markdown(param_table_html([("Método de Ensayo", data.get("lim_metodo"))], header_left="DATO", header_right="VALOR"), unsafe_allow_html=True)
         equipos, norma = data.get("lim_equipos", []), "INV. E-125-13 / INV. E-126-13"
-    else:
+    elif tipo == "masa-unitaria":
         rows = [("Masa en el aire (g)", data.get("mu_peso_aire")), ("Masa en el aire parafinado (g)", data.get("mu_peso_aire_par")),
                 ("Masa en el agua parafinado (g)", data.get("mu_peso_agua_par")), ("Temperatura del agua (°C)", data.get("mu_temp_agua"))]
         with st.container(border=True):
             st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
             st.markdown(param_table_html(rows), unsafe_allow_html=True)
         equipos, norma = data.get("mu_equipos", []), data.get("mu_norma", "—")
+    else:  # "cbr"
+        with st.container(border=True):
+            st.markdown(card_header_html("science", "Prueba"), unsafe_allow_html=True)
+            rows = [
+                ("No. de golpes", data.get("cbr_golpes")), ("Molde No.", data.get("cbr_molde")),
+                ("No. de capas", data.get("cbr_capas")),
+                ("Masa de la muestra húmeda + molde (g)", data.get("cbr_masa_humeda_molde")),
+                ("Masa molde (g)", data.get("cbr_masa_molde")),
+                ("Altura de la muestra (cm)", data.get("cbr_altura")),
+                ("Diámetro de la muestra (cm)", data.get("cbr_diametro")),
+            ]
+            st.markdown(param_table_html(rows), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("water_drop", "Humedad antes de inmersión"), unsafe_allow_html=True)
+            st.caption("Compartida con el ensayo de Contenido de Humedad de esta muestra.")
+            hum_data = (get_assay(muestra_id, "humedad") or {}).get("data", {}) if muestra_id else {}
+            if hum_data.get("hum_recipiente") or hum_data.get("hum_seco_mas_recipiente"):
+                rows = [
+                    ("Recipiente no.", hum_data.get("hum_recipiente")),
+                    ("Masa del recipiente (g)", hum_data.get("hum_masa_recipiente")),
+                    ("Masa suelo húmedo + recipiente (g)", hum_data.get("hum_masa_humedo_mas_recipiente")),
+                    ("Masa suelo seco + recipiente (g)", hum_data.get("hum_seco_mas_recipiente")),
+                    ("Humedad (%)", fmt_num(calcular_humedad_pct(hum_data), decimals=2)),
+                ]
+                st.markdown(param_table_html(rows), unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div style="color:{NEUTRAL};font-style:italic;">— sin datos —</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("straighten", "Deformación"), unsafe_allow_html=True)
+            rows = [
+                ("Lectura inicial — Fecha", data.get("cbr_def_inicial_fecha")),
+                ("Lectura inicial — Hora", data.get("cbr_def_inicial_hora")),
+                ("Lectura final — Fecha", data.get("cbr_def_final_fecha")),
+                ("Lectura final — Hora", data.get("cbr_def_final_hora")),
+            ]
+            st.markdown(param_table_html(rows), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("water_drop", "Datos después de inmersión — Humedad"), unsafe_allow_html=True)
+            rows = [
+                ("Recipiente No.", data.get("cbr_desp_recipiente")),
+                ("Masa recipiente + muestra húmeda (g)", data.get("cbr_desp_masa_recipiente_humeda")),
+                ("Masa recipiente + seca (g) (16 horas)", data.get("cbr_desp_seco_16h")),
+                ("Masa recipiente + seca (g) (17 horas)", data.get("cbr_desp_seco_17h")),
+                ("Masa recipiente + seca (g) (18 horas)", data.get("cbr_desp_seco_18h")),
+                ("Masa recipiente + seca (g) (19 horas)", data.get("cbr_desp_seco_19h")),
+                ("Masa del recipiente (g)", data.get("cbr_desp_masa_recipiente")),
+                ("No. Molde", data.get("cbr_desp_no_molde")),
+                ("Masa molde + muestra (g)", data.get("cbr_desp_masa_molde_muestra")),
+            ]
+            st.markdown(param_table_html(rows), unsafe_allow_html=True)
+        equipos, norma = data.get("cbr_equipos", []), data.get("cbr_norma", "—")
 
     with st.container(border=True):
         st.markdown(card_header_html("rule", "Norma Aplicada"), unsafe_allow_html=True)
@@ -4333,7 +4515,7 @@ def render_assay_form():
             st.info("Estás viendo el ensayo en modo consulta — solo el laboratorista puede digitar estos datos.")
         else:
             st.info("Este proyecto ya fue ejecutado. Estás en modo consulta — no puedes editar estos datos.")
-        render_read_only_summary(assay["tipo"], data, assay.get("laboratorist") or "—")
+        render_read_only_summary(assay["tipo"], data, assay.get("laboratorist") or "—", muestra_id=muestra_id)
         with st.container(border=True):
             st.markdown(card_header_html("notes", "Observaciones"), unsafe_allow_html=True)
             st.markdown(f'<div>{html.escape(assay.get("observations") or "—")}</div>', unsafe_allow_html=True)
@@ -4374,6 +4556,8 @@ def render_assay_form():
             render_limites_form(data, assay_id)
         elif assay["tipo"] == "masa-unitaria":
             render_masa_unitaria_form(data, assay_id)
+        elif assay["tipo"] == "cbr":
+            render_cbr_form(data, assay_id, muestra_id)
 
         with st.expander("Observaciones (opcional)", icon=":material/notes:", expanded=bool(assay.get("observations"))):
             observations = st.text_area("Observaciones", value=assay.get("observations", ""), label_visibility="collapsed",
