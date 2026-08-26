@@ -811,9 +811,18 @@ def _set_session_cookie(access_token, refresh_token):
     cookie_manager.batch_set({"gdl_at": access_token, "gdl_rt": refresh_token}, expires_at=expira)
 
 
+def _delete_cookie_safe(nombre, key):
+    """cookie_manager.delete() hace `del self.cookies[nombre]` sin verificar que exista, y
+    truena con KeyError si ya no está (p. ej. la cookie nunca llegó a existir en este navegador,
+    o el componente todavía no había entregado su valor real cuando se llamó) — se verifica antes
+    para que cerrar sesión no reviente si no hay nada que borrar."""
+    if nombre in cookie_manager.cookies:
+        cookie_manager.delete(nombre, key=key)
+
+
 def _clear_session_cookie():
-    cookie_manager.delete("gdl_at", key="del_gdl_at")
-    cookie_manager.delete("gdl_rt", key="del_gdl_rt")
+    _delete_cookie_safe("gdl_at", key="del_gdl_at")
+    _delete_cookie_safe("gdl_rt", key="del_gdl_rt")
 
 
 def _set_remember_user_cookie(codigo):
@@ -825,7 +834,7 @@ def _set_remember_user_cookie(codigo):
 
 
 def _clear_remember_user_cookie():
-    cookie_manager.delete("gdl_user", key="del_gdl_user")
+    _delete_cookie_safe("gdl_user", key="del_gdl_user")
 
 
 def _push_history_entry():
@@ -1571,19 +1580,19 @@ def render_home():
                 st.markdown(f'<div class="activity-footer">Mostrando {len(recientes)} de {len(todos_los_ensayos)} ensayo(s)</div>',
                             unsafe_allow_html=True)
     else:
-        # La asignación es por ensayo puntual (ver muestras.ensayo_asignado_a / render_muestra_detail),
-        # no por proyecto entero — por eso se recorren las muestras y su checklist de ensayos
-        # directamente, en vez de filtrar st.session_state.assays (que solo trae ensayos que YA
-        # tienen una fila creada, es decir que alguien ya abrió al menos una vez). Un ensayo recién
-        # asignado por el Jefe debe aparecer aquí de inmediato, aunque nadie lo haya abierto todavía.
-        mi_nombre = st.session_state.profile.get("full_name", "")
+        # Cualquier laboratorista puede abrir cualquier ensayo pendiente — no hay asignación
+        # previa del Jefe, cada quien indica su propio nombre en el campo "Laboratorista" del
+        # formulario del ensayo al hacerlo. Por eso se recorren las muestras y su checklist de
+        # ensayos directamente, en vez de filtrar st.session_state.assays (que solo trae ensayos
+        # que YA tienen una fila creada, es decir que alguien ya abrió al menos una vez), para que
+        # un ensayo recién marcado en la bitácora aparezca aquí de inmediato aunque nadie lo haya
+        # abierto todavía.
         pendientes = []
         for key, muestras_perf in st.session_state.muestras.items():
             codigo_proyecto, perf_codigo = key.split("::", 1)
             for m in muestras_perf:
-                asignaciones = m.get("ensayo_asignado_a") or {}
-                for ensayo_label, asignado_a in asignaciones.items():
-                    if asignado_a != mi_nombre or not m["ensayos"].get(ensayo_label):
+                for ensayo_label, marcado in m["ensayos"].items():
+                    if not marcado:
                         continue
                     tipo_interno = SUPPORTED_ASSAY_MAP.get(ensayo_label)
                     if not tipo_interno:
@@ -1604,13 +1613,13 @@ def render_home():
             h1, h2 = st.columns([4, 1])
             with h1:
                 st.markdown(f'<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">'
-                            f'{icon("assignment", size=15)} Ensayos asignados</div>', unsafe_allow_html=True)
+                            f'{icon("assignment", size=15)} Ensayos pendientes</div>', unsafe_allow_html=True)
             with h2:
                 st.markdown(f'<div style="text-align:right;"><span class="badge badge-muted">Total: {len(pendientes)}</span></div>',
                             unsafe_allow_html=True)
 
             if not pendientes:
-                st.info("No tienes ensayos pendientes por ahora.")
+                st.info("No hay ensayos pendientes por ahora.")
             else:
                 col_ratios = [1.2, 2.0, 1.9, 1.5, 1.1, 0.9]
                 headers = st.columns(col_ratios)
@@ -3262,21 +3271,6 @@ def render_muestra_detail():
                                 st.session_state.selected_assay_id = nuevo["id"]
                             st.session_state.selected_assay_type = tipo_interno
                             navigate("assay-form")
-
-                if tipo_interno and st.session_state.role == "jefe":
-                    opciones_lab = ["(sin asignar)"] + list_laboratoristas()
-                    actual_asignado = (muestra.get("ensayo_asignado_a") or {}).get(ensayo_label) or "(sin asignar)"
-                    idx_asignado = opciones_lab.index(actual_asignado) if actual_asignado in opciones_lab else 0
-                    nuevo_asignado = st.selectbox(
-                        "Asignar a", opciones_lab, index=idx_asignado,
-                        key=f"asignar_{muestra_id}_{ensayo_label}",
-                        help="Solo esa persona verá este ensayo en su lista de 'Ensayos asignados'. "
-                             "Mientras no se asigne, no aparece en la lista de nadie.",
-                    )
-                    if nuevo_asignado != actual_asignado:
-                        laboratorista = None if nuevo_asignado == "(sin asignar)" else nuevo_asignado
-                        db.asignar_ensayo(muestra["id"], ensayo_label, laboratorista)
-                        st.rerun()
 
                 if existing:
                     motivo = existing.get("motivo_rechazo")
