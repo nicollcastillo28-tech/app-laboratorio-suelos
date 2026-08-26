@@ -3476,7 +3476,7 @@ def generar_excel_bitacora_orden(project, filas, tipos_usados):
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return bio.getvalue(), truncado
+    return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_BITACORA_ORDEN), truncado
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -3614,6 +3614,48 @@ def _reparar_graficos_perdidos(xlsm_bytes, template_path):
             return bio.getvalue()
 
 
+def _restaurar_imagenes_perdidas(xlsx_bytes, template_path):
+    """openpyxl vacía las <xdr:pic> (imágenes incrustadas — logo, firmas, diagramas de
+    referencia de la hoja GUIA) de cualquier drawingN.xml al volver a guardar el archivo: el
+    archivo drawingN.xml sigue existiendo y las formas/gráficos de adentro se conservan, pero
+    las imágenes puntuales se pierden en blanco porque openpyxl no sabe reconstruir esa parte
+    del XML al reescribirlo (a diferencia de _reparar_graficos_perdidos, que arregla archivos
+    que openpyxl bota por completo, acá el archivo sigue estando pero vacío de imágenes). Se
+    restaura cada drawingN.xml (y su .rels) tal cual viene en la plantilla original siempre que
+    esta tenga imágenes y la copia que acaba de guardar openpyxl las haya perdido — un drawing
+    que openpyxl sí supo conservar completo no se toca."""
+    with zipfile.ZipFile(template_path) as tpl:
+        tpl_names = set(tpl.namelist())
+        drawings = {n for n in tpl_names if re.match(r"xl/drawings/drawing\d+\.xml$", n)}
+        parches = {}
+        with zipfile.ZipFile(BytesIO(xlsx_bytes)) as out:
+            out_names = set(out.namelist())
+            for nombre in drawings:
+                tpl_xml = tpl.read(nombre).decode("utf-8")
+                if "<xdr:pic>" not in tpl_xml or nombre not in out_names:
+                    continue  # sin imágenes en la plantilla, o el archivo falta entero (lo arregla _reparar_graficos_perdidos)
+                out_xml = out.read(nombre).decode("utf-8")
+                if out_xml.count("<xdr:pic>") >= tpl_xml.count("<xdr:pic>"):
+                    continue  # openpyxl sí las conservó, nada que restaurar
+                parches[nombre] = tpl.read(nombre)
+                rels_nombre = nombre.replace("xl/drawings/", "xl/drawings/_rels/") + ".rels"
+                if rels_nombre in tpl_names:
+                    parches[rels_nombre] = tpl.read(rels_nombre)
+
+            if not parches:
+                return xlsx_bytes
+
+            bio = BytesIO()
+            with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as z:
+                for item in out.infolist():
+                    if item.filename in parches:
+                        z.writestr(item, parches[item.filename])
+                    else:
+                        z.writestr(item, out.read(item.filename))
+            bio.seek(0)
+            return bio.getvalue()
+
+
 def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_data=None, lim_data=None, observaciones_ensayo=""):
     """Granulometría y Límites de Atterberg comparten la misma plantilla y hoja ("GUIA") —
     por muestra van juntos en un solo archivo, sin importar si se descarga desde el ensayo de
@@ -3644,7 +3686,8 @@ def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_dat
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return _reparar_graficos_perdidos(bio.getvalue(), TEMPLATE_GRANULOMETRIA)
+    data = _reparar_graficos_perdidos(bio.getvalue(), TEMPLATE_GRANULOMETRIA)
+    return _restaurar_imagenes_perdidas(data, TEMPLATE_GRANULOMETRIA)
 
 
 def generar_excel_granulometria(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
@@ -3684,7 +3727,7 @@ def generar_excel_humedad(codigo, perf_codigo, muestra, project, data, observaci
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return bio.getvalue()
+    return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_HUMEDAD)
 
 
 def generar_excel_limites(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
@@ -3741,7 +3784,7 @@ def generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, obs
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return bio.getvalue()
+    return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_MASA_UNITARIA)
 
 
 # ════════════════════════════════════════════════════════════════════
