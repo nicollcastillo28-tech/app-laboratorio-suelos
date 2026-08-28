@@ -2353,18 +2353,59 @@ def render_project_detail():
             st.markdown(f'<div class="cell-muted"><strong>Profundidad</strong> {prof_txt} · {len(muestras)} muestra(s)</div>',
                         unsafe_allow_html=True)
             st.progress(perf_pct / 100)
+
+            # Vista rápida de las muestras de esta perforación, sin salir de la pantalla de
+            # proyecto — el botón "Ver muestras →" de abajo sigue llevando al detalle completo
+            # (donde sí se puede abrir cada ensayo), esto es solo para echar un vistazo rápido.
+            if muestras:
+                with st.expander(f"Ver muestras ({len(muestras)})", icon=":material/visibility:"):
+                    filas_vista = []
+                    for m in sorted(muestras, key=lambda m: m["numero"]):
+                        asignados = ", ".join(e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS) or "—"
+                        filas_vista.append((
+                            f'M-{m["numero"]}', f'{m["profundidad_de"]:.2f}–{m["profundidad_hasta"]:.2f} m',
+                            m["tipo_muestra"], asignados, STATUS_LABELS[compute_muestra_estado(m)],
+                        ))
+                    headers = ["MUESTRA", "PROFUNDIDAD", "TIPO", "ENSAYOS ASIGNADOS", "ESTADO"]
+                    st.markdown(param_table_ncol_html(headers, filas_vista), unsafe_allow_html=True)
+
             bc1, bc2 = st.columns(2)
             with bc1:
                 if st.button("Ver muestras →", key=f"open_perf_{perf['codigo']}", use_container_width=True):
                     st.session_state.selected_perforacion = perf["codigo"]
                     navigate("perforacion-detail")
             with bc2:
-                filas_perf = _bitacora_filas_perforacion(codigo, perf["codigo"])
-                excel_bytes, _truncado = generar_excel_bitacora_orden(project, filas_perf, {perf["tipo"]})
-                st.download_button("Descargar bitácora", data=excel_bytes, icon=":material/download:",
-                                    file_name=f"{codigo} Bitacora de orden {perf['codigo']}.xlsx",
-                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                    use_container_width=True, key=f"dl_perf_{perf['codigo']}")
+                # Al laboratorista le sirve más ver la bitácora ahí mismo que descargar el Excel
+                # (no la va a editar ni a entregar a nadie) — al Jefe y al Director Técnico sí
+                # les interesa el archivo real, para archivo/entrega, así que a ellos se les deja
+                # el botón de descarga de siempre.
+                if st.session_state.role == "laboratorista":
+                    ver_key = f"ver_bitacora_{perf['codigo']}"
+                    if st.button("Ver bitácora", icon=":material/visibility:", use_container_width=True, key=f"btn_{ver_key}"):
+                        st.session_state[ver_key] = not st.session_state.get(ver_key, False)
+                else:
+                    filas_perf = _bitacora_filas_perforacion(codigo, perf["codigo"])
+                    excel_bytes, _truncado = generar_excel_bitacora_orden(project, filas_perf, {perf["tipo"]})
+                    st.download_button("Descargar bitácora", data=excel_bytes, icon=":material/download:",
+                                        file_name=f"{codigo} Bitacora de orden {perf['codigo']}.xlsx",
+                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        use_container_width=True, key=f"dl_perf_{perf['codigo']}")
+
+            if st.session_state.role == "laboratorista" and st.session_state.get(f"ver_bitacora_{perf['codigo']}"):
+                st.markdown('<div class="cell-muted" style="margin-top:10px;">BITÁCORA — {}</div>'.format(html.escape(perf["codigo"])),
+                            unsafe_allow_html=True)
+                if muestras:
+                    filas_bit = []
+                    for m in sorted(muestras, key=lambda m: m["numero"]):
+                        asignados = ", ".join(e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS) or "—"
+                        filas_bit.append((
+                            f'M-{m["numero"]}', f'{m["profundidad_de"]:.2f}–{m["profundidad_hasta"]:.2f} m',
+                            m["tipo_muestra"], asignados, m.get("observaciones") or "—",
+                        ))
+                    headers_bit = ["MUESTRA", "PROFUNDIDAD", "TIPO", "ENSAYOS ASIGNADOS", "OBSERVACIONES"]
+                    st.markdown(param_table_ncol_html(headers_bit, filas_bit), unsafe_allow_html=True)
+                else:
+                    st.info("Esta perforación todavía no tiene muestras en la bitácora.")
 
 
 # ════════════════════════════════════════════════════════════════════
