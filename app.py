@@ -495,18 +495,14 @@ st.markdown(f"""
 # un recargo completo de la página, que Python resuelve leyendo la URL ya restaurada por el
 # navegador (init_state) — por eso esto necesita ir de la mano con la restauración de sesión por
 # cookie, si no cada "atrás" mandaría de vuelta al login.
-# Por último, un MutationObserver aparte se encarga de que la barra superior (topbar), la de
-# navegación inferior (bottomnav) y el contenido de la pantalla actual (screen-content) nunca
-# queden duplicados en pantalla, uno encima de otro — se ha visto en tablet, sobre todo al
-# cambiar el estado de un ensayo de "sin iniciar" a "en proceso": la pantalla vieja se queda
-# apilada junto con la nueva, con tarjetas de una intercaladas entre las de la otra.
-# render_topbar()/render_bottomnav()/el router principal se llaman una sola vez por corrida del
-# script, así que no es un duplicado real en Python — es el frontend de Streamlit el que a veces
-# no retira el nodo del rerun anterior antes de montar el del nuevo, y como el topbar es
-# "position: sticky" cada copia se queda pegada arriba en vez de perderse en el scroll (el
-# contenido de pantalla, en cambio, simplemente queda repetido en el flujo normal). Como cada uno
-# de estos 3 contenedores tiene una key única por diseño, cualquier copia de más es sobrante por
-# definición.
+# Por último, un MutationObserver aparte se encarga de que la barra superior (topbar) y la de
+# navegación inferior (bottomnav) nunca queden duplicadas en pantalla, una encima de otra — se ve
+# reportado en tablet, acumulándose con cada navegación entre pantallas. render_topbar()/
+# render_bottomnav() se llaman una sola vez por corrida del script, así que no es un duplicado
+# real en Python — es el frontend de Streamlit el que a veces no retira el nodo del rerun
+# anterior antes de montar el del nuevo, y como el topbar es "position: sticky" cada copia se
+# queda pegada arriba en vez de perderse en el scroll. Como .st-key-topbar tiene key="topbar"
+# (única por diseño), cualquier copia de más es sobrante por definición.
 # OJO: este bloque va AFUERA del guard __geodeltaInputModeInit (que sigue protegiendo el resto
 # de abajo, pensado para correr una sola vez) — el iframe de components.html se vuelve a montar
 # en cada rerun (no es el mismo nodo persistiendo), así que un MutationObserver creado solo la
@@ -519,7 +515,7 @@ components.html("""
 <script>
 (function() {
     function dedupeStickyBars() {
-        ['topbar', 'bottomnav', 'screen-content'].forEach(function(key) {
+        ['topbar', 'bottomnav'].forEach(function(key) {
             var bars = window.parent.document.querySelectorAll('.st-key-' + key);
             for (var i = 0; i < bars.length - 1; i++) {
                 bars[i].remove();
@@ -4978,13 +4974,5 @@ else:
         "continue": render_continue, "search": render_search,
         "projects-active": render_projects_active, "projects-done": render_projects_done,
     }
-    # key="screen-content": mismo motivo que key="topbar"/"bottomnav" (ver el bloque de
-    # dedupeStickyBars más arriba) — cuando el frontend de Streamlit no retira el contenido del
-    # rerun anterior antes de pintar el nuevo (se ha visto justo al cambiar el estado de un
-    # ensayo de "sin iniciar" a "en proceso"), sin esto quedaban DOS pantallas completas
-    # apiladas — la de antes de navegar y la de después — con tarjetas de la pantalla vieja
-    # intercaladas entre las de la nueva. Con la key, el mismo dedupe que ya limpia el topbar
-    # también deja como mucho un "screen-content" vigente.
-    with st.container(key="screen-content"):
-        SCREENS.get(st.session_state.screen, render_home)()
+    SCREENS.get(st.session_state.screen, render_home)()
     render_bottomnav()
