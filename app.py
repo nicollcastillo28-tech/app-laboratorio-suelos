@@ -4751,7 +4751,13 @@ def render_assay_form():
                                          placeholder="Observaciones generales del ensayo, en caso de que se requiera…")
 
         st.markdown('<div class="section-title">Laboratorista</div>', unsafe_allow_html=True)
-        laboratorist = st.text_input("Laboratorista", value=assay.get("laboratorist", ""), label_visibility="collapsed", placeholder="Nombre completo")
+        # Ya no se digita a mano — se asigna solo con el nombre de la cuenta con la que se
+        # inició sesión (ver profiles.full_name), así no queda a criterio de quien esté
+        # digitando escribir cualquier nombre. Si por algo raro la sesión no trae el perfil
+        # (no debería pasar acá, esta rama solo la ve un laboratorista con sesión activa), se
+        # cae al valor que ya tuviera guardado el ensayo en vez de dejarlo en blanco.
+        laboratorist = (st.session_state.profile or {}).get("full_name") or assay.get("laboratorist", "")
+        st.markdown(f'<div style="font-weight:600;">{html.escape(laboratorist or "—")}</div>', unsafe_allow_html=True)
 
         # Autoguardado: si el laboratorista digita y se le olvida darle a "Guardar borrador"
         # antes de salir, los datos no se pierden — se persisten solos en cada rerun (cada vez
