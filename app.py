@@ -3110,68 +3110,103 @@ def render_muestra_detail():
         st.caption("Cómo se ve la muestra a ojo — para comparar con la clasificación USCS calculada de "
                    "los datos de laboratorio, justo abajo.")
         if st.session_state.role == "laboratorista":
-            # .upper() al comparar: datos de antes de este cambio (migración 0015) se guardaron
-            # en minúscula/mixta (ej. "Limo") — así se siguen preseleccionando en el menú en vez
-            # de aparecer en blanco solo porque el case no coincide con las opciones nuevas.
-            tipo_actual = (muestra.get("desc_tipo_suelo") or "").upper()
-            tipo_idx = DESC_TIPO_SUELO_OPTIONS.index(tipo_actual) if tipo_actual in DESC_TIPO_SUELO_OPTIONS else 0
-            desc_tipo = st.selectbox("Tipo de grano", DESC_TIPO_SUELO_OPTIONS, index=tipo_idx,
-                                      key=f"desc_tipo_{muestra_id}", format_func=lambda v: v or "— Seleccionar —")
-            grueso = _es_grueso(desc_tipo)
+            # Modo de digitación: con menús (estructurado, permite armar la comparación contra
+            # la clasificación calculada — ver descripcion_visual_calculada) o texto libre, para
+            # cuando la muestra no encaja bien en las opciones de los menús. No hace falta una
+            # columna nueva para recordar el modo: se infiere de qué datos ya tiene la muestra —
+            # si hay tipo de grano elegido, está en modo menús; si no hay tipo pero sí texto
+            # libre guardado, está en modo texto; si no hay nada de nada, se parte de menús (el
+            # modo recomendado por defecto, para poder comparar contra la USCS calculada).
+            modos = ["Con menús (recomendado)", "Escribirla directamente"]
+            modo_actual = modos[1] if (not muestra.get("desc_tipo_suelo") and muestra.get("descripcion_visual")) else modos[0]
+            modo = st.radio("¿Cómo la vas a digitar?", modos, index=modos.index(modo_actual),
+                             key=f"desc_modo_{muestra_id}", horizontal=True)
 
-            # Componente secundario (ej. "grava con algo de arena", "arcilla con algo de arena")
-            # — opcional, se oculta el selectbox si la casilla no está marcada en vez de forzar
-            # a elegir "— Seleccionar —" cada vez. Se excluye el tipo principal de la lista para
-            # no dejar armar "grava con algo de grava".
-            secundario_actual = (muestra.get("desc_tipo_secundario") or "").upper()
-            tiene_secundario = st.checkbox(
-                "¿Tiene un componente secundario? (ej. grava con algo de arena, arcilla con algo de arena)",
-                value=bool(secundario_actual), key=f"desc_tiene_sec_{muestra_id}")
-            desc_secundario = None
-            if tiene_secundario:
-                opciones_sec = [o for o in DESC_TIPO_SECUNDARIO_OPTIONS if o != desc_tipo]
-                sec_idx = opciones_sec.index(secundario_actual) if secundario_actual in opciones_sec else 0
-                desc_secundario = st.selectbox("Componente secundario", opciones_sec, index=sec_idx,
-                                                key=f"desc_sec_{muestra_id}")
+            if modo == modos[1]:
+                st.caption("Al guardar en texto libre se borran los menús que hayas elegido antes — no se pueden "
+                           "combinar los dos modos en la misma muestra.")
+                texto_actual = muestra.get("descripcion_visual", "")
+                texto = st.text_area(
+                    "Descripción visual", value=texto_actual, key=f"desc_texto_libre_{muestra_id}",
+                    label_visibility="collapsed", height=100,
+                    placeholder="Ej: Grava arcillosa de color gris oscuro, débilmente cementada, en condición húmeda...",
+                )
+                if st.button("Guardar descripción visual", icon=":material/save:", key=f"desc_visual_save_texto_{muestra_id}"):
+                    db.update_muestra(
+                        muestra["id"], descripcion_visual=texto.strip().upper(),
+                        desc_tipo_suelo=None, desc_tipo_secundario=None, desc_color=None, desc_subtonalidad=None,
+                        desc_forma=None, desc_angulosidad=None, desc_cementacion=None, desc_consistencia=None,
+                        desc_humedad=None,
+                    )
+                    st.success("Descripción visual guardada.")
+                    st.rerun()
+            else:
+                # .upper() al comparar: datos de antes de este cambio (migración 0015) se
+                # guardaron en minúscula/mixta (ej. "Limo") — así se siguen preseleccionando en
+                # el menú en vez de aparecer en blanco solo porque el case no coincide con las
+                # opciones nuevas.
+                tipo_actual = (muestra.get("desc_tipo_suelo") or "").upper()
+                tipo_idx = DESC_TIPO_SUELO_OPTIONS.index(tipo_actual) if tipo_actual in DESC_TIPO_SUELO_OPTIONS else 0
+                desc_tipo = st.selectbox("Tipo de grano", DESC_TIPO_SUELO_OPTIONS, index=tipo_idx,
+                                          key=f"desc_tipo_{muestra_id}", format_func=lambda v: v or "— Seleccionar —")
+                grueso = _es_grueso(desc_tipo)
 
-            # Qué campos aparecen después depende del tipo de grano elegido arriba — grueso
-            # (grava/arena) se describe por angulosidad y cementación, fino (limo/arcilla/
-            # orgánico) por consistencia, y forma solo aplica a grava específicamente. Se arman
-            # como lista en vez de columnas fijas porque cuáles aparecen cambia, y se van
-            # dibujando en parejas de 2 columnas.
-            campos = []
-            if desc_tipo == "GRAVA":
-                campos.append(("Forma", DESC_FORMA_OPTIONS, "desc_forma", "forma"))
-            if grueso:
-                campos.append(("Angulosidad", DESC_ANGULOSIDAD_OPTIONS, "desc_angulosidad", "angulosidad"))
-            campos.append(("Color", DESC_COLOR_OPTIONS, "desc_color", "color"))
-            campos.append(("Subtonalidad", DESC_SUBTONALIDAD_OPTIONS, "desc_subtonalidad", "subton"))
-            campos.append(("Cementación", DESC_CEMENTACION_OPTIONS, "desc_cementacion", "cem") if grueso
-                           else ("Consistencia", DESC_CONSISTENCIA_OPTIONS, "desc_consistencia", "cons"))
-            campos.append(("Condición de humedad", DESC_HUMEDAD_OPTIONS, "desc_humedad", "hum"))
+                # Componente secundario (ej. "grava con algo de arena", "arcilla con algo de
+                # arena") — opcional, se oculta el selectbox si la casilla no está marcada en vez
+                # de forzar a elegir "— Seleccionar —" cada vez. Se excluye el tipo principal de
+                # la lista para no dejar armar "grava con algo de grava".
+                secundario_actual = (muestra.get("desc_tipo_secundario") or "").upper()
+                tiene_secundario = st.checkbox(
+                    "¿Tiene un componente secundario? (ej. grava con algo de arena, arcilla con algo de arena)",
+                    value=bool(secundario_actual), key=f"desc_tiene_sec_{muestra_id}")
+                desc_secundario = None
+                if tiene_secundario:
+                    opciones_sec = [o for o in DESC_TIPO_SECUNDARIO_OPTIONS if o != desc_tipo]
+                    sec_idx = opciones_sec.index(secundario_actual) if secundario_actual in opciones_sec else 0
+                    desc_secundario = st.selectbox("Componente secundario", opciones_sec, index=sec_idx,
+                                                    key=f"desc_sec_{muestra_id}")
 
-            valores = {}
-            for i in range(0, len(campos), 2):
-                for col, (label, opciones, campo_db, campo_key) in zip(st.columns(2), campos[i:i + 2]):
-                    with col:
-                        actual = (muestra.get(campo_db) or "").upper()
-                        idx = opciones.index(actual) if actual in opciones else 0
-                        # La key incluye si el grano es grueso/fino, para forzar un widget nuevo
-                        # si la persona cambia de escala — evita arrastrar en pantalla un valor
-                        # que ya no aplica (ej. una cementación al pasar de grava a limo).
-                        valores[campo_db] = st.selectbox(
-                            label, opciones, index=idx, key=f"{campo_key}_{muestra_id}_{grueso}",
-                            format_func=lambda v: v or "— Seleccionar —")
+                # Qué campos aparecen después depende del tipo de grano elegido arriba — grueso
+                # (grava/arena) se describe por angulosidad y cementación, fino (limo/arcilla/
+                # orgánico) por consistencia, y forma solo aplica a grava específicamente. Se
+                # arman como lista en vez de columnas fijas porque cuáles aparecen cambia, y se
+                # van dibujando en parejas de 2 columnas.
+                campos = []
+                if desc_tipo == "GRAVA":
+                    campos.append(("Forma", DESC_FORMA_OPTIONS, "desc_forma", "forma"))
+                if grueso:
+                    campos.append(("Angulosidad", DESC_ANGULOSIDAD_OPTIONS, "desc_angulosidad", "angulosidad"))
+                campos.append(("Color", DESC_COLOR_OPTIONS, "desc_color", "color"))
+                campos.append(("Subtonalidad", DESC_SUBTONALIDAD_OPTIONS, "desc_subtonalidad", "subton"))
+                campos.append(("Cementación", DESC_CEMENTACION_OPTIONS, "desc_cementacion", "cem") if grueso
+                               else ("Consistencia", DESC_CONSISTENCIA_OPTIONS, "desc_consistencia", "cons"))
+                campos.append(("Condición de humedad", DESC_HUMEDAD_OPTIONS, "desc_humedad", "hum"))
 
-            if st.button("Guardar descripción visual", icon=":material/save:", key=f"desc_visual_save_{muestra_id}"):
-                guardar = {"desc_tipo_suelo": desc_tipo, "desc_tipo_secundario": desc_secundario, **valores}
-                # Los campos que no aparecieron arriba para este tipo de grano (ej. forma si no
-                # es grava) se limpian en vez de dejar guardado un valor viejo que ya no se ve.
-                for campo_db in ("desc_forma", "desc_angulosidad", "desc_cementacion", "desc_consistencia"):
-                    guardar.setdefault(campo_db, None)
-                db.update_muestra(muestra["id"], **guardar)
-                st.success("Descripción visual guardada.")
-                st.rerun()
+                valores = {}
+                for i in range(0, len(campos), 2):
+                    for col, (label, opciones, campo_db, campo_key) in zip(st.columns(2), campos[i:i + 2]):
+                        with col:
+                            actual = (muestra.get(campo_db) or "").upper()
+                            idx = opciones.index(actual) if actual in opciones else 0
+                            # La key incluye si el grano es grueso/fino, para forzar un widget
+                            # nuevo si la persona cambia de escala — evita arrastrar en pantalla
+                            # un valor que ya no aplica (ej. una cementación al pasar de grava a
+                            # limo).
+                            valores[campo_db] = st.selectbox(
+                                label, opciones, index=idx, key=f"{campo_key}_{muestra_id}_{grueso}",
+                                format_func=lambda v: v or "— Seleccionar —")
+
+                if st.button("Guardar descripción visual", icon=":material/save:", key=f"desc_visual_save_{muestra_id}"):
+                    guardar = {"desc_tipo_suelo": desc_tipo, "desc_tipo_secundario": desc_secundario,
+                               "descripcion_visual": None, **valores}
+                    # Los campos que no aparecieron arriba para este tipo de grano (ej. forma si
+                    # no es grava) se limpian en vez de dejar guardado un valor viejo que ya no
+                    # se ve.
+                    for campo_db in ("desc_forma", "desc_angulosidad", "desc_cementacion", "desc_consistencia"):
+                        guardar.setdefault(campo_db, None)
+                    db.update_muestra(muestra["id"], **guardar)
+                    st.success("Descripción visual guardada.")
+                    st.rerun()
         else:
             descripcion_val = descripcion_visual_para_excel(muestra)
             if descripcion_val:
