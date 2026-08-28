@@ -2352,6 +2352,12 @@ def render_project_detail():
                             unsafe_allow_html=True)
             st.markdown(f'<div class="cell-muted"><strong>Profundidad</strong> {prof_txt} · {len(muestras)} muestra(s)</div>',
                         unsafe_allow_html=True)
+            # Avance por ENSAYO (no por muestra completa) — antes solo se veía entrando a la
+            # perforación ("Avance del sondeo"); se trae acá para no tener que entrar solo para
+            # ver esto.
+            ensayos_completados, ensayos_total = _perforacion_ensayos_progress(codigo, perf["codigo"])
+            st.markdown(f'<div class="cell-muted">{icon("check_circle", size=13)} {ensayos_completados} de '
+                        f'{ensayos_total} ensayos completados</div>', unsafe_allow_html=True)
             st.progress(perf_pct / 100)
 
             # Muestras de esta perforación, con chips de estado por ensayo (semáforo: rojo/
@@ -2370,16 +2376,12 @@ def render_project_detail():
                     st.session_state.selected_perforacion = perf["codigo"]
                     navigate("perforacion-detail")
             with bc2:
-                # Al laboratorista no le sirve tanto descargar el Excel de la bitácora (no la va
-                # a editar ni a entregar a nadie) — al Jefe y al Director Técnico sí les
-                # interesa el archivo real, para archivo/entrega.
-                if st.session_state.role != "laboratorista":
-                    filas_perf = _bitacora_filas_perforacion(codigo, perf["codigo"])
-                    excel_bytes, _truncado = generar_excel_bitacora_orden(project, filas_perf, {perf["tipo"]})
-                    st.download_button("Descargar bitácora", data=excel_bytes, icon=":material/download:",
-                                        file_name=f"{codigo} Bitacora de orden {perf['codigo']}.xlsx",
-                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                        use_container_width=True, key=f"dl_perf_{perf['codigo']}")
+                filas_perf = _bitacora_filas_perforacion(codigo, perf["codigo"])
+                excel_bytes, _truncado = generar_excel_bitacora_orden(project, filas_perf, {perf["tipo"]})
+                st.download_button("Descargar orden", data=excel_bytes, icon=":material/download:",
+                                    file_name=f"{codigo} Bitacora de orden {perf['codigo']}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    use_container_width=True, key=f"dl_perf_{perf['codigo']}")
 
 
 # ════════════════════════════════════════════════════════════════════
