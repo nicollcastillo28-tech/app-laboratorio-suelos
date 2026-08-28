@@ -11,6 +11,7 @@ import json
 import math
 import os
 import re
+import time
 import zipfile
 from datetime import date, datetime, timedelta
 from io import BytesIO
@@ -1031,7 +1032,27 @@ init_state()
 _try_restore_session_from_cookie()
 
 
+def _navegacion_muy_seguida():
+    """True si navigate()/go_back() se acaba de llamar hace instantes (menos de 400ms) — guarda
+    contra un solo toque que dispara el evento de click dos veces seguidas casi al mismo tiempo,
+    algo que se ha visto con los widgets nuevos de esta versión de Streamlit en pantallas
+    táctiles (ver también la investigación sobre checkboxes/date_input más arriba en el código).
+    Reportado como pantallas/tarjetas repetidas al navegar (una parece quedar "pegada" encima de
+    la otra) — la sospecha es que el segundo disparo del mismo toque arranca un rerun mientras el
+    del primero todavía no había terminado de reflejarse. No se puede reproducir de forma
+    confiable fuera de una tablet real, así que esto es una salvaguarda razonable, no una
+    corrección confirmada de la causa exacta: si el segundo disparo llega casi pegado al primero,
+    simplemente no hace nada — la persona solo tiene que volver a tocar si de verdad quería
+    navegar dos veces en menos de 400ms (poco probable para un toque humano intencional)."""
+    ahora = time.monotonic()
+    si_seguida = (ahora - st.session_state.get("_last_navigate_ts", 0)) < 0.4
+    st.session_state["_last_navigate_ts"] = ahora
+    return si_seguida
+
+
 def navigate(screen):
+    if _navegacion_muy_seguida():
+        return
     actual = st.session_state.get("screen")
     if actual and actual != screen:
         st.session_state.nav_stack.append(actual)
@@ -1043,6 +1064,8 @@ def navigate(screen):
 
 def go_back(fallback="home"):
     """Vuelve a la pantalla realmente anterior (pila de navegación) en vez de un destino fijo."""
+    if _navegacion_muy_seguida():
+        return
     if st.session_state.nav_stack:
         st.session_state.screen = st.session_state.nav_stack.pop()
     else:
