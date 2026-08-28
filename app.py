@@ -2354,37 +2354,26 @@ def render_project_detail():
                         unsafe_allow_html=True)
             st.progress(perf_pct / 100)
 
-            # Vista rápida de las muestras de esta perforación, sin salir de la pantalla de
-            # proyecto — el botón "Ver muestras →" de abajo sigue llevando al detalle completo
-            # (donde sí se puede abrir cada ensayo), esto es solo para echar un vistazo rápido.
+            # Muestras de esta perforación, con chips de estado por ensayo (semáforo: rojo/
+            # amarillo/verde) y botón "Abrir" directo a cada una — ya no hace falta pasar por la
+            # pantalla de la perforación solo para abrir un ensayo (ver
+            # _render_tabla_muestras_con_semaforo, la misma tabla de "Orden de Laboratorio").
+            # Esa pantalla se conserva para lo que sí sigue necesitando por fuera de esto:
+            # exportar el perfil completo, o que el Jefe agregue una muestra nueva.
             if muestras:
                 with st.expander(f"Ver muestras ({len(muestras)})", icon=":material/visibility:"):
-                    filas_vista = []
-                    for m in sorted(muestras, key=lambda m: m["numero"]):
-                        asignados = ", ".join(e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS) or "—"
-                        filas_vista.append((
-                            f'M-{m["numero"]}', f'{m["profundidad_de"]:.2f}–{m["profundidad_hasta"]:.2f} m',
-                            m["tipo_muestra"], asignados, STATUS_LABELS[compute_muestra_estado(m)],
-                        ))
-                    headers = ["MUESTRA", "PROFUNDIDAD", "TIPO", "ENSAYOS ASIGNADOS", "ESTADO"]
-                    st.markdown(param_table_ncol_html(headers, filas_vista), unsafe_allow_html=True)
+                    _render_tabla_muestras_con_semaforo(sorted(muestras, key=lambda m: m["numero"]))
 
-            # Al laboratorista no le sirve tanto descargar el Excel de la bitácora (no la va a
-            # editar ni a entregar a nadie) — y ahora que está el desplegable "Ver muestras" de
-            # arriba, un botón aparte para "verla" sería mostrar la misma información dos veces.
-            # Al Jefe y al Director Técnico sí les interesa el archivo real, para archivo/
-            # entrega, así que a ellos se les deja el botón de descarga de siempre.
-            if st.session_state.role == "laboratorista":
-                if st.button("Ver muestras →", key=f"open_perf_{perf['codigo']}", use_container_width=True):
+            bc1, bc2 = st.columns(2)
+            with bc1:
+                if st.button("Ver detalle del sondeo →", key=f"open_perf_{perf['codigo']}", use_container_width=True):
                     st.session_state.selected_perforacion = perf["codigo"]
                     navigate("perforacion-detail")
-            else:
-                bc1, bc2 = st.columns(2)
-                with bc1:
-                    if st.button("Ver muestras →", key=f"open_perf_{perf['codigo']}", use_container_width=True):
-                        st.session_state.selected_perforacion = perf["codigo"]
-                        navigate("perforacion-detail")
-                with bc2:
+            with bc2:
+                # Al laboratorista no le sirve tanto descargar el Excel de la bitácora (no la va
+                # a editar ni a entregar a nadie) — al Jefe y al Director Técnico sí les
+                # interesa el archivo real, para archivo/entrega.
+                if st.session_state.role != "laboratorista":
                     filas_perf = _bitacora_filas_perforacion(codigo, perf["codigo"])
                     excel_bytes, _truncado = generar_excel_bitacora_orden(project, filas_perf, {perf["tipo"]})
                     st.download_button("Descargar bitácora", data=excel_bytes, icon=":material/download:",
@@ -2547,6 +2536,43 @@ def _perforacion_ensayos_progress(codigo, perf_codigo):
     return completados, total_ensayos
 
 
+def _render_tabla_muestras_con_semaforo(muestras):
+    """Tabla de muestras con chips de color por ensayo (semáforo: rojo sin iniciar/amarillo en
+    proceso/verde finalizado, ver STATUS_BADGE) y un botón "Abrir" que va directo al detalle de
+    esa muestra — usada tanto en "Orden de Laboratorio" (Perforación) como en el desplegable
+    "Ver muestras" del detalle de Proyecto, para no mantener la misma tabla duplicada en dos
+    lugares con lógicas separadas."""
+    # Los ensayos asignados van apilados uno debajo del otro (ver .assigned-chip-row), así que la
+    # columna ya no necesita ancho para 3 chips lado a lado — se le puede devolver espacio a
+    # "Tipo"/"Profundidad" sin que sus encabezados se partan en varias líneas.
+    col_ratios = [0.8, 1.3, 1.4, 2.6, 1.0]
+    headers = st.columns(col_ratios)
+    for col, label in zip(headers, ["ID", "Tipo", "Profundidad", "Ensayos asignados", "Acción"]):
+        col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
+    for i, m in enumerate(muestras):
+        if i:
+            st.markdown(f'<hr style="margin:8px 0;border-color:{BORDER};">', unsafe_allow_html=True)
+        cols = st.columns(col_ratios, vertical_alignment="center")
+        cols[0].markdown(f'<span class="cell-id">M-{html.escape(str(m["numero"]))}</span>', unsafe_allow_html=True)
+        cols[1].markdown(f'<span class="cell-muted">{html.escape(m["tipo_muestra"])}</span>', unsafe_allow_html=True)
+        cols[2].markdown(f'<span class="cell-muted">{m["profundidad_de"]}–{m["profundidad_hasta"]} m</span>', unsafe_allow_html=True)
+        ensayos_sol = [e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS]
+        chip_parts = []
+        for e in ensayos_sol:
+            tipo_interno = SUPPORTED_ASSAY_MAP.get(e)
+            existing = get_assay(m["id_unico"], tipo_interno) if tipo_interno else None
+            status = existing["status"] if existing else "sin-iniciar"
+            chip_class = "assigned-chip assigned-chip-sm " + STATUS_BADGE[status].replace("badge-", "assigned-chip-")
+            chip_parts.append(f'<span class="{chip_class}">{html.escape(e)}</span>')
+        chips = (f'<div class="assigned-chip-row">{"".join(chip_parts)}</div>' if chip_parts
+                 else '<span class="cell-muted">—</span>')
+        cols[3].markdown(chips, unsafe_allow_html=True)
+        with cols[4]:
+            if st.button("Abrir", key=f"open_muestra_{m['id_unico']}", use_container_width=True):
+                st.session_state.selected_muestra_id = m["id_unico"]
+                navigate("muestra-detail")
+
+
 def render_perforacion_detail():
     codigo = st.session_state.selected_codigo
     perf_codigo = st.session_state.selected_perforacion
@@ -2613,36 +2639,7 @@ def render_perforacion_detail():
         st.info("Esta perforación todavía no tiene muestras. Usa la Bitácora para agregarlas.")
     else:
         with st.container(border=True):
-            # Los ensayos asignados van apilados uno debajo del otro (ver .assigned-chip-row),
-            # así que la columna ya no necesita ancho para 3 chips lado a lado — se le puede
-            # devolver espacio a "Tipo"/"Profundidad" sin que sus encabezados se partan en
-            # varias líneas (con la columna muy angosta, hasta "Tipo" se partía letra por letra).
-            col_ratios = [0.8, 1.3, 1.4, 2.6, 1.0]
-            headers = st.columns(col_ratios)
-            for col, label in zip(headers, ["ID", "Tipo", "Profundidad", "Ensayos asignados", "Acción"]):
-                col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
-            for i, m in enumerate(muestras):
-                if i:
-                    st.markdown(f'<hr style="margin:8px 0;border-color:{BORDER};">', unsafe_allow_html=True)
-                cols = st.columns(col_ratios, vertical_alignment="center")
-                cols[0].markdown(f'<span class="cell-id">M-{html.escape(str(m["numero"]))}</span>', unsafe_allow_html=True)
-                cols[1].markdown(f'<span class="cell-muted">{html.escape(m["tipo_muestra"])}</span>', unsafe_allow_html=True)
-                cols[2].markdown(f'<span class="cell-muted">{m["profundidad_de"]}–{m["profundidad_hasta"]} m</span>', unsafe_allow_html=True)
-                ensayos_sol = [e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS]
-                chip_parts = []
-                for e in ensayos_sol:
-                    tipo_interno = SUPPORTED_ASSAY_MAP.get(e)
-                    existing = get_assay(m["id_unico"], tipo_interno) if tipo_interno else None
-                    status = existing["status"] if existing else "sin-iniciar"
-                    chip_class = "assigned-chip assigned-chip-sm " + STATUS_BADGE[status].replace("badge-", "assigned-chip-")
-                    chip_parts.append(f'<span class="{chip_class}">{html.escape(e)}</span>')
-                chips = (f'<div class="assigned-chip-row">{"".join(chip_parts)}</div>' if chip_parts
-                         else '<span class="cell-muted">—</span>')
-                cols[3].markdown(chips, unsafe_allow_html=True)
-                with cols[4]:
-                    if st.button("Abrir", key=f"open_muestra_{m['id_unico']}", use_container_width=True):
-                        st.session_state.selected_muestra_id = m["id_unico"]
-                        navigate("muestra-detail")
+            _render_tabla_muestras_con_semaforo(muestras)
 
 
 # ════════════════════════════════════════════════════════════════════
