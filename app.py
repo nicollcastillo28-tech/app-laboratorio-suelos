@@ -655,16 +655,23 @@ def _es_grueso(tipo_suelo):
     return tipo_suelo in ("GRAVA", "ARENA")
 
 
-def descripcion_visual_estructurada(muestra):
+def descripcion_visual_estructurada(muestra, tipo_override=None):
     """Arma la frase legible en mayúscula (ej. 'LIMO DE COLOR MARRÓN ROJIZO DE CONSISTENCIA DURA
     EN CONDICIÓN SECA') a partir de los menús desplegables de la muestra — se usa tanto en la
     vista de solo lectura como en el Excel oficial. None si todavía no se ha elegido ninguna
-    opción."""
+    opción.
+
+    `tipo_override`: reemplaza SOLO la palabra inicial (ej. "GRAVA ARCILLOSA" en vez de "GRAVA")
+    sin tocar el resto de la frase — para armar la versión "según la clasificación calculada" (ver
+    descripcion_visual_calculada) sin duplicar toda esta lógica. El resto de la frase (forma,
+    angulosidad, cementación o consistencia) se sigue decidiendo con el tipo de grano que
+    realmente eligió el laboratorista a ojo, no con el override: son justo los campos que él
+    mismo llenó bajo ese tipo, y cambiar de escala a mitad de la frase dejaría campos vacíos."""
     # .upper(): datos de antes de este cambio (migración 0015) se guardaron en minúscula/mixta
     # (ej. "Limo", "Café oscuro") — se normalizan al leer para que la frase salga toda en
     # mayúscula igual que los datos nuevos, sin tener que migrar filas viejas en la base de datos.
     tipo = (muestra.get("desc_tipo_suelo") or "").upper() or None
-    partes = [tipo] if tipo else []
+    partes = [tipo_override or tipo] if (tipo_override or tipo) else []
 
     # Componente secundario (ej. "GRAVA CON ALGO DE ARENA", "ARCILLA CON ALGO DE ARENA") — un
     # segundo tipo de grano que también está presente en la muestra, sin ser el dominante.
@@ -712,6 +719,26 @@ def descripcion_visual_para_excel(muestra):
     muestra viene de antes de quitar el campo de notas libres (ver migración 0016), esas notas
     viejas se siguen mostrando como respaldo en vez de perderse."""
     return descripcion_visual_estructurada(muestra) or (muestra.get("descripcion_visual") or "").strip() or None
+
+
+def descripcion_visual_calculada(muestra):
+    """Segunda versión de la descripción visual, con el tipo de suelo que de verdad salió en la
+    clasificación USCS (calculada con los datos ya digitados de Granulometría/Límites, ver
+    clasificar_uscs) en vez del tipo que el laboratorista eligió a ojo antes de tener esos datos
+    — combinado con el resto de características, que sí siguen siendo juicio visual del
+    laboratorista (color, cementación o consistencia, humedad...). Se muestra AL LADO de
+    descripcion_visual_estructurada, no en su lugar — la inicial a ojo se conserva tal cual.
+    None mientras no haya datos suficientes para calcular la USCS."""
+    gran_assay = get_assay(muestra["id_unico"], "granulometria")
+    if not gran_assay:
+        return None
+    lim_assay = get_assay(muestra["id_unico"], "limites")
+    resultado = clasificar_uscs(gran_assay.get("data"), lim_assay.get("data") if lim_assay else None)
+    simbolo = resultado.get("simbolo")
+    if not simbolo:
+        return None
+    nombre = USCS_NOMBRES.get(simbolo, simbolo).upper()
+    return descripcion_visual_estructurada(muestra, tipo_override=nombre)
 
 # Filas de Límite Líquido (INV. E-125-13) y Límite Plástico (INV. E-126-13), con las celdas
 # reales de la plantilla CLASIFICACION_DE_SUELOS.xlsm (sección "LIMITES DE ATTERBERG", a la
@@ -3156,6 +3183,18 @@ def render_muestra_detail():
             else:
                 st.markdown(f'<div style="display:flex;align-items:center;gap:6px;color:{NEUTRAL};font-style:italic;">'
                              f'{icon("visibility_off", size=16)} El laboratorista aún no la digita</div>', unsafe_allow_html=True)
+            # Segunda versión, con el tipo de suelo que de verdad salió en la clasificación USCS
+            # en vez del que se eligió a ojo — se muestra debajo de la inicial, no en su lugar
+            # (ver descripcion_visual_calculada). Nada que mostrar hasta que haya datos de
+            # Granulometría/Límites suficientes para calcularla.
+            descripcion_calc = descripcion_visual_calculada(muestra)
+            if descripcion_calc:
+                st.markdown(f'<div style="display:flex;gap:10px;align-items:flex-start;background:{SECONDARY_CONTAINER};'
+                             f'border-radius:10px;padding:12px 14px;margin-top:8px;">'
+                             f'<span style="margin-top:2px;">{icon("science", size=18)}</span>'
+                             f'<div><div class="cell-muted" style="margin-bottom:2px;">Según la clasificación USCS calculada</div>'
+                             f'<div style="font-weight:600;line-height:1.5;color:{PRIMARY};">{html.escape(descripcion_calc)}</div></div></div>',
+                             unsafe_allow_html=True)
 
     if muestra["ensayos"].get("Granulometría"):
         with st.container(border=True):
@@ -4551,6 +4590,14 @@ def render_assay_form():
             st.markdown(f'<div class="cell-muted" style="margin-top:12px;">Descripción visual de la muestra</div>'
                         f'<div style="font-weight:600;">{html.escape(descripcion_visual_para_excel(muestra) or "— (el laboratorista aún no la digita) —")}</div>',
                         unsafe_allow_html=True)
+            # Ver descripcion_visual_calculada: la misma frase pero con el tipo de suelo que de
+            # verdad salió en la clasificación USCS, en vez del que se eligió a ojo — debajo de
+            # la inicial, no en su lugar.
+            descripcion_calc = descripcion_visual_calculada(muestra)
+            if descripcion_calc:
+                st.markdown(f'<div class="cell-muted" style="margin-top:10px;">Según la clasificación USCS calculada</div>'
+                            f'<div style="font-weight:600;color:{PRIMARY};">{html.escape(descripcion_calc)}</div>',
+                            unsafe_allow_html=True)
 
     if muestra is not None:
         with st.container(border=True):
