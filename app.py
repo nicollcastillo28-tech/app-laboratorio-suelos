@@ -497,38 +497,15 @@ st.markdown(f"""
 # cookie, si no cada "atrás" mandaría de vuelta al login.
 # Por último, un MutationObserver aparte se encarga de que la barra superior (topbar) y la de
 # navegación inferior (bottomnav) nunca queden duplicadas en pantalla, una encima de otra — se ve
-# reportado en tablet, acumulándose con cada navegación entre pantallas. render_topbar()/
-# render_bottomnav() se llaman una sola vez por corrida del script, así que no es un duplicado
-# real en Python — es el frontend de Streamlit el que a veces no retira el nodo del rerun
-# anterior antes de montar el del nuevo, y como el topbar es "position: sticky" cada copia se
-# queda pegada arriba en vez de perderse en el scroll. Como .st-key-topbar tiene key="topbar"
-# (única por diseño), cualquier copia de más es sobrante por definición.
-# OJO: este bloque va AFUERA del guard __geodeltaInputModeInit (que sigue protegiendo el resto
-# de abajo, pensado para correr una sola vez) — el iframe de components.html se vuelve a montar
-# en cada rerun (no es el mismo nodo persistiendo), así que un MutationObserver creado solo la
-# primera vez muere junto con ESE iframe en cuanto Streamlit lo reemplaza, y el guard evita que
-# se cree uno nuevo: con eso, la limpieza dejaba de funcionar después de la primera navegación
-# (que es justo lo que se reportó: "se van acumulando"). Por eso acá se desconecta el observer
-# viejo (si quedó alguno) y se crea uno nuevo SIEMPRE, para que la corrida más reciente sea la
-# que quede vigilando — nunca hay dos observers corriendo a la vez, pero siempre hay uno vivo.
+# reportado en tablet: cuando el WebSocket de Streamlit se reconecta (se cae y se recupera solo,
+# algo normal en redes de datos móviles o al volver de segundo plano), el frontend a veces vuelve
+# a montar el árbol completo sin retirar primero el anterior, y como el topbar es "position:
+# sticky", cada copia se queda pegada arriba — se ven 2 o 3 apiladas. Como .st-key-topbar tiene
+# key="topbar" (única por diseño), cualquier copia de más es sobrante por definición: se deja
+# solo la última (la más reciente) cada vez que el DOM cambia.
 components.html("""
 <script>
 (function() {
-    function dedupeStickyBars() {
-        ['topbar', 'bottomnav'].forEach(function(key) {
-            var bars = window.parent.document.querySelectorAll('.st-key-' + key);
-            for (var i = 0; i < bars.length - 1; i++) {
-                bars[i].remove();
-            }
-        });
-    }
-    dedupeStickyBars();
-    if (window.parent.__geodeltaDedupeObserver) {
-        window.parent.__geodeltaDedupeObserver.disconnect();
-    }
-    window.parent.__geodeltaDedupeObserver = new MutationObserver(dedupeStickyBars);
-    window.parent.__geodeltaDedupeObserver.observe(window.parent.document.body, {childList: true, subtree: true});
-
     if (window.parent.__geodeltaInputModeInit) return;
     window.parent.__geodeltaInputModeInit = true;
 
@@ -568,8 +545,21 @@ components.html("""
         }, 0);
     }
 
+    function dedupeStickyBars() {
+        ['topbar', 'bottomnav'].forEach(function(key) {
+            var bars = window.parent.document.querySelectorAll('.st-key-' + key);
+            for (var i = 0; i < bars.length - 1; i++) {
+                bars[i].remove();
+            }
+        });
+    }
+
     applyInputMode();
-    new MutationObserver(applyInputMode).observe(window.parent.document.body, {childList: true, subtree: true});
+    dedupeStickyBars();
+    new MutationObserver(function() {
+        applyInputMode();
+        dedupeStickyBars();
+    }).observe(window.parent.document.body, {childList: true, subtree: true});
     window.parent.document.addEventListener('keydown', focusNextOnEnter, true);
     window.parent.addEventListener('popstate', function() {
         window.parent.location.reload();
