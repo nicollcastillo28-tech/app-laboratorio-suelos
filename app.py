@@ -574,7 +574,7 @@ TIPO_PERFORACION_PREFIX = {"Sondeo": "S", "Apique": "AP", "Fuente/Cantera": "F"}
 # Texto que espera la lista desplegable de "tipo de perforación" en la plantilla
 # CLASIFICACION_DE_SUELOS.xlsm (celda D12, validada contra AG6:AG10: SONDEO/APIQUE/TRINCHERA/NQ/N.A.).
 TIPO_PERFORACION_EXCEL = {"Sondeo": "SONDEO", "Apique": "APIQUE", "Fuente/Cantera": "CANTERA"}
-TIPO_MUESTRA_OPTIONS = ["Shelby", "NQ", "SS", "N/A"]
+TIPO_MUESTRA_OPTIONS = ["Shelby", "NQ", "SS", "Lona", "Bolsa", "CBR", "N/A"]
 NORMA_PROYECTO_OPTIONS = ["IDU", "NTC", "INVIAS", "Otro"]
 
 # Lista de equipos del laboratorio. Por ahora sin código — agrega o edita los que tengas aquí.
