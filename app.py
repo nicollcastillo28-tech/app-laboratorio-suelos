@@ -826,26 +826,6 @@ def _celda_marcada(valor):
     return valor is not None and str(valor).strip() != ""
 
 
-def _normalizar_numero_muestra(valor):
-    """El cliente a veces ya escribe 'M1'/'m-1' en la columna NRO. DE MUESTRA — como la app le
-    antepone su propia 'M-' en toda pantalla donde se muestra el número de una muestra (ej. la
-    tabla "Ver muestras"), importar ese valor tal cual se veía duplicado ('M-M1'). Se le quita el
-    prefijo M de una sola letra al importar para que quede solo el número/código, igual que si
-    alguien lo hubiera digitado a mano sin ese prefijo."""
-    s = str(valor).strip()
-    # Solo se quita si justo después del prefijo viene un dígito (ej. "M1", "m-23") — si no, es
-    # más probable que la "M" sea parte real del código (ej. "MA6") y no un prefijo a quitar.
-    m = re.match(r"^[Mm][-.\s]*(\d.*)$", s)
-    return m.group(1).strip() if m else s
-
-
-def _fila_sin_ensayos(fila):
-    """True si esta fila no trae ningún ensayo marcado — esas filas no se importan: sin ensayo
-    asignado no hay nada que un laboratorista pueda digitar, así que solo estorbarían en la
-    bitácora en vez de ayudar."""
-    return not any(fila.get(e) for e in BITACORA_ENSAYOS)
-
-
 def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
     """Lee un archivo .xlsx ya diligenciado con la plantilla oficial GDA-FL-003 y devuelve
     (perforaciones, advertencias, encabezado).
@@ -884,7 +864,6 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
         # listar varias perforaciones distintas, una por fila (ej. apiques AP-1, AP-2, AP-3...),
         # no solo el uso "de fábrica" de una hoja = un sondeo con varias muestras de profundidad.
         filas_por_codigo, sin_codigo = {}, []
-        sin_ensayo = 0
         for i in range(BITACORA_XLSX_MAX_ROWS):
             r = 18 + i
             numero = ws[f"B{r}"].value
@@ -893,7 +872,7 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
             perf_r = ws[f"A{r}"].value
             perf_r = str(perf_r).strip() if perf_r and str(perf_r).strip() else None
             fila = {
-                "Número": _normalizar_numero_muestra(numero),
+                "Número": str(numero).strip(),
                 "Prof. De": to_float(ws[f"D{r}"].value, 0.0),
                 "Prof. A": to_float(ws[f"E{r}"].value, 0.0),
                 "Tipo de muestra": (str(ws[f"C{r}"].value).strip() if _celda_marcada(ws[f"C{r}"].value)
@@ -902,20 +881,11 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
             for label, col in BITACORA_XLSX_ENSAYO_COL.items():
                 fila[label] = _celda_marcada(ws[f"{col}{r}"].value)
             fila["Observaciones"] = ws[f"AH{r}"].value or ""
-            # Una muestra sin ningún ensayo marcado no se importa — no hay nada que digitar.
-            if _fila_sin_ensayos(fila):
-                sin_ensayo += 1
-                continue
             (filas_por_codigo.setdefault(perf_r, []) if perf_r else sin_codigo).append(fila)
 
-        if sin_ensayo:
-            advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': {sin_ensayo} muestra(s) sin ningún "
-                                 "ensayo marcado no se importaron.")
-
         if not filas_por_codigo and not sin_codigo:
-            if not sin_ensayo:
-                advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': no se encontró ninguna muestra "
-                                     "(columna NRO. DE MUESTRA vacía) — se omitió.")
+            advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': no se encontró ninguna muestra "
+                                 "(columna NRO. DE MUESTRA vacía) — se omitió.")
             continue
 
         if sin_codigo:
@@ -1084,7 +1054,7 @@ def parse_bitacora_orden_pdf(nombre_archivo, file_bytes):
     # medio con el ancla de "tipo de muestra" (la columna justo anterior) en su lugar.
     profundidad_x_izq = ((anclas_base.get("tipo_muestra", profundidad_x - 50) + profundidad_x) / 2)
 
-    filas_por_codigo, sin_codigo, sin_ensayo = {}, [], 0
+    filas_por_codigo, sin_codigo = {}, []
     for page in doc:
         words = page.get_text("words")
         y_min = header_y1 if header_y1 is not None and page.number == 0 else -1
@@ -1125,7 +1095,7 @@ def parse_bitacora_orden_pdf(nombre_archivo, file_bytes):
             obs_ws = [w for w in fila_words if w[0] >= zona_marcas_fin]
 
             fila = {
-                "Número": _normalizar_numero_muestra(numero_w[4]),
+                "Número": numero_w[4].strip(),
                 "Prof. De": to_float(prof_ws[0][4], 0.0) if len(prof_ws) > 0 else 0.0,
                 "Prof. A": to_float(prof_ws[1][4], 0.0) if len(prof_ws) > 1 else 0.0,
                 "Tipo de muestra": tipo_w[4].strip() if tipo_w else TIPO_MUESTRA_OPTIONS[0],
@@ -1142,24 +1112,14 @@ def parse_bitacora_orden_pdf(nombre_archivo, file_bytes):
             obs_ws.sort(key=lambda w: (w[1], w[0]))
             fila["Observaciones"] = " ".join(w[4] for w in obs_ws).strip()
 
-            # Una muestra sin ningún ensayo marcado no se importa — no hay nada que digitar.
-            if _fila_sin_ensayos(fila):
-                sin_ensayo += 1
-                continue
-
             perf_r = perf_w[4].strip() if perf_w and perf_w[4].strip() else None
             (filas_por_codigo.setdefault(perf_r, []) if perf_r else sin_codigo).append(fila)
 
     if not filas_por_codigo and not sin_codigo:
-        if sin_ensayo:
-            return [], [f"{nombre_archivo}: se reconoció la plantilla, pero ninguna muestra tenía algún "
-                         "ensayo marcado — no se importó nada."], encabezado
         return [], [f"{nombre_archivo}: se reconoció la plantilla pero no se encontró ninguna fila de "
                      "muestras — revisa el archivo a mano."], encabezado
 
     advertencias = []
-    if sin_ensayo:
-        advertencias.append(f"{nombre_archivo}: {sin_ensayo} muestra(s) sin ningún ensayo marcado no se importaron.")
     if sin_codigo:
         codigo_default = (max(filas_por_codigo, key=lambda c: len(filas_por_codigo[c])) if filas_por_codigo
                            else os.path.splitext(nombre_archivo)[0])
