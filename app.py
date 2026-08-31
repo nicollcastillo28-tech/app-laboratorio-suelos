@@ -12,13 +12,11 @@ import math
 import os
 import re
 import time
-import unicodedata
 import zipfile
 from datetime import date, datetime, timedelta
 from io import BytesIO
 
 import extra_streamlit_components as stx
-import fitz  # PyMuPDF — lectura de PDF para importar bitácoras (parse_bitacora_orden_pdf)
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -779,10 +777,7 @@ LIMITE_PLASTICO_N = 2
 BITACORA_ENSAYOS = [
     "Granulometría", "Pasa 200", "Humedad", "Límites de Atterberg", "Límite de contracción",
     "Materia orgánica", "Proctor", "CBR", "Compresión inconfinada", "Compresión en roca",
-    "Peso unitario", "Gravedad específica", "Consolidación", "Corte CD", "Corte CU", "Corte UU",
-    "Carga puntual", "Solidez en sulfatos", "Terrones de arcilla", "Alargamiento y aplanamiento",
-    "Caras fracturadas", "Azul de metileno", "Desgaste", "Micro deval", "Angularidad",
-    "Expansión Lambe", "Hidrometría", "Otro",
+    "Peso unitario", "Gravedad específica", "Consolidación", "Corte CD", "Corte CU", "Corte UU", "Otro",
 ]
 SUPPORTED_ASSAY_MAP = {
     "Granulometría": "granulometria", "Humedad": "humedad", "Peso unitario": "masa-unitaria",
@@ -792,16 +787,14 @@ SUPPORTED_ASSAY_MAP = {
 BITACORA_BASE_COLS = ["Número", "Prof. De", "Prof. A", "Tipo de muestra"] + BITACORA_ENSAYOS + ["Observaciones"]
 
 # Celdas de la plantilla oficial GDA-FL-003 (hoja "S1"): columna por ensayo, checkbox de
-# norma y checkbox de tipo de perforación.
+# norma y checkbox de tipo de perforación. Ensayos sin columna en la plantilla (p. ej.
+# Carga puntual, Desgaste) simplemente no se marcan.
 BITACORA_XLSX_ENSAYO_COL = {
     "Granulometría": "F", "Pasa 200": "G", "Humedad": "H", "Límites de Atterberg": "I",
     "Límite de contracción": "J", "Materia orgánica": "K", "Proctor": "L", "CBR": "M",
     "Compresión inconfinada": "N", "Compresión en roca": "O", "Peso unitario": "P",
     "Gravedad específica": "Q", "Consolidación": "R", "Corte CD": "S", "Corte CU": "T",
-    "Corte UU": "U", "Carga puntual": "V", "Solidez en sulfatos": "W", "Terrones de arcilla": "X",
-    "Alargamiento y aplanamiento": "Y", "Caras fracturadas": "Z", "Azul de metileno": "AA",
-    "Desgaste": "AB", "Micro deval": "AC", "Angularidad": "AD", "Expansión Lambe": "AE",
-    "Hidrometría": "AF", "Otro": "AG",
+    "Corte UU": "U", "Otro": "AG",
 }
 BITACORA_XLSX_NORMA_CELL = {"IDU": "AG10", "INVIAS": "AI10", "NTC": "AG12", "Otro": "AI12"}
 BITACORA_XLSX_TIPO_CELL = {"Sondeo": "H14", "Apique": "D14", "Fuente/Cantera": "AH14"}
@@ -857,20 +850,19 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
                 "numero_anio": ws["AG8"].value or "",
             }
 
-        tipo_hoja = next((t for t, celda in BITACORA_XLSX_TIPO_CELL.items() if _celda_marcada(ws[celda].value)), None)
+        tipo = next((t for t, celda in BITACORA_XLSX_TIPO_CELL.items() if _celda_marcada(ws[celda].value)), None)
 
-        # Se agrupa por el código que trae CADA fila en la columna N.° DE PERFORACIÓN, no por un
-        # solo código "dominante" para toda la hoja — algunos clientes usan una sola hoja para
-        # listar varias perforaciones distintas, una por fila (ej. apiques AP-1, AP-2, AP-3...),
-        # no solo el uso "de fábrica" de una hoja = un sondeo con varias muestras de profundidad.
-        filas_por_codigo, sin_codigo = {}, []
+        codigo_votos = {}
+        filas = []
         for i in range(BITACORA_XLSX_MAX_ROWS):
             r = 18 + i
             numero = ws[f"B{r}"].value
             if numero is None or str(numero).strip() == "":
                 continue
             perf_r = ws[f"A{r}"].value
-            perf_r = str(perf_r).strip() if perf_r and str(perf_r).strip() else None
+            if perf_r and str(perf_r).strip():
+                perf_r = str(perf_r).strip()
+                codigo_votos[perf_r] = codigo_votos.get(perf_r, 0) + 1
             fila = {
                 "Número": str(numero).strip(),
                 "Prof. De": to_float(ws[f"D{r}"].value, 0.0),
@@ -880,265 +872,29 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
             }
             for label, col in BITACORA_XLSX_ENSAYO_COL.items():
                 fila[label] = _celda_marcada(ws[f"{col}{r}"].value)
+            for label in BITACORA_ENSAYOS:
+                fila.setdefault(label, False)  # ensayos sin columna en la plantilla: no se marcan
             fila["Observaciones"] = ws[f"AH{r}"].value or ""
-            (filas_por_codigo.setdefault(perf_r, []) if perf_r else sin_codigo).append(fila)
+            filas.append(fila)
 
-        if not filas_por_codigo and not sin_codigo:
+        if not filas:
             advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': no se encontró ninguna muestra "
                                  "(columna NRO. DE MUESTRA vacía) — se omitió.")
             continue
 
-        if sin_codigo:
-            codigo_default = max(filas_por_codigo, key=lambda c: len(filas_por_codigo[c])) if filas_por_codigo else ws.title
-            filas_por_codigo.setdefault(codigo_default, []).extend(sin_codigo)
-            advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': alguna(s) fila(s) no traían código en "
-                                 f"la columna N.° DE PERFORACIÓN — se agruparon bajo '{codigo_default}', revísalo.")
-
-        for codigo, filas_codigo in filas_por_codigo.items():
-            tipo = tipo_hoja or next((t for t, prefix in TIPO_PERFORACION_PREFIX.items()
-                                       if codigo.upper().startswith(prefix)), None)
+        codigo = max(codigo_votos, key=codigo_votos.get) if codigo_votos else None
+        if not codigo:
+            codigo = ws.title
+            advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': la columna N.° DE PERFORACIÓN "
+                                 f"está vacía — se usó '{codigo}' como código, revísalo antes de guardar.")
+        if not tipo:
+            tipo = next((t for t, prefix in TIPO_PERFORACION_PREFIX.items() if codigo.upper().startswith(prefix)), None)
             if not tipo:
                 tipo = "Sondeo"
-                advertencias.append(f"{nombre_archivo} — hoja '{ws.title}' ({codigo}): no se marcó Sondeo/"
-                                     "Apique/Fuente-Cantera — se asumió Sondeo, revísalo antes de guardar.")
-            perforaciones.append({"tipo": tipo, "codigo": codigo, "filas": filas_codigo})
+                advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': no se marcó Sondeo/Apique/"
+                                     "Fuente-Cantera — se asumió Sondeo, revísalo antes de guardar.")
 
-    return perforaciones, advertencias, encabezado
-
-
-# ════════════════════════════════════════════════════════════════════
-# IMPORTAR BITÁCORA DE ORDEN DESDE PDF (impresión/exportación digital de la
-# misma plantilla GDA-FL-003 — NO sirve para un PDF escaneado/fotografiado,
-# solo para uno con texto real seleccionable, como el que genera Excel al
-# "Guardar como PDF"). Como un PDF no tiene celdas con coordenadas fijas
-# como el Excel, se reconstruye la tabla a partir de la posición (x, y) de
-# cada palabra: se ubica primero la fila de encabezados de columna (rotada
-# 90°, como en la plantilla) y se usa la posición horizontal de cada
-# etiqueta como el "ancla" de esa columna; luego cada palabra de las filas
-# de datos se asigna a la columna cuyo ancla tenga más cerca.
-# ════════════════════════════════════════════════════════════════════
-_PDF_ENSAYO_RULES = [
-    (("GRANULOMETRIA",), "Granulometría"), (("PASA",), "Pasa 200"), (("HUMEDAD",), "Humedad"),
-    (("ATTEMBERG",), "Límites de Atterberg"), (("CONTRACCION",), "Límite de contracción"),
-    (("MATERIA",), "Materia orgánica"), (("PROCTOR",), "Proctor"), (("CBR",), "CBR"),
-    (("COMPRESION", "INCONFINADA"), "Compresión inconfinada"), (("COMPRESION", "ROCA"), "Compresión en roca"),
-    (("PESO", "UNITARIO"), "Peso unitario"), (("GRAVEDAD",), "Gravedad específica"),
-    (("CONSOLIDACION",), "Consolidación"), (("CORTE", "CD"), "Corte CD"), (("CORTE", "CU"), "Corte CU"),
-    (("CORTE", "UU"), "Corte UU"), (("CARGA", "PUNTUAL"), "Carga puntual"),
-    (("SOLIDEZ",), "Solidez en sulfatos"), (("TERRONES",), "Terrones de arcilla"),
-    (("ALARGAMIENTO",), "Alargamiento y aplanamiento"), (("CARAS",), "Caras fracturadas"),
-    (("METILENO",), "Azul de metileno"), (("DESGASTE",), "Desgaste"), (("MICRO", "DEVAL"), "Micro deval"),
-    (("ANGULARIDAD",), "Angularidad"), (("LAMBE",), "Expansión Lambe"), (("HIDROMETRIA",), "Hidrometría"),
-    (("OTRO",), "Otro"),
-]
-_PDF_BASE_RULES = [
-    (("PERFORACION",), "perf"), (("NRO", "MUESTRA"), "numero"),
-    (("TIPO", "MUESTRA"), "tipo_muestra"), (("PROFUNDIDAD",), "profundidad"),
-]
-_PDF_TIPO_LABELS = {"APIQUE": "Apique", "SONDEO": "Sondeo", "CANTERA": "Fuente/Cantera"}
-
-
-def _norm_ascii(s):
-    return unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode().upper()
-
-
-def _pdf_cluster_by_x(entries, tol=8):
-    """entries: iterable de tuplas (x0,y0,x1,y1,texto). Agrupa las que están casi en la misma
-    x0 — así se reconstruyen las etiquetas de varias palabras (ej. "GRANULOMETRÍA" partida en
-    líneas por el texto rotado) como una sola columna."""
-    clusters = []
-    for e in sorted(entries, key=lambda w: w[0]):
-        match = next((c for c in clusters if abs(c["x0"] - e[0]) <= tol), None)
-        if match:
-            match["textos"].append(e[4])
-            match["x0"] = min(match["x0"], e[0])
-        else:
-            clusters.append({"x0": e[0], "textos": [e[4]]})
-    return clusters
-
-
-def _pdf_header_anchors(doc):
-    """Busca en las páginas del documento la banda de encabezados de columna (usa la palabra
-    "OBSERVACIONES" como referencia porque siempre está sola y sin rotar) y devuelve
-    (anclas_ensayo, anclas_base, x0_observaciones). En un PDF de varias páginas normalmente el
-    encabezado solo se imprime en la primera — las coordenadas encontradas ahí se reutilizan
-    para las demás páginas, porque el ancho de las columnas no cambia entre páginas."""
-    for page in doc:
-        words = page.get_text("words")
-        obs = next((w for w in words if _norm_ascii(w[4]) == "OBSERVACIONES"), None)
-        if not obs:
-            continue
-        # Márgenes calibrados contra la plantilla real: las etiquetas rotadas (ej. "NRO. DE
-        # MUESTRA") suben hasta ~35pt arriba de "OBSERVACIONES" y bajan hasta ~22pt abajo — un
-        # margen inferior más generoso alcanza a tocar la primera fila de datos real (que empieza
-        # justo unos ~8pt más abajo) y arrastra sus valores como si fueran parte del encabezado.
-        y0_banda, y1_banda = obs[1] - 35, obs[3] + 22
-        banda = [w for w in words if y0_banda <= w[1] <= y1_banda]
-        anclas_ensayo, anclas_base = {}, {}
-        for c in _pdf_cluster_by_x(banda):
-            toks = {_norm_ascii(t).strip("()") for t in c["textos"] if t.strip()}
-            encontrado = False
-            for needed, label in _PDF_ENSAYO_RULES:
-                if all(any(n in t for t in toks) for n in needed):
-                    anclas_ensayo[c["x0"]] = label
-                    encontrado = True
-                    break
-            if not encontrado:
-                for needed, campo in _PDF_BASE_RULES:
-                    if all(any(n in t for t in toks) for n in needed):
-                        anclas_base[campo] = c["x0"]
-                        break
-        if anclas_ensayo and "numero" in anclas_base and "profundidad" in anclas_base:
-            return anclas_ensayo, anclas_base, obs[0], y1_banda
-    return {}, {}, None, None
-
-
-def _pdf_tipo_perforacion(doc):
-    """El tipo se marca con una 'X' pegada al lado del nombre (APIQUE/SONDEO/FUENTE-CANTERA),
-    no en una columna de la tabla — se busca la etiqueta que tenga una 'X' cerca, en su misma
-    fila, en cualquier página (normalmente solo aparece en la primera)."""
-    for page in doc:
-        words = page.get_text("words")
-        for w in words:
-            etiqueta = _PDF_TIPO_LABELS.get(_norm_ascii(w[4]).rstrip("/"))
-            if not etiqueta:
-                continue
-            for w2 in words:
-                if w2[4].strip().upper() == "X" and abs(w2[1] - w[1]) <= 3 and 0 < w2[0] - w[2] <= 60:
-                    return etiqueta
-    return None
-
-
-def parse_bitacora_orden_pdf(nombre_archivo, file_bytes):
-    """Lee un PDF con la tabla de la plantilla GDA-FL-003 impresa/exportada digitalmente (texto
-    real seleccionable — NO un escaneo ni una foto) y devuelve (perforaciones, advertencias,
-    encabezado), con la misma forma que parse_bitacora_orden_xlsx().
-
-    Un PDF no tiene celdas con dirección fija como un Excel, así que la tabla se reconstruye por
-    posición: cada palabra se asigna a la columna (de encabezado o de ensayo) cuya ancla
-    horizontal tenga más cerca. El tipo de perforación (Sondeo/Apique/Fuente-Cantera) se lee una
-    sola vez para todo el archivo porque esa casilla no se repite por fila — pero las FILAS sí se
-    agrupan por su propio código en la columna N.° DE PERFORACIÓN, porque algunos clientes usan
-    un solo PDF para listar varias perforaciones distintas, una por fila (ej. apiques AP-1, AP-2,
-    AP-3...), no solo el uso "de fábrica" de una hoja = un sondeo con varias muestras de profundidad."""
-    try:
-        doc = fitz.open(stream=file_bytes, filetype="pdf")
-    except Exception:
-        return [], [f"{nombre_archivo}: no se pudo abrir como PDF (¿el archivo está dañado?)."], None
-
-    texto_completo = " ".join(_norm_ascii(page.get_text()) for page in doc)
-    if "GDA-FL-003" not in texto_completo and not ("BITACORA" in texto_completo and "ORDEN" in texto_completo):
-        return [], [f"{nombre_archivo}: no parece ser la plantilla GDA-FL-003 (Bitácora Orden) — se omitió."], None
-
-    anclas_ensayo, anclas_base, obs_x0, header_y1 = _pdf_header_anchors(doc)
-    if not anclas_ensayo:
-        return [], [f"{nombre_archivo}: se reconoció como plantilla GDA-FL-003 pero no se pudo leer la "
-                     "tabla de columnas (puede ser un PDF escaneado/una imagen, sin texto seleccionable) "
-                     "— este archivo hay que digitarlo a mano."], None
-
-    xs_ensayo = sorted(anclas_ensayo)
-    tol_ensayo = min((b - a for a, b in zip(xs_ensayo, xs_ensayo[1:])), default=14) / 2
-    primer_ensayo_x = xs_ensayo[0]
-    profundidad_x = anclas_base["profundidad"]
-    # La columna OBSERVACIONES es ancha y su etiqueta no arranca donde arranca el texto de datos
-    # debajo de ella (queda bastante más a la izquierda) — usar la posición de la etiqueta como
-    # límite cortaba las primeras palabras de observaciones largas. El límite real está justo
-    # después de donde podría caer una marca de la última columna de ensayo ("Otro").
-    zona_marcas_fin = max(xs_ensayo) + tol_ensayo + 3
-
-    encabezado = {"nombre": "", "localizacion": "", "numero_anio": ""}
-    tipo = _pdf_tipo_perforacion(doc)
-    # Límite izquierdo de la zona de profundidad: el ancla de "profundidad" es la etiqueta
-    # centrada sobre AMBAS sub-columnas (De/A), no el borde de la primera — usar esa x0 tal cual
-    # como límite izquierdo cortaba el valor "De" (que queda más a la izquierda). Se usa el punto
-    # medio con el ancla de "tipo de muestra" (la columna justo anterior) en su lugar.
-    profundidad_x_izq = ((anclas_base.get("tipo_muestra", profundidad_x - 50) + profundidad_x) / 2)
-
-    filas_por_codigo, sin_codigo = {}, []
-    for page in doc:
-        words = page.get_text("words")
-        y_min = header_y1 if header_y1 is not None and page.number == 0 else -1
-        candidatas = [w for w in words if w[1] > y_min]
-
-        # Filas ancladas en la columna NRO. DE MUESTRA: es la más confiable para ubicar dónde
-        # empieza cada fila (un solo valor corto, bien separado de la siguiente fila) — el resto
-        # de palabras de la página se asignan luego a la fila cuyo ancla y0 tengan más cerca, en
-        # vez de agruparlas con un barrido único de arriba a abajo, que fallaba cuando las
-        # observaciones largas se parten en dos líneas dentro de la misma fila (esas líneas caen
-        # más abajo que el resto de la fila y un barrido simple las mezclaba con la fila
-        # siguiente).
-        anclas_fila_y = sorted({w[1] for w in candidatas
-                                 if abs(w[0] - anclas_base["numero"]) <= 15 and w[4].strip()})
-        if not anclas_fila_y:
-            continue
-        paso_fila = min((b - a for a, b in zip(anclas_fila_y, anclas_fila_y[1:])), default=13.6)
-        filas_pagina = {y: [] for y in anclas_fila_y}
-        for w in candidatas:
-            y_cercana = min(anclas_fila_y, key=lambda y: abs(y - w[1]))
-            if abs(y_cercana - w[1]) <= paso_fila / 2:
-                filas_pagina[y_cercana].append(w)
-
-        for fila_words in filas_pagina.values():
-            fila_words.sort(key=lambda w: w[0])
-            numero_w = next((w for w in fila_words
-                              if abs(w[0] - anclas_base["numero"]) <= 15 and w[4].strip()), None)
-            if not numero_w:
-                continue
-            perf_w = next((w for w in fila_words
-                            if abs(w[0] - anclas_base.get("perf", -999)) <= 15), None)
-            tipo_w = next((w for w in fila_words
-                            if abs(w[0] - anclas_base.get("tipo_muestra", -999)) <= 20
-                            and profundidad_x_izq > w[0]), None)
-            prof_ws = sorted((w for w in fila_words if profundidad_x_izq <= w[0] < primer_ensayo_x - tol_ensayo),
-                              key=lambda w: w[0])
-            marcas = [w for w in fila_words if primer_ensayo_x - tol_ensayo <= w[0] < zona_marcas_fin]
-            obs_ws = [w for w in fila_words if w[0] >= zona_marcas_fin]
-
-            fila = {
-                "Número": numero_w[4].strip(),
-                "Prof. De": to_float(prof_ws[0][4], 0.0) if len(prof_ws) > 0 else 0.0,
-                "Prof. A": to_float(prof_ws[1][4], 0.0) if len(prof_ws) > 1 else 0.0,
-                "Tipo de muestra": tipo_w[4].strip() if tipo_w else TIPO_MUESTRA_OPTIONS[0],
-            }
-            for label in BITACORA_ENSAYOS:
-                fila[label] = False
-            for m in marcas:
-                mejor = min(xs_ensayo, key=lambda x: abs(x - m[0]))
-                if abs(mejor - m[0]) <= tol_ensayo:
-                    fila[anclas_ensayo[mejor]] = True
-            # Observaciones largas se parten en 2 líneas dentro de la misma fila — se ordena por
-            # (y, x) para leer la primera línea completa y luego la segunda, no una mezcla de
-            # ambas por su sola posición horizontal.
-            obs_ws.sort(key=lambda w: (w[1], w[0]))
-            fila["Observaciones"] = " ".join(w[4] for w in obs_ws).strip()
-
-            perf_r = perf_w[4].strip() if perf_w and perf_w[4].strip() else None
-            (filas_por_codigo.setdefault(perf_r, []) if perf_r else sin_codigo).append(fila)
-
-    if not filas_por_codigo and not sin_codigo:
-        return [], [f"{nombre_archivo}: se reconoció la plantilla pero no se encontró ninguna fila de "
-                     "muestras — revisa el archivo a mano."], encabezado
-
-    advertencias = []
-    if sin_codigo:
-        codigo_default = (max(filas_por_codigo, key=lambda c: len(filas_por_codigo[c])) if filas_por_codigo
-                           else os.path.splitext(nombre_archivo)[0])
-        filas_por_codigo.setdefault(codigo_default, []).extend(sin_codigo)
-        advertencias.append(f"{nombre_archivo}: alguna(s) fila(s) no traían código en la columna N.° DE "
-                             f"PERFORACIÓN — se agruparon bajo '{codigo_default}', revísalo.")
-    if not tipo:
-        advertencias.append(f"{nombre_archivo}: no se detectó Sondeo/Apique/Fuente-Cantera marcado — se "
-                             "asumió/infirió el tipo por cada código de perforación, revísalo antes de guardar.")
-
-    perforaciones = []
-    for codigo, filas_codigo in filas_por_codigo.items():
-        tipo_fila = tipo or next((t for t, prefix in TIPO_PERFORACION_PREFIX.items()
-                                   if codigo.upper().startswith(prefix)), None) or "Sondeo"
-        perforaciones.append({"tipo": tipo_fila, "codigo": codigo, "filas": filas_codigo})
-
-    advertencias.append(f"{nombre_archivo}: se leyó por posición de texto, no por celdas — revisa con "
-                         "cuidado antes de guardar, sobre todo si alguna fila trae observaciones largas "
-                         "o el archivo tiene un diseño distinto al habitual.")
+        perforaciones.append({"tipo": tipo, "codigo": codigo, "filas": filas})
 
     return perforaciones, advertencias, encabezado
 
@@ -3105,24 +2861,20 @@ def render_bitacora():
                 db.create_perforacion(project["id"], tipo, consecutivo, codigo_perf)
                 st.rerun()
 
-        with st.expander("Importar desde Excel o PDF (plantilla GDA-FL-003 ya diligenciada)", icon=":material/upload_file:"):
+        with st.expander("Importar desde Excel (plantilla GDA-FL-003 ya diligenciada)", icon=":material/upload_file:"):
             st.caption("Sube uno o varios archivos de la plantilla oficial \"Bitácora Orden para Ensayos "
                        "de Laboratorio\" que te haya mandado el cliente ya diligenciada — un archivo puede "
-                       "traer un solo sondeo o varias hojas/filas (una por sondeo/apique). Las perforaciones "
-                       "y muestras que traiga se agregan a la tabla de abajo para que las revises antes de "
+                       "traer un solo sondeo o varias hojas (una por sondeo/apique). Las perforaciones y "
+                       "muestras que traiga se agregan a la tabla de abajo para que las revises antes de "
                        "guardar — con solo subir el archivo todavía no se guarda nada.")
-            st.caption("El PDF solo funciona si tiene texto real seleccionable (uno que salga de Excel/Word "
-                       "\"Guardar como PDF\", por ejemplo) — uno escaneado o una foto del papel no sirve, "
-                       "porque no trae texto que se pueda leer, solo una imagen.")
-            archivos = st.file_uploader("Archivos .xlsx o .pdf", type=["xlsx", "pdf"], accept_multiple_files=True,
+            archivos = st.file_uploader("Archivos .xlsx", type=["xlsx"], accept_multiple_files=True,
                                           key=f"import_bitacora_{codigo}")
             if archivos and st.button("Importar de estos archivos", icon=":material/publish:",
                                         key=f"btn_import_bitacora_{codigo}"):
                 advertencias_totales = []
                 importadas = 0
                 for archivo in archivos:
-                    parser = parse_bitacora_orden_pdf if archivo.name.lower().endswith(".pdf") else parse_bitacora_orden_xlsx
-                    perfs_parseadas, advertencias, _hdr = parser(archivo.name, archivo.getvalue())
+                    perfs_parseadas, advertencias, _hdr = parse_bitacora_orden_xlsx(archivo.name, archivo.getvalue())
                     advertencias_totales.extend(advertencias)
                     for pp in perfs_parseadas:
                         codigo_norm = pp["codigo"].strip().upper()
