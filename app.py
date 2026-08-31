@@ -777,7 +777,10 @@ LIMITE_PLASTICO_N = 2
 BITACORA_ENSAYOS = [
     "Granulometría", "Pasa 200", "Humedad", "Límites de Atterberg", "Límite de contracción",
     "Materia orgánica", "Proctor", "CBR", "Compresión inconfinada", "Compresión en roca",
-    "Peso unitario", "Gravedad específica", "Consolidación", "Corte CD", "Corte CU", "Corte UU", "Otro",
+    "Peso unitario", "Gravedad específica", "Consolidación", "Corte CD", "Corte CU", "Corte UU",
+    "Carga puntual", "Solidez en sulfatos", "Terrones de arcilla", "Alargamiento y aplanamiento",
+    "Caras fracturadas", "Azul de metileno", "Desgaste", "Micro deval", "Angularidad",
+    "Expansión Lambe", "Hidrometría", "Otro",
 ]
 SUPPORTED_ASSAY_MAP = {
     "Granulometría": "granulometria", "Humedad": "humedad", "Peso unitario": "masa-unitaria",
@@ -787,14 +790,16 @@ SUPPORTED_ASSAY_MAP = {
 BITACORA_BASE_COLS = ["Número", "Prof. De", "Prof. A", "Tipo de muestra"] + BITACORA_ENSAYOS + ["Observaciones"]
 
 # Celdas de la plantilla oficial GDA-FL-003 (hoja "S1"): columna por ensayo, checkbox de
-# norma y checkbox de tipo de perforación. Ensayos sin columna en la plantilla (p. ej.
-# Carga puntual, Desgaste) simplemente no se marcan.
+# norma y checkbox de tipo de perforación.
 BITACORA_XLSX_ENSAYO_COL = {
     "Granulometría": "F", "Pasa 200": "G", "Humedad": "H", "Límites de Atterberg": "I",
     "Límite de contracción": "J", "Materia orgánica": "K", "Proctor": "L", "CBR": "M",
     "Compresión inconfinada": "N", "Compresión en roca": "O", "Peso unitario": "P",
     "Gravedad específica": "Q", "Consolidación": "R", "Corte CD": "S", "Corte CU": "T",
-    "Corte UU": "U", "Otro": "AG",
+    "Corte UU": "U", "Carga puntual": "V", "Solidez en sulfatos": "W", "Terrones de arcilla": "X",
+    "Alargamiento y aplanamiento": "Y", "Caras fracturadas": "Z", "Azul de metileno": "AA",
+    "Desgaste": "AB", "Micro deval": "AC", "Angularidad": "AD", "Expansión Lambe": "AE",
+    "Hidrometría": "AF", "Otro": "AG",
 }
 BITACORA_XLSX_NORMA_CELL = {"IDU": "AG10", "INVIAS": "AI10", "NTC": "AG12", "Otro": "AI12"}
 BITACORA_XLSX_TIPO_CELL = {"Sondeo": "H14", "Apique": "D14", "Fuente/Cantera": "AH14"}
@@ -817,6 +822,26 @@ def _celda_marcada(valor):
     """Cualquier contenido no vacío cuenta como 'marcado' — a mano la gente pone X, x, un
     visto, 'si', lo que sea; no necesariamente la 'X' exacta que pone la app al exportar."""
     return valor is not None and str(valor).strip() != ""
+
+
+def _normalizar_numero_muestra(valor):
+    """El cliente a veces ya escribe 'M1'/'m-1' en la columna NRO. DE MUESTRA — como la app le
+    antepone su propia 'M-' en toda pantalla donde se muestra el número de una muestra (ej. la
+    tabla "Ver muestras"), importar ese valor tal cual se veía duplicado ('M-M1'). Se le quita el
+    prefijo M de una sola letra al importar para que quede solo el número/código, igual que si
+    alguien lo hubiera digitado a mano sin ese prefijo."""
+    s = str(valor).strip()
+    # Solo se quita si justo después del prefijo viene un dígito (ej. "M1", "m-23") — si no, es
+    # más probable que la "M" sea parte real del código (ej. "MA6") y no un prefijo a quitar.
+    m = re.match(r"^[Mm][-.\s]*(\d.*)$", s)
+    return m.group(1).strip() if m else s
+
+
+def _fila_sin_ensayos(fila):
+    """True si esta fila no trae ningún ensayo marcado — esas filas no se importan: sin ensayo
+    asignado no hay nada que un laboratorista pueda digitar, así que solo estorbarían en la
+    bitácora en vez de ayudar."""
+    return not any(fila.get(e) for e in BITACORA_ENSAYOS)
 
 
 def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
@@ -850,21 +875,22 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
                 "numero_anio": ws["AG8"].value or "",
             }
 
-        tipo = next((t for t, celda in BITACORA_XLSX_TIPO_CELL.items() if _celda_marcada(ws[celda].value)), None)
+        tipo_hoja = next((t for t, celda in BITACORA_XLSX_TIPO_CELL.items() if _celda_marcada(ws[celda].value)), None)
 
-        codigo_votos = {}
-        filas = []
+        # Se agrupa por el código que trae CADA fila en la columna N.° DE PERFORACIÓN, no por un
+        # solo código "dominante" para toda la hoja — algunos clientes usan una sola hoja para
+        # listar varias perforaciones distintas, una por fila (ej. apiques AP-1, AP-2, AP-3...),
+        # no solo el uso "de fábrica" de una hoja = un sondeo con varias muestras de profundidad.
+        filas_por_codigo, sin_codigo, sin_ensayo = {}, [], 0
         for i in range(BITACORA_XLSX_MAX_ROWS):
             r = 18 + i
             numero = ws[f"B{r}"].value
             if numero is None or str(numero).strip() == "":
                 continue
             perf_r = ws[f"A{r}"].value
-            if perf_r and str(perf_r).strip():
-                perf_r = str(perf_r).strip()
-                codigo_votos[perf_r] = codigo_votos.get(perf_r, 0) + 1
+            perf_r = str(perf_r).strip() if perf_r and str(perf_r).strip() else None
             fila = {
-                "Número": str(numero).strip(),
+                "Número": _normalizar_numero_muestra(numero),
                 "Prof. De": to_float(ws[f"D{r}"].value, 0.0),
                 "Prof. A": to_float(ws[f"E{r}"].value, 0.0),
                 "Tipo de muestra": (str(ws[f"C{r}"].value).strip() if _celda_marcada(ws[f"C{r}"].value)
@@ -872,29 +898,37 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
             }
             for label, col in BITACORA_XLSX_ENSAYO_COL.items():
                 fila[label] = _celda_marcada(ws[f"{col}{r}"].value)
-            for label in BITACORA_ENSAYOS:
-                fila.setdefault(label, False)  # ensayos sin columna en la plantilla: no se marcan
             fila["Observaciones"] = ws[f"AH{r}"].value or ""
-            filas.append(fila)
+            # Una muestra sin ningún ensayo marcado no se importa — no hay nada que digitar.
+            if _fila_sin_ensayos(fila):
+                sin_ensayo += 1
+                continue
+            (filas_por_codigo.setdefault(perf_r, []) if perf_r else sin_codigo).append(fila)
 
-        if not filas:
-            advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': no se encontró ninguna muestra "
-                                 "(columna NRO. DE MUESTRA vacía) — se omitió.")
+        if sin_ensayo:
+            advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': {sin_ensayo} muestra(s) sin ningún "
+                                 "ensayo marcado no se importaron.")
+
+        if not filas_por_codigo and not sin_codigo:
+            if not sin_ensayo:
+                advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': no se encontró ninguna muestra "
+                                     "(columna NRO. DE MUESTRA vacía) — se omitió.")
             continue
 
-        codigo = max(codigo_votos, key=codigo_votos.get) if codigo_votos else None
-        if not codigo:
-            codigo = ws.title
-            advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': la columna N.° DE PERFORACIÓN "
-                                 f"está vacía — se usó '{codigo}' como código, revísalo antes de guardar.")
-        if not tipo:
-            tipo = next((t for t, prefix in TIPO_PERFORACION_PREFIX.items() if codigo.upper().startswith(prefix)), None)
+        if sin_codigo:
+            codigo_default = max(filas_por_codigo, key=lambda c: len(filas_por_codigo[c])) if filas_por_codigo else ws.title
+            filas_por_codigo.setdefault(codigo_default, []).extend(sin_codigo)
+            advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': alguna(s) fila(s) no traían código en "
+                                 f"la columna N.° DE PERFORACIÓN — se agruparon bajo '{codigo_default}', revísalo.")
+
+        for codigo, filas_codigo in filas_por_codigo.items():
+            tipo = tipo_hoja or next((t for t, prefix in TIPO_PERFORACION_PREFIX.items()
+                                       if codigo.upper().startswith(prefix)), None)
             if not tipo:
                 tipo = "Sondeo"
-                advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': no se marcó Sondeo/Apique/"
-                                     "Fuente-Cantera — se asumió Sondeo, revísalo antes de guardar.")
-
-        perforaciones.append({"tipo": tipo, "codigo": codigo, "filas": filas})
+                advertencias.append(f"{nombre_archivo} — hoja '{ws.title}' ({codigo}): no se marcó Sondeo/"
+                                     "Apique/Fuente-Cantera — se asumió Sondeo, revísalo antes de guardar.")
+            perforaciones.append({"tipo": tipo, "codigo": codigo, "filas": filas_codigo})
 
     return perforaciones, advertencias, encabezado
 
