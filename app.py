@@ -802,6 +802,104 @@ BITACORA_XLSX_MAX_ROWS = 14  # la plantilla trae 14 filas fijas (18 a 31)
 
 
 # ════════════════════════════════════════════════════════════════════
+# IMPORTAR BITÁCORA DE ORDEN DESDE EXCEL (plantilla oficial GDA-FL-003 ya
+# diligenciada, ej. por el cliente) — lee el mismo mapeo de celdas de arriba,
+# en sentido inverso a generar_excel_bitacora_orden().
+# ════════════════════════════════════════════════════════════════════
+def _hoja_es_bitacora_orden(ws):
+    """True si esta hoja tiene la forma de la plantilla GDA-FL-003 — para no intentar leer
+    como bitácora una hoja cualquiera de un archivo que no es esta plantilla."""
+    texto = " ".join(str(v) for v in (ws["AH1"].value, ws["G1"].value) if v).upper()
+    return "GDA-FL-003" in texto or ("BIT" in texto and "ORDEN" in texto)
+
+
+def _celda_marcada(valor):
+    """Cualquier contenido no vacío cuenta como 'marcado' — a mano la gente pone X, x, un
+    visto, 'si', lo que sea; no necesariamente la 'X' exacta que pone la app al exportar."""
+    return valor is not None and str(valor).strip() != ""
+
+
+def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
+    """Lee un archivo .xlsx ya diligenciado con la plantilla oficial GDA-FL-003 y devuelve
+    (perforaciones, advertencias, encabezado).
+
+    Un archivo "de fábrica" trae un solo sondeo/apique en su hoja "S1", pero en la práctica no
+    todos los clientes mandan los archivos igual (uno por sondeo, o varias hojas duplicadas y
+    renombradas dentro del mismo archivo) — por eso se recorren TODAS las hojas del archivo y se
+    toma cualquiera que tenga la forma de esta plantilla (_hoja_es_bitacora_orden).
+
+    perforaciones: lista de dicts {tipo, codigo, filas}. 'filas' ya viene en el mismo formato de
+    columnas que usa el editor de la bitácora (BITACORA_BASE_COLS), lista para pd.DataFrame(...).
+    encabezado: datos del encabezado de la primera hoja válida (nombre, localización...), solo
+    informativos, para que el Jefe compare contra el proyecto seleccionado antes de guardar —
+    no se usan para crear ni editar el proyecto."""
+    try:
+        wb = load_workbook(BytesIO(file_bytes), data_only=True)
+    except Exception:
+        return [], [f"{nombre_archivo}: no se pudo abrir como Excel (¿el archivo está dañado o no es .xlsx?)."], None
+
+    hojas_validas = [ws for ws in wb.worksheets if _hoja_es_bitacora_orden(ws)]
+    if not hojas_validas:
+        return [], [f"{nombre_archivo}: ninguna hoja parece ser la plantilla GDA-FL-003 (Bitácora Orden) — se omitió."], None
+
+    perforaciones, advertencias, encabezado = [], [], None
+    for ws in hojas_validas:
+        if encabezado is None:
+            encabezado = {
+                "nombre": ws["F10"].value or "", "localizacion": ws["E12"].value or "",
+                "numero_anio": ws["AG8"].value or "",
+            }
+
+        tipo = next((t for t, celda in BITACORA_XLSX_TIPO_CELL.items() if _celda_marcada(ws[celda].value)), None)
+
+        codigo_votos = {}
+        filas = []
+        for i in range(BITACORA_XLSX_MAX_ROWS):
+            r = 18 + i
+            numero = ws[f"B{r}"].value
+            if numero is None or str(numero).strip() == "":
+                continue
+            perf_r = ws[f"A{r}"].value
+            if perf_r and str(perf_r).strip():
+                perf_r = str(perf_r).strip()
+                codigo_votos[perf_r] = codigo_votos.get(perf_r, 0) + 1
+            fila = {
+                "Número": str(numero).strip(),
+                "Prof. De": to_float(ws[f"D{r}"].value, 0.0),
+                "Prof. A": to_float(ws[f"E{r}"].value, 0.0),
+                "Tipo de muestra": (str(ws[f"C{r}"].value).strip() if _celda_marcada(ws[f"C{r}"].value)
+                                    else TIPO_MUESTRA_OPTIONS[0]),
+            }
+            for label, col in BITACORA_XLSX_ENSAYO_COL.items():
+                fila[label] = _celda_marcada(ws[f"{col}{r}"].value)
+            for label in BITACORA_ENSAYOS:
+                fila.setdefault(label, False)  # ensayos sin columna en la plantilla: no se marcan
+            fila["Observaciones"] = ws[f"AH{r}"].value or ""
+            filas.append(fila)
+
+        if not filas:
+            advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': no se encontró ninguna muestra "
+                                 "(columna NRO. DE MUESTRA vacía) — se omitió.")
+            continue
+
+        codigo = max(codigo_votos, key=codigo_votos.get) if codigo_votos else None
+        if not codigo:
+            codigo = ws.title
+            advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': la columna N.° DE PERFORACIÓN "
+                                 f"está vacía — se usó '{codigo}' como código, revísalo antes de guardar.")
+        if not tipo:
+            tipo = next((t for t, prefix in TIPO_PERFORACION_PREFIX.items() if codigo.upper().startswith(prefix)), None)
+            if not tipo:
+                tipo = "Sondeo"
+                advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': no se marcó Sondeo/Apique/"
+                                     "Fuente-Cantera — se asumió Sondeo, revísalo antes de guardar.")
+
+        perforaciones.append({"tipo": tipo, "codigo": codigo, "filas": filas})
+
+    return perforaciones, advertencias, encabezado
+
+
+# ════════════════════════════════════════════════════════════════════
 # CARGA DE DATOS DESDE SUPABASE (una vez por rerun, en el enrutador principal)
 #
 # El resto de la app sigue leyendo st.session_state.projects/perforaciones/
@@ -2762,6 +2860,44 @@ def render_bitacora():
                 codigo_perf = f"{prefix}{consecutivo}"
                 db.create_perforacion(project["id"], tipo, consecutivo, codigo_perf)
                 st.rerun()
+
+        with st.expander("Importar desde Excel (plantilla GDA-FL-003 ya diligenciada)", icon=":material/upload_file:"):
+            st.caption("Sube uno o varios archivos de la plantilla oficial \"Bitácora Orden para Ensayos "
+                       "de Laboratorio\" que te haya mandado el cliente ya diligenciada — un archivo puede "
+                       "traer un solo sondeo o varias hojas (una por sondeo/apique). Las perforaciones y "
+                       "muestras que traiga se agregan a la tabla de abajo para que las revises antes de "
+                       "guardar — con solo subir el archivo todavía no se guarda nada.")
+            archivos = st.file_uploader("Archivos .xlsx", type=["xlsx"], accept_multiple_files=True,
+                                          key=f"import_bitacora_{codigo}")
+            if archivos and st.button("Importar de estos archivos", icon=":material/publish:",
+                                        key=f"btn_import_bitacora_{codigo}"):
+                advertencias_totales = []
+                importadas = 0
+                for archivo in archivos:
+                    perfs_parseadas, advertencias, _hdr = parse_bitacora_orden_xlsx(archivo.name, archivo.getvalue())
+                    advertencias_totales.extend(advertencias)
+                    for pp in perfs_parseadas:
+                        codigo_norm = pp["codigo"].strip().upper()
+                        perf = next((p for p in perforaciones if p["codigo"].strip().upper() == codigo_norm), None)
+                        if not perf:
+                            consecutivo = len([p for p in perforaciones if p["tipo"] == pp["tipo"]]) + 1
+                            perf = db.create_perforacion(project["id"], pp["tipo"], consecutivo, pp["codigo"])
+                            perforaciones.append(perf)
+                        key = f"{codigo}::{perf['codigo']}"
+                        df_actual = _bitacora_draft_df(key, st.session_state.muestras.setdefault(key, []))
+                        numeros_ya = set(df_actual["Número"].astype(str).str.strip())
+                        filas_nuevas = [f for f in pp["filas"] if f["Número"] not in numeros_ya]
+                        if filas_nuevas:
+                            df_actual = pd.concat([df_actual, pd.DataFrame(filas_nuevas)], ignore_index=True)
+                            df_actual = df_actual[df_actual["Número"].astype(str).str.strip() != ""]  # quita la fila vacía de arranque
+                            st.session_state.bitacora_draft[key] = df_actual[BITACORA_BASE_COLS]
+                            importadas += len(filas_nuevas)
+                if importadas:
+                    st.success(f"Se importaron {importadas} muestra(s). Revísalas en la tabla de abajo antes de guardar la bitácora.")
+                for adv in advertencias_totales:
+                    st.warning(adv)
+                if importadas:
+                    st.rerun()
     else:
         st.info("Estás viendo la bitácora en modo lectura. Solo el Jefe puede editarla.")
 
