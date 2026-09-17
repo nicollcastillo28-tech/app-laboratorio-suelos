@@ -4553,31 +4553,47 @@ def render_cbr_form(data, assay_id, muestra_id):
         _campo_antes_despues("cbr_masa_muestra_molde", "Masa de la muestra + molde (g)")
 
     with st.container(border=True):
-        st.markdown(card_header_html("water_drop", "Humedad antes de inmersión"), unsafe_allow_html=True)
-        st.caption("Se comparte con el ensayo de Contenido de Humedad de esta muestra — no es un dato "
-                   "propio del CBR. Si falta o está mal, corrígelo desde ese ensayo, no desde aquí.")
+        st.markdown(card_header_html("water_drop", "Humedad de inmersión"), unsafe_allow_html=True)
+        st.caption("\"Antes\" se comparte con el ensayo de Contenido de Humedad de esta muestra — no se "
+                   "digita aquí; si falta o está mal, corrígelo desde ese ensayo. \"Después\" sí es un dato "
+                   "propio del CBR.")
         hum_assay = get_assay(muestra_id, "humedad")
         hum_data = hum_assay.get("data", {}) if hum_assay else {}
-        if hum_data.get("hum_recipiente") or hum_data.get("hum_seco_mas_recipiente"):
-            rows = [
-                ("Recipiente no.", hum_data.get("hum_recipiente")),
-                ("Peso recipiente + suelo húmedo (g)", hum_data.get("hum_masa_humedo_mas_recipiente")),
-                ("Peso recipiente + suelo seco (g)", hum_data.get("hum_seco_mas_recipiente")),
-                ("Peso recipiente (g)", hum_data.get("hum_masa_recipiente")),
-                ("Humedad (%)", fmt_num(calcular_humedad_pct(hum_data), decimals=2)),
-            ]
-            st.markdown(param_table_html(rows), unsafe_allow_html=True)
+        hay_antes = bool(hum_data.get("hum_recipiente") or hum_data.get("hum_seco_mas_recipiente"))
+
+        head = st.columns([2, 1, 1])
+        head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Antes</div>', unsafe_allow_html=True)
+        head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Después</div>', unsafe_allow_html=True)
+
+        def _campo_humedad(label, valor_antes, key_despues, placeholder="0.00"):
+            row = st.columns([2, 1, 1])
+            row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+            texto_antes = html.escape(str(valor_antes)) if valor_antes not in (None, "") else "—"
+            color_antes = TEXT if valor_antes not in (None, "") else NEUTRAL
+            row[1].markdown(f'<div style="padding-top:8px;text-align:center;color:{color_antes};">{texto_antes}</div>',
+                             unsafe_allow_html=True)
+            data[key_despues] = row[2].text_input(label, value=data.get(key_despues, ""), key=f"{key_despues}_{assay_id}",
+                                                    label_visibility="collapsed", placeholder=placeholder)
+
+        _campo_humedad("Recipiente", hum_data.get("hum_recipiente") if hay_antes else None,
+                       "cbr_desp_recipiente", placeholder="839")
+        _campo_humedad("Peso recipiente + suelo húmedo (g)",
+                       hum_data.get("hum_masa_humedo_mas_recipiente") if hay_antes else None, "cbr_desp_masa_humedo")
+        _campo_humedad("Peso recipiente + suelo seco (g)",
+                       hum_data.get("hum_seco_mas_recipiente") if hay_antes else None, "cbr_desp_masa_seco")
+        _campo_humedad("Peso recipiente (g)", hum_data.get("hum_masa_recipiente") if hay_antes else None,
+                       "cbr_desp_masa_recipiente")
+
+        if hay_antes:
+            row = st.columns([2, 1, 1])
+            row[0].markdown('<div style="padding-top:8px;">Humedad (%)</div>', unsafe_allow_html=True)
+            row[1].markdown(f'<div style="padding-top:8px;text-align:center;font-weight:700;">'
+                             f'{fmt_num(calcular_humedad_pct(hum_data), decimals=2)}</div>', unsafe_allow_html=True)
+            row[2].markdown(f'<div style="padding-top:8px;text-align:center;color:{NEUTRAL};">—</div>', unsafe_allow_html=True)
         else:
             st.markdown(f'<div style="display:flex;align-items:center;gap:6px;color:{NEUTRAL};font-style:italic;">'
                          f'{icon("visibility_off", size=16)} El ensayo de Contenido de Humedad de esta muestra '
                          f'todavía no tiene datos</div>', unsafe_allow_html=True)
-
-    with st.container(border=True):
-        st.markdown(card_header_html("water_drop", "Humedad después de inmersión"), unsafe_allow_html=True)
-        _campo("cbr_desp_recipiente", "Recipiente", placeholder="839")
-        _campo("cbr_desp_masa_humedo", "Peso recipiente + suelo húmedo (g)")
-        _campo("cbr_desp_masa_seco", "Peso recipiente + suelo seco (g)")
-        _campo("cbr_desp_masa_recipiente", "Peso recipiente (g)")
 
     with st.container(border=True):
         st.markdown(card_header_html("straighten", "Datos de Expansión"), unsafe_allow_html=True)
@@ -4752,29 +4768,24 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             ]
             st.markdown(param_table_html(rows), unsafe_allow_html=True)
         with st.container(border=True):
-            st.markdown(card_header_html("water_drop", "Humedad antes de inmersión"), unsafe_allow_html=True)
-            st.caption("Compartida con el ensayo de Contenido de Humedad de esta muestra.")
+            st.markdown(card_header_html("water_drop", "Humedad de inmersión"), unsafe_allow_html=True)
+            st.caption("\"Antes\" se comparte con el ensayo de Contenido de Humedad de esta muestra.")
             hum_data = (get_assay(muestra_id, "humedad") or {}).get("data", {}) if muestra_id else {}
-            if hum_data.get("hum_recipiente") or hum_data.get("hum_seco_mas_recipiente"):
-                rows = [
-                    ("Recipiente no.", hum_data.get("hum_recipiente")),
-                    ("Peso recipiente + suelo húmedo (g)", hum_data.get("hum_masa_humedo_mas_recipiente")),
-                    ("Peso recipiente + suelo seco (g)", hum_data.get("hum_seco_mas_recipiente")),
-                    ("Peso recipiente (g)", hum_data.get("hum_masa_recipiente")),
-                    ("Humedad (%)", fmt_num(calcular_humedad_pct(hum_data), decimals=2)),
-                ]
-                st.markdown(param_table_html(rows), unsafe_allow_html=True)
-            else:
-                st.markdown(f'<div style="color:{NEUTRAL};font-style:italic;">— sin datos —</div>', unsafe_allow_html=True)
-        with st.container(border=True):
-            st.markdown(card_header_html("water_drop", "Humedad después de inmersión"), unsafe_allow_html=True)
+            hay_antes = bool(hum_data.get("hum_recipiente") or hum_data.get("hum_seco_mas_recipiente"))
             rows = [
-                ("Recipiente", data.get("cbr_desp_recipiente")),
-                ("Peso recipiente + suelo húmedo (g)", data.get("cbr_desp_masa_humedo")),
-                ("Peso recipiente + suelo seco (g)", data.get("cbr_desp_masa_seco")),
-                ("Peso recipiente (g)", data.get("cbr_desp_masa_recipiente")),
+                ("Recipiente", hum_data.get("hum_recipiente") if hay_antes else None, data.get("cbr_desp_recipiente")),
+                ("Peso recipiente + suelo húmedo (g)",
+                 hum_data.get("hum_masa_humedo_mas_recipiente") if hay_antes else None, data.get("cbr_desp_masa_humedo")),
+                ("Peso recipiente + suelo seco (g)",
+                 hum_data.get("hum_seco_mas_recipiente") if hay_antes else None, data.get("cbr_desp_masa_seco")),
+                ("Peso recipiente (g)", hum_data.get("hum_masa_recipiente") if hay_antes else None,
+                 data.get("cbr_desp_masa_recipiente")),
             ]
-            st.markdown(param_table_html(rows), unsafe_allow_html=True)
+            if hay_antes:
+                rows.append(("Humedad (%)", fmt_num(calcular_humedad_pct(hum_data), decimals=2), None))
+            st.markdown(param_table_ncol_html(("PARÁMETRO", "ANTES", "DESPUÉS"), rows), unsafe_allow_html=True)
+            if not hay_antes:
+                st.caption("El ensayo de Contenido de Humedad de esta muestra todavía no tiene datos.")
         with st.container(border=True):
             st.markdown(card_header_html("straighten", "Datos de Expansión"), unsafe_allow_html=True)
             rows = [
