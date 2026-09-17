@@ -559,12 +559,13 @@ SIEVES = [
     ("s_60", "No. 60", "0.25", "E32"), ("s_100", "No. 100", "0.149", "E33"), ("s_200", "No. 200", "0.075", "E34"),
 ]
 
-ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR"}
+ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo"}
 NORMAS_ENSAYO = {
     "granulometria": ["INV-214-13", "INV.E-213-13", "INV.E 123-13"],
     "humedad": ["INV E-122", "ASTM D2216"],
     "masa-unitaria": ["INV E-202", "ASTM D1188"],
     "cbr": ["INV E-148", "ASTM D1883"],
+    "corte-directo": ["INV E-154", "ASTM D3080"],
 }
 STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado"}
 STATUS_BADGE = {"sin-iniciar": "badge-danger", "en-proceso": "badge-warning", "finalizado": "badge-success"}
@@ -617,6 +618,12 @@ EQUIPO_CBR = [
     "Trípode con extensómetro", "Balanza digital 0.01g", "Balanza digital 0.1g",
     "Horno de secado", "Cronómetro",
 ]
+
+# Equipos usados en Corte Directo (INV E-154), leídos del formato físico en papel que se llena a
+# mano — todavía no hay una plantilla de Excel oficial conectada a este ensayo (ver
+# render_corte_directo_form), así que estos campos pueden necesitar ajuste cuando se consiga esa
+# plantilla, igual que le pasó a CBR con su primera versión armada solo a partir de una captura.
+EQUIPO_CORTE_DIRECTO = ["Balanza GDA-E-013", "Balanza GDA-E-003", "Horno GDA-E-004"]
 
 # ════════════════════════════════════════════════════════════════════
 # DESCRIPCIÓN VISUAL ESTRUCTURADA (menús desplegables en vez de texto libre) — para poder
@@ -785,6 +792,11 @@ BITACORA_ENSAYOS = [
 SUPPORTED_ASSAY_MAP = {
     "Granulometría": "granulometria", "Humedad": "humedad", "Peso unitario": "masa-unitaria",
     "Límites de Atterberg": "limites", "Pasa 200": "pasa200", "CBR": "cbr",
+    # Las 3 casillas de la bitácora (Corte CD/CU/UU) comparten un solo ensayo de "Corte Directo"
+    # con un selector de modo adentro (ver render_corte_directo_form) — no son 3 formularios
+    # separados. Si una muestra tiene más de una marcada, "Abrir" en cualquiera de las 3 lleva al
+    # mismo ensayo, exactamente igual que Granulometría/Pasa 200 comparten datos hoy.
+    "Corte CD": "corte-directo", "Corte CU": "corte-directo", "Corte UU": "corte-directo",
 }
 
 BITACORA_BASE_COLS = ["Número", "Prof. De", "Prof. A", "Tipo de muestra"] + BITACORA_ENSAYOS + ["Observaciones"]
@@ -4335,6 +4347,35 @@ CBR_PENETRACION_FILAS = [
     ("0.1", "2.54"), ("0.125", "3.175"), ("0.15", "3.81"), ("0.175", "4.445"),
     ("0.2", "5.08"), ("0.3", "7.62"), ("0.4", "10.16"), ("0.5", "12.7"),
 ]
+
+# Corte Directo (INV E-154 / ASTM D3080) — armado a partir de un formato físico en papel (todavía
+# sin plantilla de Excel oficial conectada), así que estos campos pueden necesitar ajuste más
+# adelante. "Página 1" del formato: datos de la muestra + humedad inicial/final por cada una de
+# las 3 probetas ensayadas a distintos esfuerzos normales — no incluye las lecturas de
+# deformación/carga del ensayo en sí (esas quedan para cuando se digitalice esa parte).
+CORTE_TIPOS = ["CD", "CU", "UU"]
+CORTE_TIPO_LABELS = {
+    "CD": "Consolidada Drenada (CD)", "CU": "Consolidada No Drenada (CU)", "UU": "No Consolidada No Drenada (UU)",
+}
+CORTE_CONDICION_OPTIONS = ["Inalterada", "Remoldada", "Compactada"]
+CORTE_TEMP_SECADO_OPTIONS = ["60 °C (Método A)", "110 °C (Método B)"]
+CORTE_MUESTRA_CAMPOS = [
+    ("masa_inicial_anillo", "Masa muestra inicial + anillo (g)"),
+    ("masa_anillo", "Masa anillo (g)"),
+    ("altura_anillo", "Altura anillo (cm)"),
+    ("diametro_anillo", "Diámetro anillo (cm)"),
+    ("velocidad_corte", "Velocidad de corte (mm/min)"),
+    ("esfuerzo_normal", "Esfuerzo normal aplicado (kg/cm²)"),
+]
+CORTE_HUMEDAD_CAMPOS = [
+    ("hum_recipiente", "Recipiente No."),
+    ("hum_masa_humedo", "Masa muestra húmeda + recipiente (g)"),
+    ("hum_seco_17h", "Masa suelo seco + recipiente (g) — 17 horas"),
+    ("hum_seco_18h", "Masa suelo seco + recipiente (g) — 18 horas"),
+    ("hum_seco_19h", "Masa suelo seco + recipiente (g) — 19 horas"),
+    ("hum_masa_recipiente", "Masa del recipiente (g)"),
+]
+
 CAMPOS_REQUERIDOS_POR_TIPO = {
     "humedad": CAMPOS_REQUERIDOS_HUMEDAD,
     "pasa200": CAMPOS_REQUERIDOS_PASA200,
@@ -4630,6 +4671,65 @@ def render_cbr_form(data, assay_id, muestra_id):
     render_norma_selector("cbr", data, "cbr")
 
 
+def render_corte_directo_form(data, assay_id):
+    st.info("Este ensayo todavía no tiene una plantilla oficial de Excel conectada — los datos "
+            "se guardan aquí en la app mientras se arma esa plantilla.")
+
+    def _campo(key, label, placeholder="0.00"):
+        row = st.columns([2.2, 1])
+        row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+        data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                       label_visibility="collapsed", placeholder=placeholder)
+
+    def _radio(key, label, options):
+        actual = data.get(key, options[0])
+        data[key] = st.radio(label, options, index=options.index(actual) if actual in options else 0,
+                              key=f"{key}_{assay_id}", horizontal=True)
+
+    def _campo_inicial_final(key_base, label, placeholder="0.00"):
+        row = st.columns([2, 1, 1])
+        row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+        key_ini, key_fin = f"{key_base}_inicial", f"{key_base}_final"
+        data[key_ini] = row[1].text_input(f"{label} (inicial)", value=data.get(key_ini, ""),
+                                            key=f"{key_ini}_{assay_id}", label_visibility="collapsed",
+                                            placeholder=placeholder)
+        data[key_fin] = row[2].text_input(f"{label} (final)", value=data.get(key_fin, ""),
+                                            key=f"{key_fin}_{assay_id}", label_visibility="collapsed",
+                                            placeholder=placeholder)
+
+    with st.container(border=True):
+        st.markdown(card_header_html("science", "Datos del Ensayo"), unsafe_allow_html=True)
+        _radio("corte_tipo", "Tipo de corte directo", CORTE_TIPOS)
+        _radio("corte_condicion", "Condición de la muestra", CORTE_CONDICION_OPTIONS)
+        head = st.columns([2, 1, 1])
+        head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Inicial</div>', unsafe_allow_html=True)
+        head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Final</div>', unsafe_allow_html=True)
+        _campo_inicial_final("corte_temp", "Temperatura (°C)")
+        _campo_inicial_final("corte_hum", "Humedad (%)")
+
+    for i in (1, 2, 3):
+        with st.container(border=True):
+            st.markdown(card_header_html("science", f"Muestra {i} — Datos de la Muestra"), unsafe_allow_html=True)
+            for campo, label in CORTE_MUESTRA_CAMPOS:
+                _campo(f"corte_m{i}_{campo}", label)
+
+        with st.container(border=True):
+            st.markdown(card_header_html("water_drop", f"Muestra {i} — Contenido de Humedad"), unsafe_allow_html=True)
+            head = st.columns([2, 1, 1])
+            head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Inicial</div>', unsafe_allow_html=True)
+            head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Final</div>', unsafe_allow_html=True)
+            for campo, label in CORTE_HUMEDAD_CAMPOS:
+                _campo_inicial_final(f"corte_m{i}_{campo}", label)
+            _radio(f"corte_m{i}_temp_secado", "Temperatura de secado", CORTE_TEMP_SECADO_OPTIONS)
+
+    with st.container(border=True):
+        st.markdown(card_header_html("construction", "Máquina de Corte"), unsafe_allow_html=True)
+        _campo("corte_maquina", "Máquina de corte utilizada", placeholder="GDA-E-001")
+
+    render_equipo(data, "corte", EQUIPO_CORTE_DIRECTO)
+    render_norma_selector("corte-directo", data, "corte")
+
+
 def render_limites_form(data, assay_id):
     st.info("Estos datos se guardan tal cual y se llevan a la plantilla oficial de Excel — el Límite Líquido, el Límite Plástico y el Índice de Plasticidad los calcula el Excel, no la app.")
 
@@ -4757,7 +4857,7 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
             st.markdown(param_table_html(rows), unsafe_allow_html=True)
         equipos, norma = data.get("mu_equipos", []), data.get("mu_norma", "—")
-    else:  # "cbr"
+    elif tipo == "cbr":
         with st.container(border=True):
             st.markdown(card_header_html("science", "Datos Iniciales"), unsafe_allow_html=True)
             rows = [
@@ -4809,6 +4909,31 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                         for i, (pulg, _mm) in enumerate(CBR_PENETRACION_FILAS, start=1)]
             st.markdown(param_table_ncol_html(headers, pen_rows), unsafe_allow_html=True)
         equipos, norma = data.get("cbr_equipos", []), data.get("cbr_norma", "—")
+    else:  # "corte-directo"
+        with st.container(border=True):
+            st.markdown(card_header_html("science", "Datos del Ensayo"), unsafe_allow_html=True)
+            rows = [
+                ("Tipo de corte directo", CORTE_TIPO_LABELS.get(data.get("corte_tipo"), data.get("corte_tipo"))),
+                ("Condición de la muestra", data.get("corte_condicion")),
+                ("Temperatura (°C) — inicial", data.get("corte_temp_inicial")),
+                ("Temperatura (°C) — final", data.get("corte_temp_final")),
+                ("Humedad (%) — inicial", data.get("corte_hum_inicial")),
+                ("Humedad (%) — final", data.get("corte_hum_final")),
+                ("Máquina de corte utilizada", data.get("corte_maquina")),
+            ]
+            st.markdown(param_table_html(rows), unsafe_allow_html=True)
+        for i in (1, 2, 3):
+            with st.container(border=True):
+                st.markdown(card_header_html("science", f"Muestra {i} — Datos de la Muestra"), unsafe_allow_html=True)
+                rows = [(label, data.get(f"corte_m{i}_{campo}")) for campo, label in CORTE_MUESTRA_CAMPOS]
+                st.markdown(param_table_html(rows), unsafe_allow_html=True)
+            with st.container(border=True):
+                st.markdown(card_header_html("water_drop", f"Muestra {i} — Contenido de Humedad"), unsafe_allow_html=True)
+                hum_rows = [(label, data.get(f"corte_m{i}_{campo}_inicial"), data.get(f"corte_m{i}_{campo}_final"))
+                            for campo, label in CORTE_HUMEDAD_CAMPOS]
+                st.markdown(param_table_ncol_html(("PARÁMETRO", "INICIAL", "FINAL"), hum_rows), unsafe_allow_html=True)
+                st.caption(f"Temperatura de secado: {data.get(f'corte_m{i}_temp_secado') or '—'}")
+        equipos, norma = data.get("corte_equipos", []), data.get("corte_norma", "—")
 
     with st.container(border=True):
         st.markdown(card_header_html("rule", "Norma Aplicada"), unsafe_allow_html=True)
@@ -4954,6 +5079,8 @@ def render_assay_form():
             render_masa_unitaria_form(data, assay_id)
         elif assay["tipo"] == "cbr":
             render_cbr_form(data, assay_id, muestra_id)
+        elif assay["tipo"] == "corte-directo":
+            render_corte_directo_form(data, assay_id)
 
         with st.expander("Observaciones (opcional)", icon=":material/notes:", expanded=bool(assay.get("observations"))):
             observations = st.text_area("Observaciones", value=assay.get("observations", ""), label_visibility="collapsed",
