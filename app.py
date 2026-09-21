@@ -611,13 +611,13 @@ EQUIPO_LIMITES = [
 # Equipos reales usados en el ensayo de Peso Unitario Parafinado.
 EQUIPO_MASA_UNITARIA = ["Balanza GDA-E-011", "Termómetro GDA-E-126"]
 
-# CBR (INV E-148 / ASTM D1883) — todavía sin código interno asignado (a diferencia de los otros
-# EQUIPO_* de arriba); se deja con nombre genérico igual que EQUIPO_LIST hasta que se tenga el
-# código real de cada equipo.
+# Equipos reales del CBR (INV E-148 / ASTM D1883), tal como aparecen en el formato físico
+# "EQUIPOS UTILIZADOS", en el mismo orden (fila por fila).
 EQUIPO_CBR = [
-    "Prensa CBR", "Molde CBR", "Disco espaciador", "Pesas de sobrecarga",
-    "Trípode con extensómetro", "Balanza digital 0.01g", "Balanza digital 0.1g",
-    "Horno de secado", "Cronómetro",
+    "Horno GDA-E-007", "Balanza GDA-E-010", "Martillo GDA-E-387", "Tamiz N°4 GDA-E-038",
+    "Horno GDA-E-404", "Balanza GDA-E-011", "Martillo GDA-E-111", "Tamiz 3/8\" GDA-E-037",
+    "Pie de rey GDA-E-110", "Balanza GDA-E-012", "Celda de carga GDA-E-016", "Tamiz 3/4\" GDA-E-035",
+    "Máquina MULT GDA-E-008", "Deformímetro GDA-E-086", "Celda de carga GDA-E-017",
 ]
 
 # Equipos usados en Corte Directo (INV E-154), leídos del formato físico en papel que se llena a
