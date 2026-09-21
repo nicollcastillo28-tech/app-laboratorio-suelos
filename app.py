@@ -5333,7 +5333,7 @@ def render_assay_form():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
 
-    if es_supervisor and assay["tipo"] == "cbr" and muestra:
+    if assay["tipo"] == "cbr" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_cbr(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
