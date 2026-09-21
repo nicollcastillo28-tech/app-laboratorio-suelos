@@ -5466,7 +5466,11 @@ def _cons_humedad(data, prefijo):
 
 
 def _cons_gravedad(data):
-    """Gravedad específica corregida (misma fórmula de la plantilla GDA-FLC-009: Ws·ρ/(Wpw+Ws−Wpws)·K)."""
+    """Gravedad específica: la digitada directamente o, si no, la corregida con los datos del picnómetro
+    (misma fórmula de la plantilla GDA-FLC-009: Ws·ρ/(Wpw+Ws−Wpws)·K)."""
+    directa = to_float(data.get("cons_gs_directo"))
+    if directa:
+        return directa
     ws_, wpws, temp = (to_float(data.get(k)) for k in ("cons_pic_masa_seco", "cons_pic_masa_agua_suelo", "cons_pic_temp"))
     pic = to_float(data.get("cons_pic_no"))
     if None in (ws_, wpws, temp, pic) or int(pic) not in CONS_PIC_CALIBRACION:
@@ -5576,6 +5580,9 @@ def render_consolidacion_form(data, assay_id):
         _radio("cons_metodo", "Método utilizado", CONS_METODOS)
     with st.container(border=True):
         st.markdown(card_header_html("science", "Gravedad Específica"), unsafe_allow_html=True)
+        _campo("cons_gs_directo", "Gs (valor directo, opcional)", placeholder="2.65")
+        st.caption("Si ya tienes la gravedad específica del ensayo aparte, digítala arriba y se usa en el cálculo y en el Excel. "
+                   "Si la dejas vacía, se calcula con los datos del picnómetro de abajo.")
         for key, label in CONS_GS_CAMPOS:
             _campo(key, label)
     with st.container(border=True):
@@ -5662,7 +5669,8 @@ def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, obs
     for col in "BCDEFG":
         ws[f"{col}109"] = "=$AB$22"
     ws["Z30"] = "=100-Z28"
-    ws["K30"] = "=AB25"
+    gs_directo = to_float(data.get("cons_gs_directo"))
+    ws["K30"] = gs_directo if gs_directo else "=AB25"
 
     bio = BytesIO()
     wb.save(bio)
@@ -6070,7 +6078,7 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
             filas = ([("Condición inicial", data.get("cons_condicion")), ("Temperatura inicial (°C)", data.get("cons_temp_ini")),
                       ("Temperatura final (°C)", data.get("cons_temp_fin"))]
-                     + [(l, data.get(k)) for k, l in CONS_GS_CAMPOS]
+                     + [("Gs (valor directo)", data.get("cons_gs_directo"))] + [(l, data.get(k)) for k, l in CONS_GS_CAMPOS]
                      + [("Temperatura de secado", data.get("cons_temp_secado")), ("Método", data.get("cons_metodo")),
                         ("Consolidómetro", data.get("cons_consolidometro")), ("Precarga (g)", data.get("cons_precarga"))])
             st.markdown(param_table_html(filas), unsafe_allow_html=True)
