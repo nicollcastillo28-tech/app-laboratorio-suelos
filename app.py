@@ -559,13 +559,14 @@ SIEVES = [
     ("s_60", "No. 60", "0.25", "E32"), ("s_100", "No. 100", "0.149", "E33"), ("s_200", "No. 200", "0.075", "E34"),
 ]
 
-ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo"}
+ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica"}
 NORMAS_ENSAYO = {
     "granulometria": ["INV-214-13", "INV.E-213-13", "INV.E 123-13"],
     "humedad": ["INV E-122", "ASTM D2216"],
     "masa-unitaria": ["INV E-202", "ASTM D1188"],
     "cbr": ["INV E-148", "ASTM D1883"],
     "corte-directo": ["INV E-154", "ASTM D3080"],
+    "gravedad-especifica": ["INV E-128", "INV E-223", "ASTM D854", "ASTM C127"],
 }
 STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado"}
 STATUS_BADGE = {"sin-iniciar": "badge-danger", "en-proceso": "badge-warning", "finalizado": "badge-success"}
@@ -624,6 +625,27 @@ EQUIPO_CBR = [
 # render_corte_directo_form), así que estos campos pueden necesitar ajuste cuando se consiga esa
 # plantilla, igual que le pasó a CBR con su primera versión armada solo a partir de una captura.
 EQUIPO_CORTE_DIRECTO = ["Balanza GDA-E-013", "Balanza GDA-E-003", "Horno GDA-E-004"]
+
+# Gravedad Específica — dos variantes en el formato físico: la que pasa el tamiz No. 4 (finos,
+# con picnómetro) y la que lo retiene (gruesos, material sumergido).
+EQUIPO_GESP_FINOS = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Horno GDA-E-007", "Picnómetro",
+                     "Termómetro GDA-E-116", "Baño de María GDA-E-009"]
+EQUIPO_GESP_GRUESOS = ["Balanza GDA-E-012", "Balanza GDA-E-011", "Horno GDA-E-007",
+                       "Termómetro GDA-E-116", "Horno GDA-E-404"]
+GESP_OPCIONES = ["Pasa el tamiz No. 4 (finos)", "Retiene el tamiz No. 4 (gruesos)", "Ambos"]
+GESP_FINOS_CAMPOS = [
+    ("gesp_f_masa_seco", "Masa del suelo seco (g)"),
+    ("gesp_f_masa_pic_agua_suelo", "Masa del picnómetro + agua + suelo a la temperatura del ensayo (g)"),
+    ("gesp_f_masa_pic_agua", "Masa del picnómetro + agua a la temperatura del ensayo (g)"),
+    ("gesp_f_temp", "Temperatura del ensayo (°C)"),
+    ("gesp_f_pct_retenido", "% material retenido en el tamiz No. 4"),
+]
+GESP_GRUESOS_CAMPOS = [
+    ("gesp_g_masa_sss", "Masa del material saturado superficialmente seco (g)"),
+    ("gesp_g_masa_sumergido", "Masa del material sumergido en agua (g)"),
+    ("gesp_g_masa_seco", "Masa del material seco (g)"),
+    ("gesp_g_temp", "Temperatura del ensayo (°C)"),
+]
 
 # ════════════════════════════════════════════════════════════════════
 # DESCRIPCIÓN VISUAL ESTRUCTURADA (menús desplegables en vez de texto libre) — para poder
@@ -797,6 +819,7 @@ SUPPORTED_ASSAY_MAP = {
     # separados. Si una muestra tiene más de una marcada, "Abrir" en cualquiera de las 3 lleva al
     # mismo ensayo, exactamente igual que Granulometría/Pasa 200 comparten datos hoy.
     "Corte CD": "corte-directo", "Corte CU": "corte-directo", "Corte UU": "corte-directo",
+    "Gravedad específica": "gravedad-especifica",
 }
 
 BITACORA_BASE_COLS = ["Número", "Prof. De", "Prof. A", "Tipo de muestra"] + BITACORA_ENSAYOS + ["Observaciones"]
@@ -4730,6 +4753,36 @@ def render_corte_directo_form(data, assay_id):
     render_norma_selector("corte-directo", data, "corte")
 
 
+def render_gravedad_especifica_form(data, assay_id):
+    st.info("Este ensayo todavía no tiene una plantilla oficial de Excel conectada — los datos "
+            "se guardan aquí en la app mientras se arma esa plantilla.")
+
+    def _campos(titulo, icono, campos):
+        with st.container(border=True):
+            st.markdown(card_header_html(icono, titulo), unsafe_allow_html=True)
+            for key, label in campos:
+                row = st.columns([2.2, 1])
+                row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+                data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                               label_visibility="collapsed", placeholder="0.00")
+
+    with st.container(border=True):
+        st.markdown(card_header_html("science", "¿Cuál ensayo se va a hacer?"), unsafe_allow_html=True)
+        actual = data.get("gesp_sel", GESP_OPCIONES[0])
+        data["gesp_sel"] = st.radio("Ensayo", GESP_OPCIONES, index=GESP_OPCIONES.index(actual) if actual in GESP_OPCIONES else 0,
+                                     key=f"gesp_sel_{assay_id}", label_visibility="collapsed")
+
+    hace_finos = data["gesp_sel"] in (GESP_OPCIONES[0], GESP_OPCIONES[2])
+    hace_gruesos = data["gesp_sel"] in (GESP_OPCIONES[1], GESP_OPCIONES[2])
+    if hace_finos:
+        _campos("Gravedad Específica que pasa el tamiz No. 4", "science", GESP_FINOS_CAMPOS)
+        render_equipo(data, "gesp_finos", EQUIPO_GESP_FINOS)
+    if hace_gruesos:
+        _campos("Gravedad Específica que retiene el tamiz No. 4", "science", GESP_GRUESOS_CAMPOS)
+        render_equipo(data, "gesp_gruesos", EQUIPO_GESP_GRUESOS)
+    render_norma_selector("gravedad-especifica", data, "gesp")
+
+
 def render_limites_form(data, assay_id):
     st.info("Estos datos se guardan tal cual y se llevan a la plantilla oficial de Excel — el Límite Líquido, el Límite Plástico y el Índice de Plasticidad los calcula el Excel, no la app.")
 
@@ -4909,6 +4962,20 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                         for i, (pulg, _mm) in enumerate(CBR_PENETRACION_FILAS, start=1)]
             st.markdown(param_table_ncol_html(headers, pen_rows), unsafe_allow_html=True)
         equipos, norma = data.get("cbr_equipos", []), data.get("cbr_norma", "—")
+    elif tipo == "gravedad-especifica":
+        sel = data.get("gesp_sel", GESP_OPCIONES[0])
+        equipos = []
+        if sel in (GESP_OPCIONES[0], GESP_OPCIONES[2]):
+            with st.container(border=True):
+                st.markdown(card_header_html("science", "Gravedad Específica que pasa el tamiz No. 4"), unsafe_allow_html=True)
+                st.markdown(param_table_html([(label, data.get(key)) for key, label in GESP_FINOS_CAMPOS]), unsafe_allow_html=True)
+            equipos += data.get("gesp_finos_equipos", [])
+        if sel in (GESP_OPCIONES[1], GESP_OPCIONES[2]):
+            with st.container(border=True):
+                st.markdown(card_header_html("science", "Gravedad Específica que retiene el tamiz No. 4"), unsafe_allow_html=True)
+                st.markdown(param_table_html([(label, data.get(key)) for key, label in GESP_GRUESOS_CAMPOS]), unsafe_allow_html=True)
+            equipos += data.get("gesp_gruesos_equipos", [])
+        norma = data.get("gesp_norma", "—")
     else:  # "corte-directo"
         with st.container(border=True):
             st.markdown(card_header_html("science", "Datos del Ensayo"), unsafe_allow_html=True)
@@ -5081,6 +5148,8 @@ def render_assay_form():
             render_cbr_form(data, assay_id, muestra_id)
         elif assay["tipo"] == "corte-directo":
             render_corte_directo_form(data, assay_id)
+        elif assay["tipo"] == "gravedad-especifica":
+            render_gravedad_especifica_form(data, assay_id)
 
         with st.expander("Observaciones (opcional)", icon=":material/notes:", expanded=bool(assay.get("observations"))):
             observations = st.text_area("Observaciones", value=assay.get("observations", ""), label_visibility="collapsed",
