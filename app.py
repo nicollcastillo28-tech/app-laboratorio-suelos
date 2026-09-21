@@ -42,6 +42,7 @@ TEMPLATE_GESP_GRUESO = os.path.join(BASE_DIR, "templates", "GDA-FLC-028_gravedad
 TEMPLATE_GESP_ARCILLA = os.path.join(BASE_DIR, "templates", "GDA-FLC-006_gravedad_arcilla.xlsx")
 TEMPLATE_PROCTOR = os.path.join(BASE_DIR, "templates", "GDA-FLC-002_proctor_cbr.xlsm")
 TEMPLATE_MATERIA_ORGANICA = os.path.join(BASE_DIR, "templates", "GDA-FLC-003_materia_organica.xlsx")
+TEMPLATE_LIMITE_CONTRACCION = os.path.join(BASE_DIR, "templates", "GDA-FLC-022_limite_contraccion.xlsx")
 
 ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "laboratorista": "Laboratorista", "ingeniero": "Director Técnico"}
 ROLE_INICIALES = {"jefe": "JL", "laboratorista": "LB", "ingeniero": "DT"}
@@ -565,7 +566,7 @@ SIEVES = [
     ("s_60", "No. 60", "0.25", "E32"), ("s_100", "No. 100", "0.149", "E33"), ("s_200", "No. 200", "0.075", "E34"),
 ]
 
-ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor", "materia-organica": "Materia orgánica"}
+ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor", "materia-organica": "Materia orgánica", "limite-contraccion": "Límite de contracción"}
 NORMAS_ENSAYO = {
     "granulometria": ["INV-214-13", "INV.E-213-13", "INV.E 123-13"],
     "humedad": ["INV E-122", "ASTM D2216"],
@@ -575,6 +576,7 @@ NORMAS_ENSAYO = {
     "gravedad-especifica": ["INV E-222", "INV E-223", "INV E-128", "ASTM C128", "ASTM C127", "ASTM D854"],
     "proctor": ["INV E-141-13", "INV E-142-13"],
     "materia-organica": ["INV E-121-13", "ASTM D2974"],
+    "limite-contraccion": ["INV E-129-13", "ASTM D4943"],
 }
 STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado"}
 STATUS_BADGE = {"sin-iniciar": "badge-danger", "en-proceso": "badge-warning", "finalizado": "badge-success"}
@@ -667,6 +669,14 @@ MO_CAMPOS = [
     ("mo_masa_crisol_ignicion", "Masa del crisol + muestra de suelo después de ignición (g)"),
     ("mo_masa_crisol", "Masa del crisol (g)"),
 ]
+# Límite de contracción (INV E-129, método de la parafina) — plantilla GDA-FLC-022.
+LC_DATOS_RECIPIENTE = [("lc_volumen", "Volumen del recipiente (cm³)"), ("lc_masa_recipiente", "Masa del recipiente (g)")]
+LC_DATOS_PASTILLA = [
+    ("lc_masa_aire", "Masa en el aire (g)"), ("lc_masa_aire_parafinada", "Masa en el aire parafinada (g)"),
+    ("lc_masa_sumergida_parafinada", "Masa sumergida parafinada (g)"),
+]
+LC_HUMEDAD_FILAS = [("hum_humedo", "Masa suelo húmedo + recipiente (g)"), ("hum_seco", "Masa del suelo seco + recipiente (g)"),
+                    ("hum_recipiente", "Masa del recipiente (g)")]
 PROCTOR_METODOS = ["A", "B", "C"]
 PROCTOR_TAMICES = ["", "3/4\"", "3/8\"", "No. 4"]
 PROCTOR_TAMIZ_EXCEL = {"3/4\"": "¾ \"", "3/8\"": "⅜ \"", "No. 4": "N.4"}  # lista desplegable de L25
@@ -897,6 +907,7 @@ SUPPORTED_ASSAY_MAP = {
     "Corte Directo": "corte-directo",
     "Proctor": "proctor",
     "Materia orgánica": "materia-organica",
+    "Límite de contracción": "limite-contraccion",
 }
 
 
@@ -4104,13 +4115,12 @@ def _restaurar_orden_formato_condicional(xlsx_bytes, template_path):
     # con LEN(TRIM(E19))=0), así que las casillas G19:G23 se quedan verdes aunque estén llenas —
     # pasa incluso escribiendo directo en la plantilla original. Se reescribe la fórmula para que
     # siempre revise la celda misma (la primera del sqref), que es lo que la regla quiere decir.
+    # La fórmula relativa depende de qué celda toma Excel como base en reglas de varias áreas (varía
+    # según el orden de los rangos), así que en vez de apuntar a una celda se usa una fórmula que
+    # siempre revisa la celda misma: INDIRECT(ADDRESS(ROW(),COLUMN())).
     def reemplazo(m):
         sqref, cuerpo = m.group(1), m.group(2)
-        primera = re.match(r"\$?([A-Z]+)\$?(\d+)", sqref.split()[0])
-        if not primera:
-            return m.group(0)
-        celda = primera.group(1) + primera.group(2)
-        nuevo = re.sub(r"LEN\(TRIM\(\$?[A-Z]+\$?\d+\)\)=0", f"LEN(TRIM({celda}))=0", cuerpo)
+        nuevo = re.sub(r"LEN\(TRIM\(\$?[A-Z]+\$?\d+\)\)=0", "LEN(TRIM(INDIRECT(ADDRESS(ROW(),COLUMN()))))=0", cuerpo)
         return f'<conditionalFormatting sqref="{sqref}">{nuevo}</conditionalFormatting>'
 
     bio = BytesIO()
@@ -4480,6 +4490,45 @@ def generar_excel_gravedad_fino(codigo, perf_codigo, muestra, project, data, obs
               "N54": data.get("gesp_f_pct_retenido"), "AD30": data.get("gesp_f_temp")}
     return _generar_excel_gravedad(TEMPLATE_GESP_FINO, "GUIA", celdas, codigo, perf_codigo, muestra, project, data,
                                     observaciones_ensayo)
+
+
+def generar_excel_limite_contraccion(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    """Límite de contracción (GDA-FLC-022, INV E-129). Se llenan encabezado y datos; LC, R, Cv y Cl
+    los calcula el Excel."""
+    wb = load_workbook(TEMPLATE_LIMITE_CONTRACCION)
+    ws = wb["GUIA"]
+    ws["D6"] = project.get("cliente", "") if project else ""
+    ws["D7"] = project["nombre"] if project else codigo
+    ws["D8"] = project.get("correo_cliente", "") if project else ""
+    ws["D9"] = project.get("localizacion", "") if project else ""
+    if project and project.get("muestra_tomada_por"):
+        ws["D10"] = project["muestra_tomada_por"]
+    ws["L6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    ws["L7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
+    ws["L8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    ws["M9"] = project.get("numero", "") if project else ""
+    ws["N9"] = project.get("anio", "") if project else ""
+    perf = get_perforacion(codigo, perf_codigo)
+    ws["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
+    ws["F12"] = perf_codigo
+    ws["I12"] = muestra["numero"]
+    ws["L12"] = to_float(muestra.get("profundidad_de"))
+    ws["N12"] = to_float(muestra.get("profundidad_hasta"))
+    ws["D13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+    ws["F20"] = data.get("lc_recipiente") or None
+    ws["F21"] = to_float(data.get("lc_volumen"))
+    ws["F22"] = to_float(data.get("lc_masa_recipiente"))
+    ws["L20"] = to_float(data.get("lc_masa_aire"))
+    ws["L21"] = to_float(data.get("lc_masa_aire_parafinada"))
+    ws["L22"] = to_float(data.get("lc_masa_sumergida_parafinada"))
+    for col, tipo in (("E", "natural"), ("F", "contraccion")):
+        ws[f"{col}29"] = to_float(data.get(f"lc_{tipo}_hum_humedo"))
+        ws[f"{col}30"] = to_float(data.get(f"lc_{tipo}_hum_seco"))
+        ws[f"{col}31"] = to_float(data.get(f"lc_{tipo}_hum_recipiente"))
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_LIMITE_CONTRACCION)
 
 
 def generar_excel_materia_organica(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
@@ -5346,6 +5395,67 @@ def resultados_materia_organica(data):
     return [("Masa seca (g)", fmt_num(b - c)), ("Contenido de materia orgánica (%)", fmt_num((a - b) / (b - c) * 100, 2))]
 
 
+def resultados_limite_contraccion(data):
+    """Mismas fórmulas de la plantilla GDA-FLC-022 (parafina: 0.86 g/cm³, agua: 1 g/cm³)."""
+    def f(k):
+        return to_float(data.get(k))
+    vol, aire, aire_paraf, sum_paraf = f("lc_volumen"), f("lc_masa_aire"), f("lc_masa_aire_parafinada"), f("lc_masa_sumergida_parafinada")
+    h_c, s_c, r_c = f("lc_contraccion_hum_humedo"), f("lc_contraccion_hum_seco"), f("lc_contraccion_hum_recipiente")
+    if None in (vol, aire, aire_paraf, sum_paraf, h_c, s_c, r_c) or (s_c - r_c) == 0:
+        return []
+    vo = (aire_paraf - sum_paraf) - (aire_paraf - aire) / 0.86
+    if vo == 0:
+        return []
+    w_c = (h_c - s_c) / (s_c - r_c)
+    lc = w_c - (vol - vo) / (s_c - r_c)
+    r = (s_c - r_c) / vo
+    cv = (w_c - lc) * 100 * r
+    cl = 100 * (1 - (100 / (100 + cv)) ** (1 / 3))
+    return [("Volumen de la muestra sin parafina, Vo (cm³)", fmt_num(vo, 2)), ("Límite de contracción, LC (%)", fmt_num(lc * 100, 2)),
+            ("Relación de contracción, R", fmt_num(r, 3)), ("Cambio volumétrico, Cv (%)", fmt_num(cv, 2)),
+            ("Contracción lineal, Cl (%)", fmt_num(cl, 2))]
+
+
+def render_limite_contraccion_form(data, assay_id):
+    st.info("Formulario armado sobre la plantilla oficial GDA-FLC-022. El Excel para descargar está al final del ensayo.")
+
+    def _campo(key, label, placeholder="0.00"):
+        row = st.columns([2.2, 1])
+        row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+        data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                       label_visibility="collapsed", placeholder=placeholder)
+
+    with st.container(border=True):
+        st.markdown(card_header_html("science", "Datos del Recipiente"), unsafe_allow_html=True)
+        _campo("lc_recipiente", "N. recipiente", placeholder="1")
+        for key, label in LC_DATOS_RECIPIENTE:
+            _campo(key, label)
+    with st.container(border=True):
+        st.markdown(card_header_html("science", "Peso Unitario de la Muestra"), unsafe_allow_html=True)
+        for key, label in LC_DATOS_PASTILLA:
+            _campo(key, label)
+    with st.container(border=True):
+        st.markdown(card_header_html("water_drop", "Humedad"), unsafe_allow_html=True)
+        head = st.columns([2, 1, 1])
+        head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Natural</div>', unsafe_allow_html=True)
+        head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Contracción</div>', unsafe_allow_html=True)
+        for campo, label in LC_HUMEDAD_FILAS:
+            row = st.columns([2, 1, 1])
+            row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+            for col_i, tipo in ((1, "natural"), (2, "contraccion")):
+                key = f"lc_{tipo}_{campo}"
+                data[key] = row[col_i].text_input(f"{label} — {tipo}", value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                                   label_visibility="collapsed", placeholder="0.00")
+    with st.container(border=True):
+        st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+        filas = resultados_limite_contraccion(data)
+        if filas:
+            st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        else:
+            st.caption("Se muestran cuando estén digitados todos los datos de arriba.")
+    render_norma_selector("limite-contraccion", data, "lc")
+
+
 def render_materia_organica_form(data, assay_id):
     st.info("Formulario armado sobre la plantilla oficial GDA-FLC-003. El Excel para descargar está al final del ensayo.")
     with st.container(border=True):
@@ -5701,6 +5811,22 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                         for i, (pulg, _mm) in enumerate(CBR_PENETRACION_FILAS, start=1)]
             st.markdown(param_table_ncol_html(headers, pen_rows), unsafe_allow_html=True)
         equipos, norma = data.get("cbr_equipos", []), data.get("cbr_norma", "—")
+    elif tipo == "limite-contraccion":
+        with st.container(border=True):
+            st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
+            filas = [("N. recipiente", data.get("lc_recipiente"))] + [(l, data.get(k)) for k, l in LC_DATOS_RECIPIENTE + LC_DATOS_PASTILLA]
+            st.markdown(param_table_html(filas), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("water_drop", "Humedad"), unsafe_allow_html=True)
+            st.markdown(param_table_ncol_html(["PARÁMETRO", "NATURAL", "CONTRACCIÓN"],
+                                              [(l, data.get(f"lc_natural_{c}"), data.get(f"lc_contraccion_{c}")) for c, l in LC_HUMEDAD_FILAS]),
+                        unsafe_allow_html=True)
+        resultados = resultados_limite_contraccion(data)
+        if resultados:
+            with st.container(border=True):
+                st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+                st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        equipos, norma = [], data.get("lc_norma", "—")
     elif tipo == "materia-organica":
         with st.container(border=True):
             st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
@@ -5944,6 +6070,8 @@ def render_assay_form():
             render_proctor_form(data, assay_id)
         elif assay["tipo"] == "materia-organica":
             render_materia_organica_form(data, assay_id)
+        elif assay["tipo"] == "limite-contraccion":
+            render_limite_contraccion_form(data, assay_id)
 
         with st.expander("Observaciones (opcional)", icon=":material/notes:", expanded=bool(assay.get("observations"))):
             observations = st.text_area("Observaciones", value=assay.get("observations", ""), label_visibility="collapsed",
@@ -6060,6 +6188,16 @@ def render_assay_form():
             data=excel_bytes, file_name=f"Peso_unitario_parafinado_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
+
+    if assay["tipo"] == "limite-contraccion" and muestra:
+        st.markdown("---")
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        st.download_button(
+            "Descargar Excel (plantilla oficial de Límite de Contracción)", icon=":material/download:",
+            data=generar_excel_limite_contraccion(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            file_name=f"Limite_contraccion_{muestra['id_unico']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
+            key="dl_limite_contraccion")
 
     if assay["tipo"] == "materia-organica" and muestra:
         st.markdown("---")
