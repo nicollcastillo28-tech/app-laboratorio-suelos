@@ -4334,6 +4334,8 @@ def generar_excel_cbr(codigo, perf_codigo, muestra, project, data, observaciones
     pesas_antes = to_float(data.get("cbr_pesas_antes"))
     if pesas_antes is not None:
         ws["I39"] = pesas_antes
+    if data.get("cbr_rango"):
+        ws["I37"] = data["cbr_rango"]
     pesas_despues = to_float(data.get("cbr_pesas_despues"))
     if pesas_despues is not None:
         ws["I40"] = pesas_despues
@@ -4945,6 +4947,11 @@ def render_cbr_form(data, assay_id, muestra_id):
         head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Después</div>', unsafe_allow_html=True)
         _campo_antes_despues("cbr_pesas", "Pesas de sobrecarga (g)")
         _campo_antes_despues("cbr_tiempo_inmersion", "Tiempo de inmersión (días)")
+        opciones_rango = ["", "5 kN", "50 kN"]
+        actual_rango = data.get("cbr_rango", "")
+        data["cbr_rango"] = st.selectbox("Rango de la prensa", opciones_rango,
+                                          index=opciones_rango.index(actual_rango) if actual_rango in opciones_rango else 0,
+                                          key=f"cbr_rango_{assay_id}", format_func=lambda x: x or "— elegir —")
 
     with st.container(border=True):
         st.markdown(card_header_html("show_chart", "Penetración"), unsafe_allow_html=True)
