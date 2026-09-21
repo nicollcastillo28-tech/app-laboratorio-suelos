@@ -708,7 +708,7 @@ CONS_GS_CAMPOS = [
 # la deformación de la máquina). El tiempo ya viene en la plantilla; el bloque de 32 kg comparte la rejilla del de 16 kg.
 CONS_MAQ_BLOQUES = [("0,25 kg", "B", "C"), ("0,5 kg", "E", "F"), ("1,0 kg", "H", "I"), ("2,0 kg", "K", "L"),
                     ("4,0 kg", "N", "O"), ("8,0 kg", "Q", "R"), ("16 kg", "T", "U"), ("32 kg", "T", "X")]
-EQUIPO_CONSOLIDACION = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Termómetro GDA-E-126", "Horno GDA-E-007", "Horno GDA-E-404"]
+EQUIPO_CONSOLIDACION = ["Consolidómetro", "Balanza GDA-E-010", "Balanza GDA-E-011", "Termómetro GDA-E-126", "Horno GDA-E-007", "Horno GDA-E-404"]
 # Calibración de los picnómetros (hoja Resultados de la plantilla): masa del picnómetro lleno de agua
 # = a·T + b, con T en °C.
 CONS_PIC_CALIBRACION = {1: (-0.1428, 688.64), 2: (-0.1158, 694.37), 3: (-0.0614, 349.31),
@@ -5668,9 +5668,6 @@ def render_consolidacion_form(data, assay_id):
             st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
         else:
             st.caption("Se muestran a medida que se digitan los datos de arriba.")
-    with st.container(border=True):
-        st.markdown(card_header_html("construction", "Consolidómetro"), unsafe_allow_html=True)
-        _campo("cons_consolidometro", "Consolidómetro (código)", placeholder="GDA-E-")
     render_equipo(data, "cons", EQUIPO_CONSOLIDACION)
     render_norma_selector("consolidacion", data, "cons")
 
@@ -5718,7 +5715,7 @@ def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, obs
         seco = next((v for v in (to_float(data.get(f"cons_{pref}_seco_{h}")) for h in (19, 18, 17)) if v is not None), None)
         ws[f"{col}30"] = seco
         ws[f"{col}31"] = to_float(data.get(f"cons_{pref}_recipiente_masa"))
-    ws["K51"] = data.get("cons_consolidometro") or None
+    ws["K51"] = "Consolidómetro" if "Consolidómetro" in data.get("cons_equipos", []) else None
     ws["K52"] = data.get("cons_metodo") or None
     ws["K53"] = (data.get("cons_condicion") or "").upper() or None
 
@@ -6158,7 +6155,7 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                       ("Temperatura final (°C)", data.get("cons_temp_fin"))]
                      + [(l, data.get(k)) for k, l in CONS_GS_CAMPOS]
                      + [("Temperatura de secado", data.get("cons_temp_secado")), ("Método", data.get("cons_metodo")),
-                        ("Consolidómetro", data.get("cons_consolidometro")), ("Precarga (g)", data.get("cons_precarga"))])
+                        ("Precarga (g)", data.get("cons_precarga"))])
             st.markdown(param_table_html(filas), unsafe_allow_html=True)
         with st.container(border=True):
             st.markdown(card_header_html("science", "Datos de la Muestra"), unsafe_allow_html=True)
