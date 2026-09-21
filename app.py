@@ -44,6 +44,7 @@ TEMPLATE_PROCTOR = os.path.join(BASE_DIR, "templates", "GDA-FLC-002_proctor_cbr.
 TEMPLATE_MATERIA_ORGANICA = os.path.join(BASE_DIR, "templates", "GDA-FLC-003_materia_organica.xlsx")
 TEMPLATE_LIMITE_CONTRACCION = os.path.join(BASE_DIR, "templates", "GDA-FLC-022_limite_contraccion.xlsx")
 TEMPLATE_CONSOLIDACION = os.path.join(BASE_DIR, "templates", "GDA-FLC-009_consolidacion.xlsx")
+TEMPLATE_COMPRESION_INCONFINADA = os.path.join(BASE_DIR, "templates", "GDA-FLC-008_compresion_inconfinada.xlsm")
 
 ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "laboratorista": "Laboratorista", "ingeniero": "Director Técnico"}
 ROLE_INICIALES = {"jefe": "JL", "laboratorista": "LB", "ingeniero": "DT"}
@@ -567,7 +568,7 @@ SIEVES = [
     ("s_60", "No. 60", "0.25", "E32"), ("s_100", "No. 100", "0.149", "E33"), ("s_200", "No. 200", "0.075", "E34"),
 ]
 
-ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor", "materia-organica": "Materia orgánica", "limite-contraccion": "Límite de contracción", "consolidacion": "Consolidación"}
+ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor", "materia-organica": "Materia orgánica", "limite-contraccion": "Límite de contracción", "consolidacion": "Consolidación", "compresion-inconfinada": "Compresión inconfinada"}
 NORMAS_ENSAYO = {
     "granulometria": ["INV-214-13", "INV.E-213-13", "INV.E 123-13"],
     "humedad": ["INV E-122", "ASTM D2216"],
@@ -579,6 +580,7 @@ NORMAS_ENSAYO = {
     "materia-organica": ["INV E-121-13", "ASTM D2974"],
     "limite-contraccion": ["INV E-129-13", "ASTM D4943"],
     "consolidacion": ["INV E-151-13", "ASTM D2435"],
+    "compresion-inconfinada": ["INV E-152-13", "ASTM D2166"],
 }
 STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado"}
 STATUS_BADGE = {"sin-iniciar": "badge-danger", "en-proceso": "badge-warning", "finalizado": "badge-success"}
@@ -714,6 +716,20 @@ EQUIPO_CONSOLIDACION = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Termómetro G
 # = a·T + b, con T en °C.
 CONS_PIC_CALIBRACION = {1: (-0.1428, 688.64), 2: (-0.1158, 694.37), 3: (-0.0614, 349.31),
                         4: (-0.0655, 344.51), 5: (-0.0652, 344.03), 6: (-0.061, 355.9)}
+# Compresión inconfinada (INV E-152) — bitácora GDA-FL-005 y plantilla GDA-FLC-008 (.xlsm).
+CI_DEFORMACIONES = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 120, 140, 160, 180, 200, 220, 240, 260, 280, 300,
+                    330, 360, 390, 420, 450, 480, 510, 540, 650, 700, 750, 800, 900, 1000]  # 0.001 in
+CI_FILAS_EXCEL = list(range(27, 59))  # la plantilla trae 32 filas de lectura (la 26 es el cero)
+CI_CONDICIONES = ["Inalterada", "Compactada", "Remodelada"]
+CI_MUESTREOS = ["Tubo Shelby", "SPT", "NQ - Barrena", "HQ - Barrena"]
+CI_FALLAS = ["PLANO INCLINADO", "ABOMBAMIENTO", "CONO Y GRIETAS VERTICALES", "DESMORONAMIENTO"]
+CI_HUMEDAD_FILAS = [
+    ("ci_hum_recipiente", "Recipiente No."), ("ci_hum_humedo", "Masa muestra húmeda + recipiente (g)"),
+    ("ci_hum_seco_17", "Masa suelo seco + recipiente (g) (17 horas)"), ("ci_hum_seco_18", "Masa suelo seco + recipiente (g) (18 horas)"),
+    ("ci_hum_seco_19", "Masa suelo seco + recipiente (g) (19 horas)"), ("ci_hum_masa_rec", "Masa del recipiente (g)"),
+]
+EQUIPO_COMPRESION_INCONFINADA = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Máquina multiusos GDA-E-008", "Máquina manual GDA-E-014",
+                                 "Horno GDA-E-007", "Horno GDA-E-404", "Pie de rey GDA-E-028"]
 PROCTOR_METODOS = ["A", "B", "C"]
 PROCTOR_TAMICES = ["", "3/4\"", "3/8\"", "No. 4"]
 PROCTOR_TAMIZ_EXCEL = {"3/4\"": "¾ \"", "3/8\"": "⅜ \"", "No. 4": "N.4"}  # lista desplegable de L25
@@ -946,6 +962,7 @@ SUPPORTED_ASSAY_MAP = {
     "Materia orgánica": "materia-organica",
     "Límite de contracción": "limite-contraccion",
     "Consolidación": "consolidacion",
+    "Compresión inconfinada": "compresion-inconfinada",
 }
 
 
@@ -5759,6 +5776,191 @@ def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, obs
     bio.seek(0)
     return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_CONSOLIDACION)
 
+def _ci_promedio(data, prefijo):
+    valores = [v for v in (to_float(data.get(f"{prefijo}_{i}")) for i in (1, 2, 3)) if v is not None]
+    return sum(valores) / len(valores) if valores else None
+
+
+def _ci_lecturas(data):
+    """[(deformación en 0.001 in, carga en kN)] de las filas de la bitácora que tienen carga digitada."""
+    lecturas = []
+    for i, deformacion in enumerate(CI_DEFORMACIONES, start=1):
+        carga = to_float(data.get(f"ci_carga_{i}"))
+        if carga is not None:
+            lecturas.append((deformacion, carga))
+    return lecturas
+
+
+def resultados_compresion_inconfinada(data):
+    """Mismas fórmulas de la plantilla GDA-FLC-008 (GUIA): humedad, densidades, esfuerzo con área corregida,
+    qu, Su y módulo de elasticidad (entre las dos primeras lecturas, como la plantilla)."""
+    filas = []
+    d, h, masa = _ci_promedio(data, "ci_d"), _ci_promedio(data, "ci_h"), to_float(data.get("ci_peso"))
+    humedo, rec = to_float(data.get("ci_hum_humedo")), to_float(data.get("ci_hum_masa_rec"))
+    seco = next((v for v in (to_float(data.get(f"ci_hum_seco_{x}")) for x in (19, 18, 17)) if v is not None), None)
+    w = (humedo - seco) / (seco - rec) * 100 if None not in (humedo, seco, rec) and (seco - rec) != 0 else None
+    if w is not None:
+        filas.append(("Humedad (%)", fmt_num(w, 2)))
+    if not d or not h:
+        return filas
+    area = math.pi * d ** 2 / 4
+    vol = area * h
+    filas += [("Diámetro promedio (cm)", fmt_num(d, 2)), ("Altura promedio (cm)", fmt_num(h, 2)),
+              ("Área (cm²)", fmt_num(area, 2)), ("Volumen (cm³)", fmt_num(vol, 2))]
+    if masa:
+        rho_h = masa / vol
+        filas.append(("Densidad húmeda ρh (g/cm³)", fmt_num(rho_h, 3)))
+        if w is not None:
+            filas.append(("Densidad seca ρd (g/cm³)", fmt_num(rho_h / (1 + w / 100), 3)))
+    puntos = []
+    for deformacion, carga in _ci_lecturas(data):
+        mm = deformacion * 0.0254
+        eps = mm / (h * 10) * 100
+        if eps >= 100:
+            continue
+        puntos.append((eps, carga / (area / (1 - eps / 100) / 10000)))
+    if puntos:
+        qu = max(s for _e, s in puntos)
+        filas += [("Resistencia a la compresión inconfinada qu (kPa)", fmt_num(qu, 1)),
+                  ("Resistencia al corte Su (kPa)", fmt_num(qu / 2, 1))]
+        if len(puntos) >= 2 and puntos[1][0] != puntos[0][0]:
+            filas.append(("Módulo de elasticidad (kPa)", fmt_num((puntos[1][1] - puntos[0][1]) / (puntos[1][0] - puntos[0][0]) * 100, 0)))
+    return filas
+
+
+def render_compresion_inconfinada_form(data, assay_id):
+    st.info("Formulario armado sobre la bitácora GDA-FL-005. El Excel para descargar (plantilla oficial GDA-FLC-008) "
+            "está al final del ensayo.")
+
+    def _campo(key, label, placeholder="0.00"):
+        row = st.columns([2.2, 1])
+        row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+        data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                       label_visibility="collapsed", placeholder=placeholder)
+
+    def _radio(key, label, opciones):
+        actual = data.get(key, opciones[0])
+        data[key] = st.radio(label, opciones, horizontal=True, index=opciones.index(actual) if actual in opciones else 0,
+                              key=f"{key}_{assay_id}")
+
+    with st.container(border=True):
+        st.markdown(card_header_html("science", "Muestra"), unsafe_allow_html=True)
+        _radio("ci_condicion", "Tipo de muestra", CI_CONDICIONES)
+        if data.get("ci_condicion") == "Inalterada":
+            _radio("ci_muestreo", "Método de muestreo", CI_MUESTREOS)
+        for key, label in (("ci_temp_ini", "Temperatura inicial (°C)"), ("ci_temp_fin", "Temperatura final (°C)")):
+            _campo(key, label, placeholder="0.0")
+    with st.container(border=True):
+        st.markdown(card_header_html("straighten", "Dimensiones de la Muestra"), unsafe_allow_html=True)
+        head = st.columns([1, 1, 1])
+        head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Altura (cm)</div>', unsafe_allow_html=True)
+        head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Diámetro (cm)</div>', unsafe_allow_html=True)
+        for i in (1, 2, 3):
+            row = st.columns([1, 1, 1])
+            row[0].markdown(f'<div style="padding-top:8px;">{i}</div>', unsafe_allow_html=True)
+            for col_i, pref in ((1, "ci_h"), (2, "ci_d")):
+                key = f"{pref}_{i}"
+                data[key] = row[col_i].text_input(f"{pref} {i}", value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                                   label_visibility="collapsed", placeholder="0.00")
+        _campo("ci_peso", "Peso de la muestra (g)")
+    with st.container(border=True):
+        st.markdown(card_header_html("water_drop", "Datos de Humedad"), unsafe_allow_html=True)
+        for key, label in CI_HUMEDAD_FILAS:
+            _campo(key, label, placeholder="" if key == "ci_hum_recipiente" else "0.00")
+        _radio("ci_temp_secado", "Temperatura de secado", ["60 °C", "110 °C"])
+        _radio("ci_metodo", "Método", ["A", "B"])
+        _radio("ci_hum_antes", "Humedad obtenida", ["Antes del ensayo", "Después del ensayo"])
+        _radio("ci_hum_muestra", "Sobre", ["Muestra completa", "Cortes de muestra"])
+    with st.container(border=True):
+        st.markdown(card_header_html("show_chart", "Deformación y Carga"), unsafe_allow_html=True)
+        st.caption("Deformación en 0.001 in y carga en kN. Solo se exportan las filas con carga digitada "
+                   f"(la plantilla admite hasta {len(CI_FILAS_EXCEL)}).")
+        head = st.columns([1, 1, 1, 1])
+        for j, texto in enumerate(("Def. (0.001 in)", "Carga (kN)", "Def. (0.001 in)", "Carga (kN)")):
+            head[j].markdown(f'<div class="cell-muted" style="text-align:center;font-weight:700;">{texto}</div>', unsafe_allow_html=True)
+        mitad = (len(CI_DEFORMACIONES) + 1) // 2
+        for k in range(mitad):
+            row = st.columns([1, 1, 1, 1])
+            for lado, i in ((0, k + 1), (2, k + 1 + mitad)):
+                if i > len(CI_DEFORMACIONES):
+                    continue
+                row[lado].markdown(f'<div style="padding-top:8px;text-align:center;">{CI_DEFORMACIONES[i - 1]}</div>', unsafe_allow_html=True)
+                key = f"ci_carga_{i}"
+                data[key] = row[lado + 1].text_input(f"Carga {CI_DEFORMACIONES[i - 1]}", value=data.get(key, ""),
+                                                      key=f"{key}_{assay_id}", label_visibility="collapsed")
+        _campo("ci_penetrometro", "Resistencia al penetrómetro (kg/cm²)")
+    with st.container(border=True):
+        st.markdown(card_header_html("tune", "Falla"), unsafe_allow_html=True)
+        _radio("ci_falla", "Tipo de falla (diagrama)", CI_FALLAS)
+        _campo("ci_velocidad", "Velocidad de falla (mm/min)", placeholder="1")
+        _campo("ci_tiempo_falla", "Tiempo de falla (min)")
+    with st.container(border=True):
+        st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+        filas = resultados_compresion_inconfinada(data)
+        if filas:
+            st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        else:
+            st.caption("Se muestran a medida que se digitan los datos de arriba.")
+    render_equipo(data, "ci", EQUIPO_COMPRESION_INCONFINADA)
+    render_norma_selector("compresion-inconfinada", data, "ci")
+
+
+def generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    """Compresión inconfinada (GDA-FLC-008, INV E-152). Se llena la hoja GUIA: encabezado, dimensiones, masa,
+    humedad y las lecturas de carga/deformación de la bitácora (columnas R y U, que en la plantilla reciben los datos
+    de la máquina); esfuerzo, qu y Su los calcula el Excel. El tiempo (columna P) solo se llena si hay velocidad de falla."""
+    wb = load_workbook(TEMPLATE_COMPRESION_INCONFINADA, keep_vba=True)
+    ws = wb["GUIA"]
+    ws["C6"] = project.get("cliente", "") if project else ""
+    ws["C7"] = project["nombre"] if project else codigo
+    ws["C8"] = project.get("correo_cliente", "") if project else ""
+    ws["C9"] = project.get("localizacion", "") if project else ""
+    if project and project.get("muestra_tomada_por"):
+        ws["C10"] = project["muestra_tomada_por"]
+    ws["K6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    ws["K7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
+    ws["K8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    ws["L9"] = project.get("numero", "") if project else ""
+    ws["N9"] = project.get("anio", "") if project else ""
+    perf = get_perforacion(codigo, perf_codigo)
+    ws["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
+    ws["D12"] = perf_codigo
+    ws["F12"] = muestra["numero"]
+    ws["H12"] = to_float(muestra.get("profundidad_de"))
+    ws["J12"] = to_float(muestra.get("profundidad_hasta"))
+    ws["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+
+    ws["C18"] = _ci_promedio(data, "ci_d")
+    ws["C19"] = _ci_promedio(data, "ci_h")
+    ws["C21"] = to_float(data.get("ci_peso"))
+    ws["I18"] = to_float(data.get("ci_hum_humedo"))
+    ws["I19"] = next((v for v in (to_float(data.get(f"ci_hum_seco_{x}")) for x in (19, 18, 17)) if v is not None), None)
+    ws["I20"] = to_float(data.get("ci_hum_masa_rec"))
+
+    # Las listas desplegables de la plantilla traen espacios al final de algunas opciones: se usa el texto exacto.
+    fallas = {ws[f"Q{r}"].value.strip(): ws[f"Q{r}"].value for r in range(6, 11) if isinstance(ws[f"Q{r}"].value, str)}
+    muestreos = {ws[f"R{r}"].value.strip(): ws[f"R{r}"].value for r in range(6, 13) if isinstance(ws[f"R{r}"].value, str)}
+    ws["F20"] = fallas.get(data.get("ci_falla", ""), data.get("ci_falla") or None)
+    condicion = data.get("ci_condicion", "Inalterada")
+    muestreo = {"Compactada": "Compactada", "Remodelada": "Remoldeada"}.get(condicion, data.get("ci_muestreo") or "Tubo Shelby")
+    ws["F21"] = muestreos.get(muestreo, muestreo)
+    velocidad = to_float(data.get("ci_velocidad"))
+    ws["F22"] = velocidad
+
+    for fila, (deformacion, carga) in zip(CI_FILAS_EXCEL, _ci_lecturas(data)):
+        mm = round(deformacion * 0.0254, 4)
+        ws[f"R{fila}"] = carga
+        ws[f"U{fila}"] = mm
+        if velocidad:
+            ws[f"P{fila}"] = round(mm / velocidad * 60, 1)
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    # Acá NO se usan _reparar_graficos_perdidos ni _restaurar_drawings_perdidos: openpyxl sí conserva el gráfico y las
+    # imágenes de esta plantilla (guardada desde Excel) y restaurar los dibujos de la plantilla deja el archivo dañado.
+    return _restaurar_orden_formato_condicional(_reparar_enlaces_externos(bio.getvalue()), TEMPLATE_COMPRESION_INCONFINADA)
+
 
 def render_limite_contraccion_form(data, assay_id):
     st.info("Formulario armado sobre la plantilla oficial GDA-FLC-022. El Excel para descargar está al final del ensayo.")
@@ -6155,6 +6357,32 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                         for i, (pulg, _mm) in enumerate(CBR_PENETRACION_FILAS, start=1)]
             st.markdown(param_table_ncol_html(headers, pen_rows), unsafe_allow_html=True)
         equipos, norma = data.get("cbr_equipos", []), data.get("cbr_norma", "—")
+    elif tipo == "compresion-inconfinada":
+        with st.container(border=True):
+            st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
+            filas = [("Tipo de muestra", data.get("ci_condicion")), ("Método de muestreo", data.get("ci_muestreo") if data.get("ci_condicion") == "Inalterada" else None),
+                     ("Temperatura inicial (°C)", data.get("ci_temp_ini")), ("Temperatura final (°C)", data.get("ci_temp_fin")),
+                     ("Peso de la muestra (g)", data.get("ci_peso"))] + [(l, data.get(k)) for k, l in CI_HUMEDAD_FILAS] + [
+                     ("Temperatura de secado", data.get("ci_temp_secado")), ("Método", data.get("ci_metodo")),
+                     ("Humedad obtenida", f'{data.get("ci_hum_antes", "")} — {data.get("ci_hum_muestra", "")}'),
+                     ("Resistencia al penetrómetro (kg/cm²)", data.get("ci_penetrometro")), ("Tipo de falla", data.get("ci_falla")),
+                     ("Velocidad de falla (mm/min)", data.get("ci_velocidad")), ("Tiempo de falla (min)", data.get("ci_tiempo_falla"))]
+            st.markdown(param_table_html(filas), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("straighten", "Dimensiones"), unsafe_allow_html=True)
+            st.markdown(param_table_ncol_html(["#", "ALTURA (cm)", "DIÁMETRO (cm)"],
+                                              [(i, data.get(f"ci_h_{i}"), data.get(f"ci_d_{i}")) for i in (1, 2, 3)]), unsafe_allow_html=True)
+        lecturas = [(d, data.get(f"ci_carga_{i}")) for i, d in enumerate(CI_DEFORMACIONES, start=1) if data.get(f"ci_carga_{i}")]
+        if lecturas:
+            with st.container(border=True):
+                st.markdown(card_header_html("show_chart", "Deformación y Carga"), unsafe_allow_html=True)
+                st.markdown(param_table_ncol_html(["DEFORMACIÓN (0.001 in)", "CARGA (kN)"], lecturas), unsafe_allow_html=True)
+        resultados = resultados_compresion_inconfinada(data)
+        if resultados:
+            with st.container(border=True):
+                st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+                st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        equipos, norma = data.get("ci_equipos", []), data.get("ci_norma", "—")
     elif tipo == "consolidacion":
         with st.container(border=True):
             st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
@@ -6448,6 +6676,8 @@ def render_assay_form():
             render_limite_contraccion_form(data, assay_id)
         elif assay["tipo"] == "consolidacion":
             render_consolidacion_form(data, assay_id)
+        elif assay["tipo"] == "compresion-inconfinada":
+            render_compresion_inconfinada_form(data, assay_id)
 
         with st.expander("Observaciones (opcional)", icon=":material/notes:", expanded=bool(assay.get("observations"))):
             observations = st.text_area("Observaciones", value=assay.get("observations", ""), label_visibility="collapsed",
@@ -6564,6 +6794,15 @@ def render_assay_form():
             data=excel_bytes, file_name=f"Peso_unitario_parafinado_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
+
+    if assay["tipo"] == "compresion-inconfinada" and muestra:
+        st.markdown("---")
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        st.download_button(
+            "Descargar Excel (plantilla oficial de Compresión Inconfinada)", icon=":material/download:",
+            data=generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            file_name=f"Compresion_inconfinada_{muestra['id_unico']}.xlsm",
+            mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True, key="dl_compresion_inconfinada")
 
     if assay["tipo"] == "consolidacion" and muestra:
         st.markdown("---")
