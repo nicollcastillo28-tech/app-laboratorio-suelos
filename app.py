@@ -1809,14 +1809,18 @@ def render_home():
             st.markdown(f'<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">'
                         f'{icon("edit", size=15)} Editar un proyecto</div>', unsafe_allow_html=True)
             opciones = {p["codigo_interno"]: f'{p["codigo_interno"]} — {p["nombre"]}' for p in st.session_state.projects}
-            e1, e2 = st.columns([4, 1], vertical_alignment="bottom")
+            elegido = st.selectbox("Proyecto", list(opciones), format_func=opciones.get,
+                                    key="home_editar_proyecto", label_visibility="collapsed")
+            e1, e2 = st.columns(2)
             with e1:
-                elegido = st.selectbox("Proyecto", list(opciones), format_func=opciones.get,
-                                        key="home_editar_proyecto", label_visibility="collapsed")
-            with e2:
-                if st.button("Editar", key="home_editar_btn", icon=":material/edit:", use_container_width=True):
+                if st.button("Editar proyecto", key="home_editar_btn", icon=":material/edit:", use_container_width=True):
                     st.session_state.selected_codigo = elegido
                     navigate("edit-project")
+            with e2:
+                if st.button("Editar bitácora de orden", key="home_editar_bitacora_btn",
+                              icon=":material/assignment:", use_container_width=True):
+                    st.session_state.selected_codigo = elegido
+                    navigate("bitacora")
 
     st.markdown("<br>", unsafe_allow_html=True)
     todos_los_ensayos = sorted(st.session_state.assays, key=lambda a: a["lastModified"], reverse=True)
