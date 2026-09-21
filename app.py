@@ -4046,25 +4046,19 @@ def _restaurar_orden_formato_condicional(xlsx_bytes, template_path):
     plantilla original."""
     patron = re.compile(r'<conditionalFormatting sqref="([^"]*)">(.*?)</conditionalFormatting>', re.S)
 
-    def clave(sqref, cuerpo):
-        m = re.search(r"<formula>([^<]*)</formula>", cuerpo)
-        return (frozenset(sqref.split()), m.group(1) if m else "")
-
-    originales = {}
-    with zipfile.ZipFile(template_path) as tpl:
-        for n in tpl.namelist():
-            if re.match(r"xl/worksheets/sheet\d+\.xml$", n):
-                for sqref, cuerpo in patron.findall(tpl.read(n).decode("utf-8")):
-                    originales.setdefault(clave(sqref, cuerpo), sqref)
-    if not originales:
-        return xlsx_bytes
-
+    # Excel evalúa la fórmula relativa a la PRIMERA celda del sqref. Varias plantillas traen
+    # reglas de varias áreas cuya fórmula apunta a otra celda (ej. sqref="G19:G20 G22:G23 E33:G34"
+    # con LEN(TRIM(E19))=0), así que las casillas G19:G23 se quedan verdes aunque estén llenas —
+    # pasa incluso escribiendo directo en la plantilla original. Se reescribe la fórmula para que
+    # siempre revise la celda misma (la primera del sqref), que es lo que la regla quiere decir.
     def reemplazo(m):
         sqref, cuerpo = m.group(1), m.group(2)
-        orig = originales.get(clave(sqref, cuerpo))
-        if orig is None or orig == sqref:
+        primera = re.match(r"\$?([A-Z]+)\$?(\d+)", sqref.split()[0])
+        if not primera:
             return m.group(0)
-        return f'<conditionalFormatting sqref="{orig}">{cuerpo}</conditionalFormatting>'
+        celda = primera.group(1) + primera.group(2)
+        nuevo = re.sub(r"LEN\(TRIM\(\$?[A-Z]+\$?\d+\)\)=0", f"LEN(TRIM({celda}))=0", cuerpo)
+        return f'<conditionalFormatting sqref="{sqref}">{nuevo}</conditionalFormatting>'
 
     bio = BytesIO()
     with zipfile.ZipFile(BytesIO(xlsx_bytes)) as out, zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as z:
