@@ -5792,13 +5792,33 @@ def _ci_lecturas(data):
     return lecturas
 
 
+def _ci_remuestrear(maquina, n=CI_MAX_MAQUINA):
+    """La plantilla tiene n filas: si la máquina trae más, se toman n puntos igualmente espaciados en el tiempo,
+    desde el cero hasta el final del ensayo (así quedan ~29 s entre filas en un ensayo de 15 min), interpolando
+    la fuerza y la deformación entre las lecturas vecinas."""
+    if len(maquina) <= n:
+        return [list(x) for x in maquina]
+    puntos = sorted(maquina, key=lambda x: x[0])
+    t_fin = puntos[-1][0]
+    res, j = [], 0
+    for k in range(n):
+        t = puntos[0][0] + (t_fin - puntos[0][0]) * k / (n - 1)
+        while j < len(puntos) - 2 and puntos[j + 1][0] <= t:
+            j += 1
+        (t0, f0, d0), (t1, f1, d1) = puntos[j], puntos[j + 1]
+        w = 0 if t1 == t0 else min(max((t - t0) / (t1 - t0), 0), 1)
+        f = f0 if f1 is None else f1 if f0 is None else f0 + (f1 - f0) * w
+        res.append([round(t, 1), None if f is None else round(f, 4), round(d0 + (d1 - d0) * w, 3)])
+    return res
+
+
 def _ci_puntos(data):
     """[(fila de la plantilla, tiempo en s o None, deformación mm, fuerza kN o None)]. Si se cargaron los datos de la
     máquina se usan esos (desde la fila 26, la del cero); si no, las lecturas de la bitácora (desde la fila 27; el
     tiempo solo se calcula si hay velocidad de falla)."""
     maquina = data.get("ci_maq")
     if maquina:
-        return [(CI_FILA_MAQUINA + i, t, d, f) for i, (t, f, d) in enumerate(maquina[:CI_MAX_MAQUINA])]
+        return [(CI_FILA_MAQUINA + i, t, d, f) for i, (t, f, d) in enumerate(_ci_remuestrear(maquina))]
     velocidad = to_float(data.get("ci_velocidad"))
     puntos = []
     for fila, (deformacion, carga) in zip(CI_FILAS_EXCEL, _ci_lecturas(data)):
@@ -5942,7 +5962,7 @@ def render_compresion_inconfinada_form(data, assay_id):
     with st.container(border=True):
         st.markdown(card_header_html("show_chart", "Datos de la Máquina"), unsafe_allow_html=True)
         st.caption("Tiempo (s), fuerza (kN) y deformación (mm) que arroja la máquina: van a la tabla de datos de la máquina del "
-                   f"Excel (hasta {CI_MAX_MAQUINA} filas, desde el cero). Si los cargas, se usan en lugar de la tabla de la bitácora.")
+                   f"Excel ({CI_MAX_MAQUINA} filas; si traen más, se reparten en el tiempo). Si los cargas, se usan en lugar de la tabla de la bitácora.")
         texto = st.text_area("Pegar datos de la máquina", value="", key=f"ci_maq_texto_{assay_id}", height=110,
                               placeholder="Pega aquí las 3 columnas copiadas de Excel (tiempo, fuerza, deformación)")
         archivo = st.file_uploader("O sube el Excel de la máquina", type=["xlsx"], key=f"ci_maq_archivo_{assay_id}")
@@ -5955,7 +5975,8 @@ def render_compresion_inconfinada_form(data, assay_id):
                 data["ci_maq"] = filas_maq
                 st.success(f"Se cargaron {len(filas_maq)} filas.")
                 if len(filas_maq) > CI_MAX_MAQUINA:
-                    st.warning(f"La plantilla admite {CI_MAX_MAQUINA} filas: solo se exportan las primeras {CI_MAX_MAQUINA}.")
+                    st.info(f"La plantilla admite {CI_MAX_MAQUINA} filas: se exportan {CI_MAX_MAQUINA} puntos igualmente "
+                            "espaciados en el tiempo, desde el cero hasta el final del ensayo.")
         if data.get("ci_maq"):
             st.markdown(f'<div class="cell-muted">Cargado: {len(data["ci_maq"])} filas, hasta {data["ci_maq"][-1][0]:.0f} s</div>',
                         unsafe_allow_html=True)
