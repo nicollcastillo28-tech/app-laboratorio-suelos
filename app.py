@@ -4070,8 +4070,37 @@ def _restaurar_orden_formato_condicional(xlsx_bytes, template_path):
     return bio.getvalue()
 
 
+def _reparar_enlaces_externos(xlsx_bytes):
+    """Si la plantilla se guardó desde Excel con un vínculo a otro libro, openpyxl deja el
+    externalLinkN.xml apuntando a un id (rId1) que ya no coincide con el del archivo de relaciones
+    (rId2) — Excel dice que el archivo está dañado y no lo abre. Se iguala el id de la relación al
+    que usa el externalLink."""
+    with zipfile.ZipFile(BytesIO(xlsx_bytes)) as zin:
+        cambios = {}
+        for nombre in zin.namelist():
+            m = re.match(r"xl/externalLinks/externalLink(\d+)\.xml$", nombre)
+            if not m:
+                continue
+            rels_nombre = f"xl/externalLinks/_rels/externalLink{m.group(1)}.xml.rels"
+            if rels_nombre not in zin.namelist():
+                continue
+            usado = re.search(r'<externalBook[^>]*r:id="([^"]+)"', zin.read(nombre).decode("utf-8"))
+            rels = zin.read(rels_nombre).decode("utf-8")
+            ids = re.findall(r'Id="([^"]+)"', rels)
+            if usado and len(ids) == 1 and ids[0] != usado.group(1):
+                cambios[rels_nombre] = rels.replace(f'Id="{ids[0]}"', f'Id="{usado.group(1)}"').encode("utf-8")
+        if not cambios:
+            return xlsx_bytes
+        bio = BytesIO()
+        with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                zout.writestr(item, cambios.get(item.filename, zin.read(item.filename)))
+        return bio.getvalue()
+
+
 def _restaurar_imagenes_perdidas(xlsx_bytes, template_path):
-    return _restaurar_orden_formato_condicional(_restaurar_drawings_perdidos(xlsx_bytes, template_path), template_path)
+    reparado = _reparar_enlaces_externos(xlsx_bytes)
+    return _restaurar_orden_formato_condicional(_restaurar_drawings_perdidos(reparado, template_path), template_path)
 
 
 def _restaurar_drawings_perdidos(xlsx_bytes, template_path):
