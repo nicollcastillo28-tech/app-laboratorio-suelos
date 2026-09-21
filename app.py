@@ -6017,58 +6017,123 @@ def render_compresion_inconfinada_form(data, assay_id):
     render_norma_selector("compresion-inconfinada", data, "ci")
 
 
-def generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
-    """Compresión inconfinada (GDA-FLC-008, INV E-152). Se llena la hoja GUIA: encabezado, dimensiones, masa,
-    humedad y las lecturas de carga/deformación de la bitácora (columnas R y U, que en la plantilla reciben los datos
-    de la máquina); esfuerzo, qu y Su los calcula el Excel. El tiempo (columna P) solo se llena si hay velocidad de falla."""
-    wb = load_workbook(TEMPLATE_COMPRESION_INCONFINADA, keep_vba=True)
-    ws = wb["GUIA"]
-    ws["C6"] = project.get("cliente", "") if project else ""
-    ws["C7"] = project["nombre"] if project else codigo
-    ws["C8"] = project.get("correo_cliente", "") if project else ""
-    ws["C9"] = project.get("localizacion", "") if project else ""
-    if project and project.get("muestra_tomada_por"):
-        ws["C10"] = project["muestra_tomada_por"]
-    ws["K6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
-    ws["K7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
-    ws["K8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
-    ws["L9"] = project.get("numero", "") if project else ""
-    ws["N9"] = project.get("anio", "") if project else ""
-    perf = get_perforacion(codigo, perf_codigo)
-    ws["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
-    ws["D12"] = perf_codigo
-    ws["F12"] = muestra["numero"]
-    ws["H12"] = to_float(muestra.get("profundidad_de"))
-    ws["J12"] = to_float(muestra.get("profundidad_hasta"))
-    ws["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+def _col_a_numero(col):
+    n = 0
+    for ch in col:
+        n = n * 26 + ord(ch) - 64
+    return n
 
-    ws["C18"] = _ci_promedio(data, "ci_d")
-    ws["C19"] = _ci_promedio(data, "ci_h")
-    ws["C21"] = to_float(data.get("ci_peso"))
-    ws["I18"] = to_float(data.get("ci_hum_humedo"))
-    ws["I19"] = next((v for v in (to_float(data.get(f"ci_hum_seco_{x}")) for x in (19, 18, 17)) if v is not None), None)
-    ws["I20"] = to_float(data.get("ci_hum_masa_rec"))
+
+def _xlsx_escribir_celdas(xlsx_bytes, hoja_xml, celdas):
+    """Escribe valores en una hoja editando su XML directamente (sin pasar por openpyxl), así se conserva TODO lo demás del
+    archivo tal cual: formas, grupos, casillas de verificación, imágenes, gráficos, macros. `celdas` = {"C6": valor}; un
+    número queda como número, un texto como texto y None deja la celda vacía. Conserva el estilo que ya tenga la celda."""
+    with zipfile.ZipFile(BytesIO(xlsx_bytes)) as zin:
+        xml = zin.read(hoja_xml).decode("utf-8")
+
+        def celda_xml(ref, estilo, valor):
+            attr_s = f' s="{estilo}"' if estilo else ""
+            if valor is None or valor == "":
+                return f'<c r="{ref}"{attr_s}/>'
+            if isinstance(valor, bool) or not isinstance(valor, (int, float)):
+                texto = html.escape(str(valor), quote=False)
+                return f'<c r="{ref}"{attr_s} t="inlineStr"><is><t xml:space="preserve">{texto}</t></is></c>'
+            return f'<c r="{ref}"{attr_s}><v>{repr(float(valor)) if isinstance(valor, float) else valor}</v></c>'
+
+        for ref, valor in celdas.items():
+            m_ref = re.match(r"([A-Z]+)(\d+)$", ref)
+            col, fila = m_ref.group(1), int(m_ref.group(2))
+            patron = re.compile(r'<c r="' + ref + r'"([^>]*?)(?:/>|>.*?</c>)', re.S)
+            m = patron.search(xml)
+            if m:
+                est = re.search(r'\bs="(\d+)"', m.group(1))
+                xml = xml[:m.start()] + celda_xml(ref, est.group(1) if est else "", valor) + xml[m.end():]
+                continue
+            # La celda no existe: se inserta en su fila respetando el orden de columnas.
+            m_fila = re.search(r'<row r="' + str(fila) + r'"[^>]*?(?:/>|>(.*?)</row>)', xml, re.S)
+            if not m_fila or m_fila.group(1) is None:
+                continue
+            cuerpo, inicio = m_fila.group(1), m_fila.start(1)
+            pos = len(cuerpo)
+            for mc in re.finditer(r'<c r="([A-Z]+)\d+"', cuerpo):
+                if _col_a_numero(mc.group(1)) > _col_a_numero(col):
+                    pos = mc.start()
+                    break
+            xml = xml[:inicio + pos] + celda_xml(ref, "", valor) + xml[inicio + pos:]
+
+        bio = BytesIO()
+        with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                contenido = zin.read(item.filename)
+                if item.filename == hoja_xml:
+                    contenido = xml.encode("utf-8")
+                elif item.filename == "xl/workbook.xml":  # que Excel recalcule las fórmulas al abrir
+                    texto = contenido.decode("utf-8")
+                    if "fullCalcOnLoad" not in texto:
+                        texto = texto.replace("<calcPr ", '<calcPr fullCalcOnLoad="1" ', 1)
+                    contenido = texto.encode("utf-8")
+                zout.writestr(item, contenido)
+        return bio.getvalue()
+
+
+def _textos_compartidos(xlsx_path):
+    with zipfile.ZipFile(xlsx_path) as z:
+        xml = z.read("xl/sharedStrings.xml").decode("utf-8")
+    textos = []
+    for si in re.findall(r"<si>(.*?)</si>", xml, re.S):
+        textos.append(html.unescape("".join(re.findall(r"<t[^>]*>(.*?)</t>", si, re.S))))
+    return textos
+
+
+def generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    """Compresión inconfinada (GDA-FLC-008, INV E-152). Se llena la hoja GUIA: encabezado, dimensiones, masa, humedad y las
+    lecturas de carga/deformación (columnas P, R y U, que en la plantilla reciben los datos de la máquina); esfuerzo, qu y
+    Su los calcula el Excel. La plantilla trae formas, grupos (plano de falla, firmas), casillas y un gráfico que openpyxl
+    no conserva, por eso los valores se escriben directo en el XML de la hoja."""
+    c = {}
+    c["C6"] = project.get("cliente", "") if project else ""
+    c["C7"] = project["nombre"] if project else codigo
+    c["C8"] = project.get("correo_cliente", "") if project else ""
+    c["C9"] = project.get("localizacion", "") if project else ""
+    if project and project.get("muestra_tomada_por"):
+        c["C10"] = project["muestra_tomada_por"]
+    c["K6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    c["K7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
+    c["K8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    c["L9"] = project.get("numero", "") if project else ""
+    c["N9"] = project.get("anio", "") if project else ""
+    perf = get_perforacion(codigo, perf_codigo)
+    c["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
+    c["D12"] = perf_codigo
+    c["F12"] = muestra["numero"]
+    c["H12"] = to_float(muestra.get("profundidad_de"))
+    c["J12"] = to_float(muestra.get("profundidad_hasta"))
+    c["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+
+    c["C18"] = _ci_promedio(data, "ci_d")
+    c["C19"] = _ci_promedio(data, "ci_h")
+    c["C21"] = to_float(data.get("ci_peso"))
+    c["I18"] = to_float(data.get("ci_hum_humedo"))
+    c["I19"] = next((v for v in (to_float(data.get(f"ci_hum_seco_{x}")) for x in (19, 18, 17)) if v is not None), None)
+    c["I20"] = to_float(data.get("ci_hum_masa_rec"))
 
     # Las listas desplegables de la plantilla traen espacios al final de algunas opciones: se usa el texto exacto.
-    fallas = {ws[f"Q{r}"].value.strip(): ws[f"Q{r}"].value for r in range(6, 11) if isinstance(ws[f"Q{r}"].value, str)}
-    muestreos = {ws[f"R{r}"].value.strip(): ws[f"R{r}"].value for r in range(6, 13) if isinstance(ws[f"R{r}"].value, str)}
-    ws["F20"] = fallas.get(data.get("ci_falla", ""), data.get("ci_falla") or None)
+    textos = {t.strip(): t for t in _textos_compartidos(TEMPLATE_COMPRESION_INCONFINADA)}
+    c["F20"] = textos.get(data.get("ci_falla", ""), data.get("ci_falla") or None)
     condicion = data.get("ci_condicion", "Inalterada")
     muestreo = {"Compactada": "Compactada", "Remodelada": "Remoldeada"}.get(condicion, data.get("ci_muestreo") or "Tubo Shelby")
-    ws["F21"] = muestreos.get(muestreo, muestreo)
-    ws["F22"] = to_float(data.get("ci_velocidad"))
+    c["F21"] = textos.get(muestreo, muestreo)
+    c["F22"] = to_float(data.get("ci_velocidad"))
 
     for fila, t, mm, fuerza in _ci_puntos(data):
-        ws[f"P{fila}"] = t
-        ws[f"R{fila}"] = fuerza
-        ws[f"U{fila}"] = mm
+        c[f"P{fila}"] = t
+        c[f"R{fila}"] = fuerza
+        c[f"U{fila}"] = mm
 
-    bio = BytesIO()
-    wb.save(bio)
-    bio.seek(0)
-    # Acá NO se usan _reparar_graficos_perdidos ni _restaurar_drawings_perdidos: openpyxl sí conserva el gráfico y las
-    # imágenes de esta plantilla (guardada desde Excel) y restaurar los dibujos de la plantilla deja el archivo dañado.
-    return _restaurar_orden_formato_condicional(_reparar_enlaces_externos(bio.getvalue()), TEMPLATE_COMPRESION_INCONFINADA)
+    with open(TEMPLATE_COMPRESION_INCONFINADA, "rb") as f:
+        plantilla = f.read()
+    return _restaurar_orden_formato_condicional(_xlsx_escribir_celdas(plantilla, "xl/worksheets/sheet1.xml", c),
+                                                TEMPLATE_COMPRESION_INCONFINADA)
 
 
 def render_limite_contraccion_form(data, assay_id):
