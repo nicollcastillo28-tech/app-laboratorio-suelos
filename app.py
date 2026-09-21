@@ -36,6 +36,7 @@ TEMPLATE_BITACORA_ORDEN = os.path.join(BASE_DIR, "templates", "GDA-FL-003_bitaco
 TEMPLATE_HUMEDAD = os.path.join(BASE_DIR, "templates", "GDA-FLC-014_humedad_natural.xlsx")
 TEMPLATE_MASA_UNITARIA = os.path.join(BASE_DIR, "templates", "GDA-FLC-004_masa_unitaria.xlsx")
 TEMPLATE_CBR = os.path.join(BASE_DIR, "templates", "GDA-FLC-013_cbr.xlsx")
+TEMPLATE_CORTE_DIRECTO = os.path.join(BASE_DIR, "templates", "GDA-FLC-007_corte_directo.xlsx")
 
 ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "laboratorista": "Laboratorista", "ingeniero": "Director Técnico"}
 ROLE_INICIALES = {"jefe": "JL", "laboratorista": "LB", "ingeniero": "DT"}
@@ -4307,6 +4308,75 @@ def generar_excel_cbr(codigo, perf_codigo, muestra, project, data, observaciones
     return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_CBR)
 
 
+CORTE_TIPO_EXCEL = {"CD": "CONSOLIDADO DRENADO (CD)", "CU": "CONSOLIDADO NO DRENADO (CU)",
+                    "UU": "NO CONSOLIDADO NO DRENADO (UU)"}
+CORTE_CONDICION_EXCEL = {"Inalterada": "INALTERADA", "Remoldada": "REMOLDEADA", "Compactada": "COMPACTADA"}
+
+
+def generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    """Corte Directo (GDA-FLC-007, INV E-154). Se llena la hoja "1" (informe): encabezado,
+    dimensiones y masas de las 3 probetas, humedad inicial/final y gravedad específica. Las hojas
+    "2", "CARGA1" y "Fuente" (lecturas de deformación/carga de la máquina) NO se llenan: la app
+    todavía no captura esas lecturas, así que el esfuerzo cortante, la cohesión y el ángulo de
+    fricción quedan para completar en el Excel."""
+    wb = load_workbook(TEMPLATE_CORTE_DIRECTO)
+    ws = wb["1"]
+    ws["C6"] = project.get("cliente", "") if project else ""
+    ws["C7"] = project["nombre"] if project else codigo
+    ws["C8"] = project.get("correo_cliente", "") if project else ""
+    ws["C9"] = project.get("localizacion", "") if project else ""
+    if project and project.get("muestra_tomada_por"):
+        ws["C10"] = project["muestra_tomada_por"]
+    ws["J6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    ws["J7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
+    ws["J8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    ws["K9"] = project.get("numero", "") if project else ""
+    ws["L9"] = project.get("anio", "") if project else ""
+    perf = get_perforacion(codigo, perf_codigo)
+    ws["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
+    ws["D12"] = perf_codigo
+    ws["G12"] = muestra["numero"]
+    ws["J12"] = to_float(muestra.get("profundidad_de"))
+    ws["L12"] = to_float(muestra.get("profundidad_hasta"))
+    ws["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+
+    # Dimensiones del anillo: la hoja trae una sola casilla (el mismo anillo para las 3 probetas),
+    # se toma la de la probeta 1.
+    ws["D17"] = to_float(data.get("corte_m1_diametro_anillo"))
+    ws["D18"] = to_float(data.get("corte_m1_altura_anillo"))
+    ws["D19"] = to_float(data.get("corte_m1_masa_anillo"))
+    for i, col in ((1, "I"), (2, "J"), (3, "K")):
+        ws[f"{col}19"] = to_float(data.get(f"corte_m{i}_masa_inicial_anillo"))
+        esfuerzo = to_float(data.get(f"corte_m{i}_esfuerzo_normal"))
+        if esfuerzo is not None:
+            ws[f"D{48 + i}"] = esfuerzo
+
+    # Gravedad específica (INV E-128)
+    ws["D25"] = to_float(data.get("corte_ge_temperatura"))
+    ws["D26"] = to_float(data.get("corte_ge_masa_pic"))
+    ws["D27"] = to_float(data.get("corte_ge_masa_pic_muestra"))
+    ws["D28"] = to_float(data.get("corte_ge_masa_suelo_seco"))
+
+    # Humedad: columnas G/H/I = inicial de las probetas 1/2/3, J/K/L = final.
+    for i, (c_ini, c_fin) in ((1, ("G", "J")), (2, ("H", "K")), (3, ("I", "L"))):
+        for sufijo, col in (("inicial", c_ini), ("final", c_fin)):
+            base = f"corte_m{i}_"
+            ws[f"{col}48"] = data.get(f"{base}hum_recipiente_{sufijo}", "") or None
+            ws[f"{col}50"] = to_float(data.get(f"{base}hum_masa_humedo_{sufijo}"))
+            seco = next((to_float(data.get(f"{base}hum_seco_{h}h_{sufijo}")) for h in (19, 18, 17)
+                         if to_float(data.get(f"{base}hum_seco_{h}h_{sufijo}")) is not None), None)
+            ws[f"{col}51"] = seco
+            ws[f"{col}52"] = to_float(data.get(f"{base}hum_masa_recipiente_{sufijo}"))
+
+    ws["C57"] = CORTE_TIPO_EXCEL.get(data.get("corte_tipo"), ws["C57"].value)
+    ws["C58"] = CORTE_CONDICION_EXCEL.get(data.get("corte_condicion"), ws["C58"].value)
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_CORTE_DIRECTO)
+
+
 # ════════════════════════════════════════════════════════════════════
 # FORMULARIOS DE ENSAYO (solo captura de datos, sin cálculos)
 # ════════════════════════════════════════════════════════════════════
@@ -4806,8 +4876,8 @@ def render_cbr_form(data, assay_id, muestra_id):
 
 
 def render_corte_directo_form(data, assay_id):
-    st.info("Formulario armado sobre la bitácora oficial GDA-FL-006. Todavía no hay plantilla de Excel "
-            "de descarga conectada — los datos se guardan aquí en la app.")
+    st.info("Formulario armado sobre la bitácora oficial GDA-FL-006. Los datos se llevan a la plantilla "
+            "de Excel GDA-FLC-007 al descargar (abajo, al final del ensayo).")
 
     def _campo(key, label, placeholder="0.00"):
         row = st.columns([2.2, 1])
@@ -5405,6 +5475,19 @@ def render_assay_form():
             data=excel_bytes, file_name=f"Peso_unitario_parafinado_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
+
+    if assay["tipo"] == "corte-directo" and muestra:
+        st.markdown("---")
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        excel_bytes = generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
+        st.download_button(
+            "Descargar Excel (plantilla oficial de Corte Directo)", icon=":material/download:",
+            data=excel_bytes, file_name=f"Corte_directo_{muestra['id_unico']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
+        )
+        st.caption("Trae los datos de las probetas, la humedad y la gravedad específica. Las lecturas de "
+                   "deformación/carga de la máquina no se digitan en la app: el esfuerzo cortante, la cohesión "
+                   "y el ángulo de fricción se completan en el Excel.")
 
     if assay["tipo"] == "cbr" and muestra:
         st.markdown("---")
