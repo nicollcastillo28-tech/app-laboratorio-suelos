@@ -5638,25 +5638,29 @@ def render_consolidacion_form(data, assay_id):
         st.markdown(card_header_html("show_chart", "Lecturas de la Máquina"), unsafe_allow_html=True)
         st.caption("Sube el Excel que arroja la máquina (hoja \"Data2\", columna D): se guardan las lecturas de cada carga y "
                    "van directo a la hoja \"DATOS MAQUINA\" del Excel que descargas. Un archivo por carga.")
-        for i, (enc, _ct, _cd) in enumerate(CONS_MAQ_BLOQUES, start=1):
-            st.markdown(f'<div style="font-weight:700;padding-top:6px;">Carga {enc}</div>', unsafe_allow_html=True)
-            archivo = st.file_uploader(f"Excel de la máquina — {enc}", type=["xlsx"], key=f"cons_maq_upload_{i}_{assay_id}",
-                                        label_visibility="collapsed")
-            if archivo and st.button(f"Cargar {enc}", key=f"cons_maq_cargar_{i}_{assay_id}", icon=":material/publish:"):
-                puntos, aviso = parse_maquina_consolidacion_xlsx(archivo.getvalue())
-                if not puntos:
-                    st.error(aviso)
-                else:
-                    data[f"cons_maq_{i}"] = puntos
-                    st.success(f"Se cargaron {len(puntos)} lecturas ({enc}).")
-            pts = data.get(f"cons_maq_{i}")
-            if pts:
-                fila = st.columns([2, 1])
-                fila[0].markdown(f'<div class="cell-muted" style="padding-top:8px;">Cargado: {len(pts)} lecturas, hasta '
-                                  f'{pts[-1][0] / 60:.0f} min</div>', unsafe_allow_html=True)
-                if fila[1].button("Quitar", key=f"cons_maq_quitar_{i}_{assay_id}"):
-                    data.pop(f"cons_maq_{i}", None)
-                    st.rerun()
+        for par in range(0, len(CONS_MAQ_BLOQUES), 2):
+            cols = st.columns(2)
+            for col, i in zip(cols, (par + 1, par + 2)):
+                enc = CONS_MAQ_BLOQUES[i - 1][0]
+                with col:
+                    st.markdown(f'<div style="font-weight:700;padding-top:6px;">Carga {enc}</div>', unsafe_allow_html=True)
+                    archivo = st.file_uploader(f"Excel de la máquina — {enc}", type=["xlsx"], key=f"cons_maq_upload_{i}_{assay_id}",
+                                                label_visibility="collapsed")
+                    if archivo and st.button(f"Cargar {enc}", key=f"cons_maq_cargar_{i}_{assay_id}", icon=":material/publish:",
+                                              use_container_width=True):
+                        puntos, aviso = parse_maquina_consolidacion_xlsx(archivo.getvalue())
+                        if not puntos:
+                            st.error(aviso)
+                        else:
+                            data[f"cons_maq_{i}"] = puntos
+                            st.success(f"Se cargaron {len(puntos)} lecturas.")
+                    pts = data.get(f"cons_maq_{i}")
+                    if pts:
+                        st.markdown(f'<div class="cell-muted">Cargado: {len(pts)} lecturas, hasta {pts[-1][0] / 60:.0f} min</div>',
+                                    unsafe_allow_html=True)
+                        if st.button("Quitar", key=f"cons_maq_quitar_{i}_{assay_id}", use_container_width=True):
+                            data.pop(f"cons_maq_{i}", None)
+                            st.rerun()
     with st.container(border=True):
         st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
         filas = resultados_consolidacion(data)
