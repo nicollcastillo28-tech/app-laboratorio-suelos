@@ -639,6 +639,24 @@ EQUIPO_CORTE_HUMEDAD = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Horno GDA-E-0
 EQUIPO_PROCTOR = ["Horno GDA-E-007", "Horno GDA-E-404", "Balanza GDA-E-010", "Balanza GDA-E-011", "Balanza GDA-E-012",
                   "Martillo GDA-E-387", "Martillo GDA-E-111", "Tamiz N°4 GDA-E-038", "Tamiz 3/8\" GDA-E-037",
                   "Tamiz 3/4\" GDA-E-035", "Pie de rey GDA-E-110"]
+# CBR de suelos compactados que va junto al Proctor (lado derecho de la bitácora GDA-FL-008 y de la
+# plantilla GDA-FLC-002): 3 moldes de 10, 25 y 56 golpes. Es un CBR APARTE del ensayo "CBR"
+# (inalterado, plantilla GDA-FLC-013) — sus datos viven dentro del ensayo de Proctor.
+CBRC_MOLDES = 3
+CBRC_GOLPES = ["10", "25", "56"]
+CBRC_FILAS = [
+    ("molde", "Molde No."), ("capas", "No. de capas"), ("masa_muestra_molde", "Masa muestra + molde (g)"),
+    ("masa_molde", "Masa del molde (g)"), ("altura", "Altura de la muestra (cm)"), ("diametro", "Diámetro de la muestra (cm)"),
+]
+CBRC_HUM_FILAS = [
+    ("recipiente", "Recipiente No."), ("masa_humedo", "Masa húmeda + recipiente (g)"),
+    ("seco_16h", "Masa seca + recipiente (g) (16 horas)"), ("seco_17h", "Masa seca + recipiente (g) (17 horas)"),
+    ("seco_18h", "Masa seca + recipiente (g) (18 horas)"), ("seco_19h", "Masa seca + recipiente (g) (19 horas)"),
+    ("masa_recipiente", "Masa del recipiente (g)"),
+]
+CBRC_EXP_FILAS = [("exp_inicial", "Lectura inicial expansión (in)"), ("exp_final", "Lectura final expansión (in)")]
+# Filas de la plantilla (columna W/AA/AE) para las 12 profundidades de CBR_PENETRACION_FILAS.
+CBRC_PEN_FILAS_EXCEL = [22, 23, 24, 25, 26, 28, 30, 31, 33, 34, 35, 37]
 PROCTOR_METODOS = ["A", "B", "C"]
 PROCTOR_TAMICES = ["", "3/4\"", "3/8\"", "No. 4"]
 PROCTOR_TAMIZ_EXCEL = {"3/4\"": "¾ \"", "3/8\"": "⅜ \"", "No. 4": "N.4"}  # lista desplegable de L25
@@ -4499,6 +4517,33 @@ def generar_excel_proctor(codigo, perf_codigo, muestra, project, data, observaci
         ws["L25"] = tamiz
     ws["M25"] = to_float(data.get("proc_sobretamano_pct"))
 
+    # CBR de suelos compactados (lado derecho de la plantilla): moldes en las columnas Q, R, S;
+    # penetración en W, AA, AE; expansión en AF, AG, AH. Las celdas de expansión traen valores de
+    # ejemplo (0.1 / 0.5), por eso se escriben siempre (vacías si no hay dato).
+    for i, (col, col_pen, col_exp) in enumerate((("Q", "W", "AF"), ("R", "AA", "AG"), ("S", "AE", "AH")), start=1):
+        def c(campo):
+            return data.get(f"cbrc_{i}_{campo}")
+        ws[f"{col}19"] = to_float(c("golpes"), to_float(CBRC_GOLPES[i - 1]))
+        ws[f"{col}20"] = c("molde") or None
+        ws[f"{col}21"] = to_float(c("capas"))
+        ws[f"{col}22"] = to_float(c("masa_muestra_molde"))
+        ws[f"{col}23"] = to_float(c("masa_molde"))
+        altura, diametro = to_float(c("altura")), to_float(c("diametro"))
+        ws[f"{col}24"] = altura
+        ws[f"{col}25"] = diametro
+        ws[f"{col}27"] = round(math.pi * (diametro / 2) ** 2 * altura, 2) if altura and diametro else None
+        for fila_hum, pref, filas_xl in (("hc", "hc", (34, 35, 37, 38)), ("hd", "hd", (42, 43, 45, 46))):
+            f_rec, f_hum, f_seco, f_masa = filas_xl
+            ws[f"{col}{f_rec}"] = c(f"{pref}_recipiente") or None
+            ws[f"{col}{f_hum}"] = to_float(c(f"{pref}_masa_humedo"))
+            ws[f"{col}{f_seco}"] = next((to_float(c(f"{pref}_seco_{h}h")) for h in (19, 18, 17, 16)
+                                         if to_float(c(f"{pref}_seco_{h}h")) is not None), None)
+            ws[f"{col}{f_masa}"] = to_float(c(f"{pref}_masa_recipiente"))
+        ws[f"{col_exp}45"] = to_float(c("exp_inicial"))
+        ws[f"{col_exp}46"] = to_float(c("exp_final"))
+        for j, fila in enumerate(CBRC_PEN_FILAS_EXCEL, start=1):
+            ws[f"{col_pen}{fila}"] = to_float(c(f"pen_{j}"))
+
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
@@ -5250,8 +5295,8 @@ def resultados_gravedad(data, modo):
 
 
 def render_proctor_form(data, assay_id):
-    st.info("Formulario armado sobre la bitácora oficial GDA-FL-008 (solo la parte del Proctor). Todavía no "
-            "hay plantilla de Excel de descarga conectada — los datos se guardan aquí en la app.")
+    st.info("Formulario armado sobre la bitácora oficial GDA-FL-008: el Proctor y, abajo, su CBR de suelos "
+            "compactados. Los dos salen en el mismo Excel (GDA-FLC-002) al final del ensayo.")
 
     def _tabla(titulo, icono, filas):
         with st.container(border=True):
@@ -5287,6 +5332,64 @@ def render_proctor_form(data, assay_id):
         row[0].markdown('<div style="padding-top:8px;">% retenido de sobretamaños</div>', unsafe_allow_html=True)
         data["proc_sobretamano_pct"] = row[1].text_input("% retenido sobretamaños", value=data.get("proc_sobretamano_pct", ""),
                                                            key=f"proc_sobretamano_pct_{assay_id}", label_visibility="collapsed")
+
+    st.markdown('<div class="section-title">CBR de la muestra compactada (3 moldes)</div>', unsafe_allow_html=True)
+    st.caption("Es un CBR aparte del ensayo \"CBR\" (inalterado): va junto al Proctor y sale en el mismo Excel.")
+
+    def _tabla_cbrc(titulo, icono, filas, key_fn):
+        with st.container(border=True):
+            st.markdown(card_header_html(icono, titulo), unsafe_allow_html=True)
+            head = st.columns([2.2] + [1] * CBRC_MOLDES)
+            for i in range(CBRC_MOLDES):
+                head[i + 1].markdown(f'<div class="cell-muted" style="text-align:center;font-weight:700;">Molde {i + 1}</div>',
+                                      unsafe_allow_html=True)
+            for campo, label in filas:
+                row = st.columns([2.2] + [1] * CBRC_MOLDES)
+                row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+                for i in range(1, CBRC_MOLDES + 1):
+                    key = key_fn(i, campo)
+                    data[key] = row[i].text_input(f"{label} — molde {i}", value=data.get(key, ""),
+                                                   key=f"{key}_{assay_id}", label_visibility="collapsed")
+
+    with st.container(border=True):
+        st.markdown(card_header_html("science", "Número de golpes por molde"), unsafe_allow_html=True)
+        cols_g = st.columns(CBRC_MOLDES)
+        for i in range(1, CBRC_MOLDES + 1):
+            key = f"cbrc_{i}_golpes"
+            data[key] = cols_g[i - 1].text_input(f"Molde {i} — No. de golpes", value=data.get(key, CBRC_GOLPES[i - 1]),
+                                                  key=f"{key}_{assay_id}")
+    _tabla_cbrc("Datos iniciales", "science", CBRC_FILAS, lambda i, c: f"cbrc_{i}_{c}")
+    _tabla_cbrc("Humedad de compactación", "water_drop", CBRC_HUM_FILAS, lambda i, c: f"cbrc_{i}_hc_{c}")
+    _tabla_cbrc("Humedad después de inmersión", "water_drop", CBRC_HUM_FILAS, lambda i, c: f"cbrc_{i}_hd_{c}")
+    _tabla_cbrc("Expansión", "straighten", CBRC_EXP_FILAS, lambda i, c: f"cbrc_{i}_{c}")
+
+    with st.container(border=True):
+        st.markdown(card_header_html("show_chart", "Penetración (fuerza en kN)"), unsafe_allow_html=True)
+        with st.expander("Importar resultados desde el Excel de la prensa", icon=":material/upload_file:"):
+            st.caption("Un archivo por molde (hoja \"Informe\" del Excel de la prensa).")
+            for i in range(1, CBRC_MOLDES + 1):
+                archivo = st.file_uploader(f"Molde {i}", type=["xlsx"], key=f"cbrc_upload_{i}_{assay_id}")
+                if archivo and st.button(f"Cargar molde {i}", key=f"cbrc_cargar_{i}_{assay_id}", icon=":material/publish:"):
+                    valores, aviso = parse_cbr_penetracion_xlsx(archivo.getvalue())
+                    if not valores:
+                        st.error(aviso)
+                    else:
+                        for j, val in valores.items():
+                            st.session_state[f"cbrc_{i}_pen_{j}_{assay_id}"] = val
+                        if aviso:
+                            st.warning(aviso)
+                        st.success(f"Se cargaron {len(valores)} valores (molde {i}).")
+        head = st.columns([1.4] + [1] * CBRC_MOLDES)
+        for i in range(CBRC_MOLDES):
+            head[i + 1].markdown(f'<div class="cell-muted" style="text-align:center;font-weight:700;">Molde {i + 1}</div>',
+                                  unsafe_allow_html=True)
+        for j, (pulg, mm) in enumerate(CBR_PENETRACION_FILAS, start=1):
+            row = st.columns([1.4] + [1] * CBRC_MOLDES)
+            row[0].markdown(f'<div style="padding-top:8px;">{pulg}" ({mm} mm)</div>', unsafe_allow_html=True)
+            for i in range(1, CBRC_MOLDES + 1):
+                key = f"cbrc_{i}_pen_{j}"
+                data[key] = row[i].text_input(f"Fuerza molde {i} {pulg}in", value=data.get(key, ""),
+                                               key=f"{key}_{assay_id}", label_visibility="collapsed", placeholder="kN")
 
     render_equipo(data, "proc", EQUIPO_PROCTOR)
     render_norma_selector("proctor", data, "proc")
@@ -5529,6 +5632,23 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             st.markdown(param_table_html([
                 ("Método", data.get("proc_metodo")), ("Sobretamaños — tamiz No.", data.get("proc_sobretamano_tamiz")),
                 ("% retenido de sobretamaños", data.get("proc_sobretamano_pct"))]), unsafe_allow_html=True)
+        for titulo, icono, filas, key_fn in (
+                ("CBR compactado — datos iniciales", "science", CBRC_FILAS, lambda i, c: f"cbrc_{i}_{c}"),
+                ("CBR compactado — humedad de compactación", "water_drop", CBRC_HUM_FILAS, lambda i, c: f"cbrc_{i}_hc_{c}"),
+                ("CBR compactado — humedad después de inmersión", "water_drop", CBRC_HUM_FILAS, lambda i, c: f"cbrc_{i}_hd_{c}"),
+                ("CBR compactado — expansión", "straighten", CBRC_EXP_FILAS, lambda i, c: f"cbrc_{i}_{c}")):
+            with st.container(border=True):
+                st.markdown(card_header_html(icono, titulo), unsafe_allow_html=True)
+                encabezados = ["PARÁMETRO"] + [f"MOLDE {i} ({data.get(f'cbrc_{i}_golpes') or CBRC_GOLPES[i - 1]} golpes)"
+                                               for i in range(1, CBRC_MOLDES + 1)]
+                st.markdown(param_table_ncol_html(encabezados, [(label, *[data.get(key_fn(i, campo)) for i in range(1, CBRC_MOLDES + 1)])
+                                                                for campo, label in filas]), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("show_chart", "CBR compactado — penetración (kN)"), unsafe_allow_html=True)
+            st.markdown(param_table_ncol_html(["PROFUNDIDAD (in)"] + [f"MOLDE {i}" for i in range(1, CBRC_MOLDES + 1)],
+                                              [(pulg, *[data.get(f"cbrc_{i}_pen_{j}") for i in range(1, CBRC_MOLDES + 1)])
+                                               for j, (pulg, _mm) in enumerate(CBR_PENETRACION_FILAS, start=1)]),
+                        unsafe_allow_html=True)
         equipos, norma = data.get("proc_equipos", []), data.get("proc_norma", "—")
     elif tipo == "gravedad-especifica":
         sel = data.get("gesp_sel", GESP_OPCIONES[0])
@@ -5856,8 +5976,8 @@ def render_assay_form():
             data=generar_excel_proctor(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Proctor_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True, key="dl_proctor")
-        st.caption("Trae la parte del Proctor. El método (A/B/C), la preparación de la muestra y el martillo/molde "
-                   "usado no se digitan en la app: se marcan en el Excel. El CBR va en su propio ensayo.")
+        st.caption("Trae el Proctor y su CBR de suelos compactados (3 moldes). El método (A/B/C), la preparación de "
+                   "la muestra y el martillo/molde usado no se digitan en la app: se marcan en el Excel.")
 
     if assay["tipo"] == "gravedad-especifica" and muestra:
         st.markdown("---")
