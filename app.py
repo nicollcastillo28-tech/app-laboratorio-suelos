@@ -820,7 +820,25 @@ SUPPORTED_ASSAY_MAP = {
     # mismo ensayo, exactamente igual que Granulometría/Pasa 200 comparten datos hoy.
     "Corte CD": "corte-directo", "Corte CU": "corte-directo", "Corte UU": "corte-directo",
     "Gravedad específica": "gravedad-especifica",
+    "Corte Directo": "corte-directo",
 }
+
+
+def unificar_ensayos(labels):
+    """Las casillas Corte CD/CU/UU comparten un solo ensayo (ver SUPPORTED_ASSAY_MAP) — en las
+    listas se muestra una sola entrada "Corte Directo" aunque la bitácora tenga varias marcadas;
+    el modo (CD/CU/UU) se elige adentro del ensayo. El resto de labels queda igual."""
+    vistos, resultado = set(), []
+    for e in labels:
+        tipo = SUPPORTED_ASSAY_MAP.get(e)
+        if tipo == "corte-directo":
+            e = "Corte Directo"
+        if e in vistos:
+            continue
+        vistos.add(e)
+        resultado.append(e)
+    return resultado
+
 
 BITACORA_BASE_COLS = ["Número", "Prof. De", "Prof. A", "Tipo de muestra"] + BITACORA_ENSAYOS + ["Observaciones"]
 
@@ -1702,9 +1720,7 @@ def _ensayos_pendientes_dt():
         codigo = p["codigo_interno"]
         for perf in st.session_state.perforaciones.get(codigo, []):
             for m in st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", []):
-                for ensayo_label, activo in m["ensayos"].items():
-                    if not activo or ensayo_label not in BITACORA_ENSAYOS:
-                        continue
+                for ensayo_label in unificar_ensayos([e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS]):
                     tipo_i = SUPPORTED_ASSAY_MAP.get(ensayo_label)
                     a = get_assay(m["id_unico"], tipo_i) if tipo_i else None
                     if a and a.get("etapa_revision") == "pendiente_ing":
@@ -1877,9 +1893,7 @@ def render_home():
         for key, muestras_perf in st.session_state.muestras.items():
             codigo_proyecto, perf_codigo = key.split("::", 1)
             for m in muestras_perf:
-                for ensayo_label, marcado in m["ensayos"].items():
-                    if not marcado:
-                        continue
+                for ensayo_label in unificar_ensayos([e for e, v in m["ensayos"].items() if v]):
                     tipo_interno = SUPPORTED_ASSAY_MAP.get(ensayo_label)
                     if not tipo_interno:
                         continue  # sin formulario propio, no hay nada que "Abrir"
@@ -2738,9 +2752,7 @@ def _perforacion_ensayos_progress(codigo, perf_codigo):
     muestras = st.session_state.muestras.get(f"{codigo}::{perf_codigo}", [])
     total_ensayos, completados = 0, 0
     for m in muestras:
-        for label, activo in m["ensayos"].items():
-            if not activo or label not in BITACORA_ENSAYOS:
-                continue
+        for label in unificar_ensayos([e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS]):
             total_ensayos += 1
             tipo_interno = SUPPORTED_ASSAY_MAP.get(label)
             a = get_assay(m["id_unico"], tipo_interno) if tipo_interno else None
@@ -2769,7 +2781,7 @@ def _render_tabla_muestras_con_semaforo(muestras):
         cols[0].markdown(f'<span class="cell-id">M-{html.escape(str(m["numero"]))}</span>', unsafe_allow_html=True)
         cols[1].markdown(f'<span class="cell-muted">{html.escape(m["tipo_muestra"])}</span>', unsafe_allow_html=True)
         cols[2].markdown(f'<span class="cell-muted">{m["profundidad_de"]}–{m["profundidad_hasta"]} m</span>', unsafe_allow_html=True)
-        ensayos_sol = [e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS]
+        ensayos_sol = unificar_ensayos([e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS])
         chip_parts = []
         for e in ensayos_sol:
             tipo_interno = SUPPORTED_ASSAY_MAP.get(e)
@@ -3608,7 +3620,7 @@ def render_muestra_detail():
 
     # Filtra por si la muestra guarda un ensayo que ya no es seleccionable (p. ej. "Pasa 200",
     # que quedó incluido dentro de Granulometría) — no se muestra aunque quede marcado en datos viejos.
-    solicitados = [e for e, v in muestra["ensayos"].items() if v and e in BITACORA_ENSAYOS]
+    solicitados = unificar_ensayos([e for e, v in muestra["ensayos"].items() if v and e in BITACORA_ENSAYOS])
     finalizados = sum(
         1 for e in solicitados
         if SUPPORTED_ASSAY_MAP.get(e) and (get_assay(muestra_id, SUPPORTED_ASSAY_MAP[e]) or {}).get("status") == "finalizado"
@@ -5444,7 +5456,7 @@ def render_search():
         for m in muestras:
             if muestra_choice != "(todas)" and m["id_unico"] != muestra_choice:
                 continue
-            solicitados = [e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS]
+            solicitados = unificar_ensayos([e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS])
             if f_type != "(todos)":
                 solicitados = [e for e in solicitados if ASSAY_LABELS.get(SUPPORTED_ASSAY_MAP.get(e), None) == f_type]
             for ensayo_label in solicitados:
