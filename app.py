@@ -40,6 +40,7 @@ TEMPLATE_CORTE_DIRECTO = os.path.join(BASE_DIR, "templates", "GDA-FLC-007_corte_
 TEMPLATE_GESP_FINO = os.path.join(BASE_DIR, "templates", "GDA-FLC-027_gravedad_fino.xlsx")
 TEMPLATE_GESP_GRUESO = os.path.join(BASE_DIR, "templates", "GDA-FLC-028_gravedad_grueso.xlsx")
 TEMPLATE_GESP_ARCILLA = os.path.join(BASE_DIR, "templates", "GDA-FLC-006_gravedad_arcilla.xlsx")
+TEMPLATE_PROCTOR = os.path.join(BASE_DIR, "templates", "GDA-FLC-002_proctor_cbr.xlsm")
 
 ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "laboratorista": "Laboratorista", "ingeniero": "Director Técnico"}
 ROLE_INICIALES = {"jefe": "JL", "laboratorista": "LB", "ingeniero": "DT"}
@@ -639,6 +640,8 @@ EQUIPO_PROCTOR = ["Horno GDA-E-007", "Horno GDA-E-404", "Balanza GDA-E-010", "Ba
                   "Martillo GDA-E-387", "Martillo GDA-E-111", "Tamiz N°4 GDA-E-038", "Tamiz 3/8\" GDA-E-037",
                   "Tamiz 3/4\" GDA-E-035", "Pie de rey GDA-E-110"]
 PROCTOR_METODOS = ["A", "B", "C"]
+PROCTOR_TAMICES = ["", "3/4\"", "3/8\"", "No. 4"]
+PROCTOR_TAMIZ_EXCEL = {"3/4\"": "¾ \"", "3/8\"": "⅜ \"", "No. 4": "N.4"}  # lista desplegable de L25
 PROCTOR_PRUEBAS = 4
 PROCTOR_FILAS = [
     ("golpes", "No. de golpes"), ("molde", "Molde No."), ("capas", "No. de capas"),
@@ -4450,6 +4453,58 @@ def generar_excel_gravedad_fino(codigo, perf_codigo, muestra, project, data, obs
                                     observaciones_ensayo)
 
 
+def generar_excel_proctor(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    """Proctor (GDA-FLC-002, INV E-141/E-142). La plantilla es un .xlsm que trae juntos el informe
+    de Proctor (izquierda) y el de CBR (derecha) — acá solo se llena el Proctor; el CBR se descarga
+    desde su propio ensayo. Los cálculos (humedad, densidades, humedad óptima, curva) los hace el
+    Excel. El método (A/B/C), la preparación de la muestra, el martillo y el molde usado no se
+    llenan: no se digitan en la bitácora."""
+    wb = load_workbook(TEMPLATE_PROCTOR, keep_vba=True)
+    ws = wb["Hoja1"]
+    ws["D6"] = project.get("cliente", "") if project else ""
+    ws["D7"] = project["nombre"] if project else codigo
+    ws["D8"] = project.get("correo_cliente", "") if project else ""
+    ws["D9"] = project.get("localizacion", "") if project else ""
+    if project and project.get("muestra_tomada_por"):
+        ws["D10"] = project["muestra_tomada_por"]
+    ws["K6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    ws["K7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
+    ws["K8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    ws["L9"] = project.get("numero", "") if project else ""
+    ws["M9"] = project.get("anio", "") if project else ""
+    perf = get_perforacion(codigo, perf_codigo)
+    ws["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
+    ws["F12"] = perf_codigo
+    ws["H12"] = muestra["numero"]
+    ws["K12"] = to_float(muestra.get("profundidad_de"))
+    ws["M12"] = to_float(muestra.get("profundidad_hasta"))
+    ws["D13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+
+    for i, col in enumerate("EFGH", start=1):
+        def v(campo):
+            return data.get(f"proc_{i}_{campo}")
+        ws[f"{col}20"] = to_float(v("golpes"))
+        ws[f"{col}21"] = to_float(v("capas"))
+        ws[f"{col}22"] = to_float(v("masa_humedo_molde"))
+        ws[f"{col}23"] = to_float(v("masa_molde"))
+        ws[f"{col}24"] = to_float(v("volumen_molde"))
+        ws[f"{col}28"] = (v("hum_recipiente") or None)
+        ws[f"{col}29"] = to_float(v("hum_masa_humedo"))
+        # La plantilla trae una sola fila de masa seca: se toma la última lectura (19, 18, 17 o 16 h).
+        ws[f"{col}31"] = next((to_float(v(f"hum_seco_{h}h")) for h in (19, 18, 17, 16)
+                               if to_float(v(f"hum_seco_{h}h")) is not None), None)
+        ws[f"{col}32"] = to_float(v("hum_masa_recipiente"))
+    tamiz = PROCTOR_TAMIZ_EXCEL.get(data.get("proc_sobretamano_tamiz"))
+    if tamiz:
+        ws["L25"] = tamiz
+    ws["M25"] = to_float(data.get("proc_sobretamano_pct"))
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return _restaurar_imagenes_perdidas(_reparar_graficos_perdidos(bio.getvalue(), TEMPLATE_PROCTOR), TEMPLATE_PROCTOR)
+
+
 def _fijar_celda_formula(xlsx_bytes, celda, formula):
     """Reemplaza la fórmula de una celda ya guardada, editando el XML de la primera hoja para no
     pasar otra vez por openpyxl (que rompería lo que _restaurar_imagenes_perdidas ya restauró)."""
@@ -5223,9 +5278,11 @@ def render_proctor_form(data, assay_id):
                                         index=PROCTOR_METODOS.index(actual) if actual in PROCTOR_METODOS else 0,
                                         key=f"proc_metodo_{assay_id}")
         row = st.columns([2.2, 1])
-        row[0].markdown('<div style="padding-top:8px;">Sobretamaños — tamiz No.</div>', unsafe_allow_html=True)
-        data["proc_sobretamano_tamiz"] = row[1].text_input("Sobretamaños tamiz", value=data.get("proc_sobretamano_tamiz", ""),
-                                                             key=f"proc_sobretamano_tamiz_{assay_id}", label_visibility="collapsed")
+        row[0].markdown('<div style="padding-top:8px;">Sobretamaños — tamiz</div>', unsafe_allow_html=True)
+        actual_t = data.get("proc_sobretamano_tamiz", "")
+        data["proc_sobretamano_tamiz"] = row[1].selectbox(
+            "Sobretamaños tamiz", PROCTOR_TAMICES, index=PROCTOR_TAMICES.index(actual_t) if actual_t in PROCTOR_TAMICES else 0,
+            key=f"proc_sobretamano_tamiz_{assay_id}", label_visibility="collapsed", format_func=lambda x: x or "—")
         row = st.columns([2.2, 1])
         row[0].markdown('<div style="padding-top:8px;">% retenido de sobretamaños</div>', unsafe_allow_html=True)
         data["proc_sobretamano_pct"] = row[1].text_input("% retenido sobretamaños", value=data.get("proc_sobretamano_pct", ""),
@@ -5790,6 +5847,17 @@ def render_assay_form():
             data=excel_bytes, file_name=f"Peso_unitario_parafinado_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
+
+    if assay["tipo"] == "proctor" and muestra:
+        st.markdown("---")
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        st.download_button(
+            "Descargar Excel (plantilla oficial de Proctor)", icon=":material/download:",
+            data=generar_excel_proctor(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            file_name=f"Proctor_{muestra['id_unico']}.xlsm",
+            mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True, key="dl_proctor")
+        st.caption("Trae la parte del Proctor. El método (A/B/C), la preparación de la muestra y el martillo/molde "
+                   "usado no se digitan en la app: se marcan en el Excel. El CBR va en su propio ensayo.")
 
     if assay["tipo"] == "gravedad-especifica" and muestra:
         st.markdown("---")
