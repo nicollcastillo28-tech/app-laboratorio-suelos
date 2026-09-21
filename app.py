@@ -4399,6 +4399,32 @@ CORTE_HUMEDAD_CAMPOS = [
     ("hum_masa_recipiente", "Masa del recipiente (g)"),
 ]
 
+def parse_cbr_penetracion_xlsx(file_bytes):
+    """Lee el Excel que genera la prensa de CBR (hoja "Informe", tabla "RESULTADOS DEL ENSAYO":
+    penetración en pulgadas en la columna V y fuerza en kN en la columna AB, filas 19 en
+    adelante) y devuelve ({índice de CBR_PENETRACION_FILAS: fuerza kN como texto}, aviso)."""
+    try:
+        wb = load_workbook(BytesIO(file_bytes), data_only=True, read_only=True)
+    except Exception:
+        return {}, "No se pudo abrir el archivo como Excel."
+    ws = wb["Informe"] if "Informe" in wb.sheetnames else wb.worksheets[0]
+    por_pulgada = {}
+    for row in ws.iter_rows(min_row=19, max_row=45, min_col=22, max_col=28, values_only=True):
+        pulg, kn = row[0], row[6]
+        if isinstance(pulg, (int, float)) and isinstance(kn, (int, float)):
+            por_pulgada[round(float(pulg), 4)] = kn
+    valores = {}
+    for i, (pulg, _mm) in enumerate(CBR_PENETRACION_FILAS, start=1):
+        kn = por_pulgada.get(round(float(pulg), 4))
+        if kn is not None:
+            valores[i] = f"{kn:.3f}".rstrip("0").rstrip(".") or "0"
+    if not valores:
+        return {}, ("No encontré la tabla de penetración/fuerza en este archivo (se espera la hoja \"Informe\" "
+                    "con penetración en la columna V y fuerza kN en la columna AB).")
+    faltan = len(CBR_PENETRACION_FILAS) - len(valores)
+    return valores, (f"Faltaron {faltan} profundidad(es) en el archivo — complétalas a mano." if faltan else "")
+
+
 CAMPOS_REQUERIDOS_POR_TIPO = {
     "humedad": CAMPOS_REQUERIDOS_HUMEDAD,
     "pasa200": CAMPOS_REQUERIDOS_PASA200,
@@ -4695,10 +4721,32 @@ def render_cbr_form(data, assay_id, muestra_id):
     with st.container(border=True):
         st.markdown(card_header_html("show_chart", "Penetración"), unsafe_allow_html=True)
         st.caption("Fuerza (kN) leída en cada profundidad — el esfuerzo (MPa) y el CBR a 0.1\"/0.2\" los calcula el Excel.")
+        with st.expander("Importar resultados desde el Excel de la prensa", icon=":material/upload_file:"):
+            st.caption("Sube el Excel que genera la prensa (hoja \"Informe\") — se llenan solas las fuerzas en kN "
+                       "de esa columna. Puedes corregir cualquier valor después.")
+            for suf, titulo in (("antes", "Antes de inmersión"), ("despues", "Después de inmersión")):
+                archivo = st.file_uploader(titulo, type=["xlsx"], key=f"cbr_pen_upload_{suf}_{assay_id}")
+                if archivo and st.button(f"Cargar {titulo.lower()}", key=f"cbr_pen_cargar_{suf}_{assay_id}",
+                                          icon=":material/publish:"):
+                    valores, aviso = parse_cbr_penetracion_xlsx(archivo.getvalue())
+                    if not valores:
+                        st.error(aviso)
+                    else:
+                        for i, v in valores.items():
+                            st.session_state[f"cbr_pen_{suf}_{i}_{assay_id}"] = v
+                        if aviso:
+                            st.warning(aviso)
+                        st.success(f"Se cargaron {len(valores)} valores ({titulo.lower()}).")
+
         head = st.columns([1.2, 1, 1])
         head[0].markdown('<div class="cell-muted" style="font-weight:700;">Profundidad</div>', unsafe_allow_html=True)
         head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Fuerza antes (kN)</div>', unsafe_allow_html=True)
         head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Fuerza después (kN)</div>', unsafe_allow_html=True)
+        row0 = st.columns([1.2, 1, 1])
+        row0[0].markdown('<div style="padding-top:8px;">0.000" (0 mm)</div>', unsafe_allow_html=True)
+        for c in (row0[1], row0[2]):
+            c.markdown(f'<div style="padding:8px 12px;border:1px solid {BORDER};border-radius:8px;background:{BG};'
+                       f'color:{NEUTRAL};text-align:center;">0</div>', unsafe_allow_html=True)
         for i, (pulg, mm) in enumerate(CBR_PENETRACION_FILAS, start=1):
             row = st.columns([1.2, 1, 1])
             row[0].markdown(f'<div style="padding-top:8px;">{pulg}" ({mm} mm)</div>', unsafe_allow_html=True)
