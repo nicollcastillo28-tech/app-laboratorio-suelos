@@ -563,7 +563,7 @@ SIEVES = [
     ("s_60", "No. 60", "0.25", "E32"), ("s_100", "No. 100", "0.149", "E33"), ("s_200", "No. 200", "0.075", "E34"),
 ]
 
-ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica"}
+ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor"}
 NORMAS_ENSAYO = {
     "granulometria": ["INV-214-13", "INV.E-213-13", "INV.E 123-13"],
     "humedad": ["INV E-122", "ASTM D2216"],
@@ -571,6 +571,7 @@ NORMAS_ENSAYO = {
     "cbr": ["INV E-148", "ASTM D1883"],
     "corte-directo": ["INV E-154", "ASTM D3080"],
     "gravedad-especifica": ["INV E-222", "INV E-223", "INV E-128", "ASTM C128", "ASTM C127", "ASTM D854"],
+    "proctor": ["INV E-141-13", "INV E-142-13"],
 }
 STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado"}
 STATUS_BADGE = {"sin-iniciar": "badge-danger", "en-proceso": "badge-warning", "finalizado": "badge-success"}
@@ -631,6 +632,25 @@ EQUIPO_CBR = [
 EQUIPO_CORTE_DIRECTO = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Horno GDA-E-007",
                         "Horno GDA-E-404", "Máquina de corte GDA-E-001", "Máquina de corte GDA-E-002"]
 EQUIPO_CORTE_HUMEDAD = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Horno GDA-E-007", "Horno GDA-E-404"]
+
+# Proctor (INV E-141 / E-142) — bitácora GDA-FL-008, que comparte hoja con el CBR. Solo los equipos
+# que se usan en el Proctor (se dejan fuera los del CBR: celdas de carga, máquina MULT, deformímetro).
+EQUIPO_PROCTOR = ["Horno GDA-E-007", "Horno GDA-E-404", "Balanza GDA-E-010", "Balanza GDA-E-011", "Balanza GDA-E-012",
+                  "Martillo GDA-E-387", "Martillo GDA-E-111", "Tamiz N°4 GDA-E-038", "Tamiz 3/8\" GDA-E-037",
+                  "Tamiz 3/4\" GDA-E-035", "Pie de rey GDA-E-110"]
+PROCTOR_METODOS = ["A", "B", "C"]
+PROCTOR_PRUEBAS = 4
+PROCTOR_FILAS = [
+    ("golpes", "No. de golpes"), ("molde", "Molde No."), ("capas", "No. de capas"),
+    ("masa_humedo_molde", "Masa de la muestra húmeda + molde (g)"), ("masa_molde", "Masa molde (g)"),
+    ("volumen_molde", "Volumen del molde (cm³)"),
+]
+PROCTOR_HUMEDAD_FILAS = [
+    ("hum_recipiente", "Recipiente No."), ("hum_masa_humedo", "Masa recipiente + muestra húmeda (g)"),
+    ("hum_seco_16h", "Masa recipiente + muestra seca (g) (16 horas)"), ("hum_seco_17h", "Masa recipiente + muestra seca (g) (17 horas)"),
+    ("hum_seco_18h", "Masa recipiente + muestra seca (g) (18 horas)"), ("hum_seco_19h", "Masa recipiente + muestra seca (g) (19 horas)"),
+    ("hum_masa_recipiente", "Masa del recipiente (g)"),
+]
 EQUIPO_CORTE_GRAVEDAD = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Termómetro GDA-E-126", "Baño de María GDA-E-009"]
 CORTE_GRAVEDAD_CAMPOS = [
     ("masa_suelo_seco", "Masa del suelo seco (g)"),
@@ -844,6 +864,7 @@ SUPPORTED_ASSAY_MAP = {
     "Corte CD": "corte-directo", "Corte CU": "corte-directo", "Corte UU": "corte-directo",
     "Gravedad específica": "gravedad-especifica",
     "Corte Directo": "corte-directo",
+    "Proctor": "proctor",
 }
 
 
@@ -5173,6 +5194,47 @@ def resultados_gravedad(data, modo):
             ("Gravedad específica", fmt_num(gt, 4))]
 
 
+def render_proctor_form(data, assay_id):
+    st.info("Formulario armado sobre la bitácora oficial GDA-FL-008 (solo la parte del Proctor). Todavía no "
+            "hay plantilla de Excel de descarga conectada — los datos se guardan aquí en la app.")
+
+    def _tabla(titulo, icono, filas):
+        with st.container(border=True):
+            st.markdown(card_header_html(icono, titulo), unsafe_allow_html=True)
+            head = st.columns([2.2] + [1] * PROCTOR_PRUEBAS)
+            for i in range(PROCTOR_PRUEBAS):
+                head[i + 1].markdown(f'<div class="cell-muted" style="text-align:center;font-weight:700;">Prueba {i + 1}</div>',
+                                      unsafe_allow_html=True)
+            for campo, label in filas:
+                row = st.columns([2.2] + [1] * PROCTOR_PRUEBAS)
+                row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+                for i in range(1, PROCTOR_PRUEBAS + 1):
+                    key = f"proc_{i}_{campo}"
+                    data[key] = row[i].text_input(f"{label} — prueba {i}", value=data.get(key, ""),
+                                                   key=f"{key}_{assay_id}", label_visibility="collapsed")
+
+    _tabla("Compactación", "science", PROCTOR_FILAS)
+    _tabla("Humedad", "water_drop", PROCTOR_HUMEDAD_FILAS)
+
+    with st.container(border=True):
+        st.markdown(card_header_html("tune", "Condiciones del Ensayo"), unsafe_allow_html=True)
+        actual = data.get("proc_metodo", PROCTOR_METODOS[0])
+        data["proc_metodo"] = st.radio("Método", PROCTOR_METODOS, horizontal=True,
+                                        index=PROCTOR_METODOS.index(actual) if actual in PROCTOR_METODOS else 0,
+                                        key=f"proc_metodo_{assay_id}")
+        row = st.columns([2.2, 1])
+        row[0].markdown('<div style="padding-top:8px;">Sobretamaños — tamiz No.</div>', unsafe_allow_html=True)
+        data["proc_sobretamano_tamiz"] = row[1].text_input("Sobretamaños tamiz", value=data.get("proc_sobretamano_tamiz", ""),
+                                                             key=f"proc_sobretamano_tamiz_{assay_id}", label_visibility="collapsed")
+        row = st.columns([2.2, 1])
+        row[0].markdown('<div style="padding-top:8px;">% retenido de sobretamaños</div>', unsafe_allow_html=True)
+        data["proc_sobretamano_pct"] = row[1].text_input("% retenido sobretamaños", value=data.get("proc_sobretamano_pct", ""),
+                                                           key=f"proc_sobretamano_pct_{assay_id}", label_visibility="collapsed")
+
+    render_equipo(data, "proc", EQUIPO_PROCTOR)
+    render_norma_selector("proctor", data, "proc")
+
+
 def render_gravedad_especifica_form(data, assay_id):
     st.info("Los resultados se calculan aquí con las mismas fórmulas de la plantilla de Excel; el archivo "
             "para descargar está al final del ensayo.")
@@ -5397,6 +5459,20 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                         for i, (pulg, _mm) in enumerate(CBR_PENETRACION_FILAS, start=1)]
             st.markdown(param_table_ncol_html(headers, pen_rows), unsafe_allow_html=True)
         equipos, norma = data.get("cbr_equipos", []), data.get("cbr_norma", "—")
+    elif tipo == "proctor":
+        for titulo, icono, filas in (("Compactación", "science", PROCTOR_FILAS), ("Humedad", "water_drop", PROCTOR_HUMEDAD_FILAS)):
+            with st.container(border=True):
+                st.markdown(card_header_html(icono, titulo), unsafe_allow_html=True)
+                encabezados = ["PARÁMETRO"] + [f"PRUEBA {i}" for i in range(1, PROCTOR_PRUEBAS + 1)]
+                filas_tabla = [(label, *[data.get(f"proc_{i}_{campo}") for i in range(1, PROCTOR_PRUEBAS + 1)])
+                               for campo, label in filas]
+                st.markdown(param_table_ncol_html(encabezados, filas_tabla), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("tune", "Condiciones del Ensayo"), unsafe_allow_html=True)
+            st.markdown(param_table_html([
+                ("Método", data.get("proc_metodo")), ("Sobretamaños — tamiz No.", data.get("proc_sobretamano_tamiz")),
+                ("% retenido de sobretamaños", data.get("proc_sobretamano_pct"))]), unsafe_allow_html=True)
+        equipos, norma = data.get("proc_equipos", []), data.get("proc_norma", "—")
     elif tipo == "gravedad-especifica":
         sel = data.get("gesp_sel", GESP_OPCIONES[0])
         equipos = []
@@ -5596,6 +5672,8 @@ def render_assay_form():
             render_corte_directo_form(data, assay_id)
         elif assay["tipo"] == "gravedad-especifica":
             render_gravedad_especifica_form(data, assay_id)
+        elif assay["tipo"] == "proctor":
+            render_proctor_form(data, assay_id)
 
         with st.expander("Observaciones (opcional)", icon=":material/notes:", expanded=bool(assay.get("observations"))):
             observations = st.text_area("Observaciones", value=assay.get("observations", ""), label_visibility="collapsed",
