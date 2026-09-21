@@ -4606,15 +4606,34 @@ def render_cbr_form(data, assay_id, muestra_id):
     with st.container(border=True):
         st.markdown(card_header_html("science", "Datos Iniciales"), unsafe_allow_html=True)
         st.caption("Molde, diámetro, altura y masa del molde son los mismos antes y después de inmersión — "
-                   "solo la masa de la muestra + molde cambia (la muestra absorbe agua).")
-        _campo("cbr_molde", "Molde No.", placeholder="1")
-        _campo("cbr_diametro", "Diámetro de la muestra (cm)")
-        _campo("cbr_altura", "Altura de la muestra (cm)")
-        _campo("cbr_masa_molde", "Masa molde (g)")
+                   "se digitan en \"Antes\" y se copian solos a \"Después\". Solo la masa de la muestra + "
+                   "molde cambia (la muestra absorbe agua).")
         head = st.columns([2, 1, 1])
         head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Antes</div>', unsafe_allow_html=True)
         head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Después</div>', unsafe_allow_html=True)
+
+        def _campo_replicado(key, label, placeholder="0.00"):
+            row = st.columns([2, 1, 1])
+            row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+            data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                           label_visibility="collapsed", placeholder=placeholder)
+            copia = html.escape(str(data[key])) if data[key] else "—"
+            row[2].markdown(f'<div style="padding:8px 12px;border:1px solid {BORDER};border-radius:8px;'
+                             f'background:{BG};color:{NEUTRAL};min-height:38px;">{copia}</div>', unsafe_allow_html=True)
+
+        _campo_replicado("cbr_molde", "Molde No.", placeholder="1")
+        _campo_replicado("cbr_diametro", "Diámetro de la muestra (cm)")
+        _campo_replicado("cbr_altura", "Altura de la muestra (cm)")
         _campo_antes_despues("cbr_masa_muestra_molde", "Masa de la muestra + molde (g)")
+        _campo_replicado("cbr_masa_molde", "Masa molde (g)")
+
+        antes_mm = str(data.get("cbr_masa_muestra_molde_antes", "")).strip()
+        despues_mm = str(data.get("cbr_masa_muestra_molde_despues", "")).strip()
+        if antes_mm and antes_mm == despues_mm:
+            st.markdown(f"<style>.st-key-cbr_masa_muestra_molde_despues_{assay_id} input {{ border: 2px solid #d32f2f !important; "
+                        f"background-color: #fdecea !important; }}</style>", unsafe_allow_html=True)
+            st.error("La masa de la muestra + molde después de inmersión es igual a la de antes — la muestra "
+                     "debería haber absorbido agua. Revisa el dato.")
 
     with st.container(border=True):
         st.markdown(card_header_html("water_drop", "Humedad de inmersión"), unsafe_allow_html=True)
