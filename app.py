@@ -5028,9 +5028,73 @@ def render_corte_directo_form(data, assay_id):
     render_norma_selector("corte-directo", data, "corte")
 
 
+@st.cache_data
+def _tabla_agua_temperatura():
+    """Tabla 1 de la plantilla GDA-FLC-006: {temperatura °C: (densidad del agua, coeficiente K)}."""
+    tabla = {}
+    ws = load_workbook(TEMPLATE_GESP_ARCILLA, data_only=True, read_only=True)["Hoja1"]
+    for row in ws.iter_rows(min_row=4, max_row=163, min_col=41, max_col=43, values_only=True):
+        t, dens, k = row
+        if isinstance(t, (int, float)) and isinstance(dens, (int, float)) and isinstance(k, (int, float)):
+            tabla[round(float(t), 1)] = (dens, k)
+    return tabla
+
+
+def resultados_gravedad(data, modo):
+    """Mismas fórmulas que las plantillas de Excel (GDA-FLC-027/028/006), para mostrar el
+    resultado en la app antes de descargar. Devuelve [(etiqueta, valor)]; lista vacía si todavía
+    faltan datos. modo: 'fino' (INV E-222), 'grueso' (INV E-223) o 'arcilla' (INV E-128)."""
+    def f(k):
+        return to_float(data.get(k))
+    if modo == "fino":
+        a, b, c, s = f("gesp_f_masa_seco"), f("gesp_f_masa_pic_agua"), f("gesp_f_masa_pic_agua_suelo"), f("gesp_f_masa_sss")
+        if None in (a, b, c, s) or a == 0 or (b + s - c) == 0 or (b + a - c) == 0:
+            return []
+        seca, sss, aparente = a / (b + s - c), s / (b + s - c), a / (b + a - c)
+        return [("Densidad relativa seca al horno", fmt_num(seca)), ("Densidad relativa SSS", fmt_num(sss)),
+                ("Densidad relativa aparente", fmt_num(aparente)),
+                ("Densidad seca al horno (kg/m³)", fmt_num(997.5 * seca, 1)),
+                ("Densidad SSS (kg/m³)", fmt_num(997.5 * sss, 1)),
+                ("Densidad aparente (kg/m³)", fmt_num(997.5 * aparente, 1)),
+                ("Absorción (%)", fmt_num((s - a) / a * 100, 2))]
+    if modo == "grueso":
+        a, b, c = f("gesp_g_masa_seco"), f("gesp_g_masa_sumergido"), f("gesp_g_masa_sss")
+        if None in (a, b, c) or a == 0 or (c - b) == 0 or (a - b) == 0:
+            return []
+        seca, sss, aparente = a / (c - b), c / (c - b), a / (a - b)
+        return [("Densidad relativa seca al horno", fmt_num(seca)), ("Densidad relativa SSS", fmt_num(sss)),
+                ("Densidad relativa aparente", fmt_num(aparente)),
+                ("Densidad seca al horno (kg/m³)", fmt_num(997.5 * seca, 1)),
+                ("Densidad SSS (kg/m³)", fmt_num(997.5 * sss, 1)),
+                ("Densidad aparente (kg/m³)", fmt_num(997.5 * aparente, 1)),
+                ("Absorción (%)", fmt_num((c - a) / a * 100, 2))]
+    ws_, wpw, wpws, temp = f("gesp_a_masa_aire"), f("gesp_a_masa_pic_agua"), f("gesp_a_masa_pic_muestra"), f("gesp_a_temp")
+    if None in (ws_, wpw, wpws, temp):
+        return []
+    dens_k = _tabla_agua_temperatura().get(round(temp, 1))
+    if not dens_k or (wpw + ws_ - wpws) == 0:
+        return []
+    gt = ws_ * dens_k[0] / (wpw + ws_ - wpws)
+    filas = [("Peso específico del agua (g/cm³)", fmt_num(dens_k[0], 5)), ("Gravedad específica a la temperatura del ensayo", fmt_num(gt, 4))]
+    if (f("gesp_a_pct_retenido") or 0) == 0:
+        filas.append(("Gravedad específica total corregida a 20 °C", fmt_num(gt * dens_k[1], 4)))
+    else:
+        filas.append(("Gravedad específica total corregida a 20 °C", "con material retenido en el tamiz No. 4 se calcula en el Excel"))
+    return filas
+
+
 def render_gravedad_especifica_form(data, assay_id):
-    st.info("Este ensayo todavía no tiene una plantilla oficial de Excel conectada — los datos "
-            "se guardan aquí en la app mientras se arma esa plantilla.")
+    st.info("Los resultados se calculan aquí con las mismas fórmulas de la plantilla de Excel; el archivo "
+            "para descargar está al final del ensayo.")
+
+    def _resultados(modo):
+        filas = resultados_gravedad(data, modo)
+        with st.container(border=True):
+            st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+            if filas:
+                st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+            else:
+                st.caption("Se muestran cuando estén digitados todos los datos de arriba.")
 
     def _campos(titulo, icono, campos):
         with st.container(border=True):
@@ -5051,12 +5115,15 @@ def render_gravedad_especifica_form(data, assay_id):
     hace_gruesos = data["gesp_sel"] in (GESP_OPCIONES[1], GESP_OPCIONES[2])
     if hace_finos:
         _campos("Gravedad Específica que pasa el tamiz No. 4", "science", GESP_FINOS_CAMPOS)
+        _resultados("fino")
         render_equipo(data, "gesp_finos", EQUIPO_GESP_FINOS)
     if hace_gruesos:
         _campos("Gravedad Específica que retiene el tamiz No. 4", "science", GESP_GRUESOS_CAMPOS)
+        _resultados("grueso")
         render_equipo(data, "gesp_gruesos", EQUIPO_GESP_GRUESOS)
     if data["gesp_sel"] == GESP_OPCIONES[3]:
         _campos("Gravedad Específica relativa en arcillas y limos (INV E-128-13)", "science", GESP_ARCILLA_CAMPOS)
+        _resultados("arcilla")
         render_equipo(data, "gesp_finos", EQUIPO_GESP_FINOS)
     render_norma_selector("gravedad-especifica", data, "gesp")
 
