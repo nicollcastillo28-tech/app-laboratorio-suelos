@@ -5258,7 +5258,8 @@ def render_assay_form():
                 db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status="en-proceso")
                 if pasa200_gran_sibling:
                     db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
-                navigate("muestra-detail")
+                assay.update(data=data, observations=observations, laboratorist=laboratorist, status="en-proceso")
+                st.toast("Borrador guardado.", icon=":material/check_circle:")
         with col2:
             if st.button("Enviar a revisión", type="primary", use_container_width=True, icon=":material/send:"):
                 faltantes = campos_faltantes(assay["tipo"], data)
