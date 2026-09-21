@@ -719,6 +719,7 @@ CONS_PIC_CALIBRACION = {1: (-0.1428, 688.64), 2: (-0.1158, 694.37), 3: (-0.0614,
 # Compresión inconfinada (INV E-152) — bitácora GDA-FL-005 y plantilla GDA-FLC-008 (.xlsm).
 CI_DEFORMACIONES = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 120, 140, 160, 180, 200, 220, 240, 260, 280, 300,
                     330, 360, 390, 420, 450, 480, 510, 540, 650, 700, 750, 800, 900, 1000]  # 0.001 in
+CI_FILA_MAQUINA, CI_MAX_MAQUINA = 26, 33  # los datos de la máquina empiezan en la fila del cero (26)
 CI_FILAS_EXCEL = list(range(27, 59))  # la plantilla trae 32 filas de lectura (la 26 es el cero)
 CI_CONDICIONES = ["Inalterada", "Compactada", "Remodelada"]
 CI_MUESTREOS = ["Tubo Shelby", "SPT", "NQ - Barrena", "HQ - Barrena"]
@@ -5791,6 +5792,71 @@ def _ci_lecturas(data):
     return lecturas
 
 
+def _ci_puntos(data):
+    """[(fila de la plantilla, tiempo en s o None, deformación mm, fuerza kN o None)]. Si se cargaron los datos de la
+    máquina se usan esos (desde la fila 26, la del cero); si no, las lecturas de la bitácora (desde la fila 27; el
+    tiempo solo se calcula si hay velocidad de falla)."""
+    maquina = data.get("ci_maq")
+    if maquina:
+        return [(CI_FILA_MAQUINA + i, t, d, f) for i, (t, f, d) in enumerate(maquina[:CI_MAX_MAQUINA])]
+    velocidad = to_float(data.get("ci_velocidad"))
+    puntos = []
+    for fila, (deformacion, carga) in zip(CI_FILAS_EXCEL, _ci_lecturas(data)):
+        mm = round(deformacion * 0.0254, 4)
+        puntos.append((fila, round(mm / velocidad * 60, 1) if velocidad else None, mm, carga))
+    return puntos
+
+
+def parse_maquina_ci_texto(texto):
+    """Datos de la máquina pegados desde Excel: tiempo (s), fuerza (kN) y deformación (mm) separados por tabulador o
+    espacios; los encabezados se ignoran y una fuerza "#N/D" queda vacía. Devuelve [[t, fuerza|None, deformación]]."""
+    filas = []
+    for linea in (texto or "").splitlines():
+        linea = linea.strip()
+        partes = [x.strip() for x in linea.split("\t")] if "\t" in linea else linea.split()
+        partes = [x for x in partes if x != ""]
+        if len(partes) < 3:
+            continue
+        t, f, d = to_float(partes[0]), to_float(partes[1]), to_float(partes[2])
+        if t is None or d is None:
+            continue
+        filas.append([t, f, d])
+    return filas
+
+
+def parse_maquina_ci_xlsx(file_bytes):
+    """Excel con la tabla de la máquina: se busca en cualquier hoja la fila de encabezados (Tiempo / Fuerza /
+    Deformación) y se leen los datos que están debajo. Devuelve [[t, fuerza|None, deformación]]."""
+    try:
+        wb = load_workbook(BytesIO(file_bytes), data_only=True, read_only=True)
+    except Exception:
+        return []
+    for ws in wb.worksheets:
+        filas = list(ws.iter_rows(min_row=1, max_row=3000, values_only=True))
+        for r, fila in enumerate(filas):
+            pos = {}
+            for c, v in enumerate(fila):
+                txt = str(v).strip().lower() if v is not None else ""
+                if txt.startswith("tiempo") and "t" not in pos:
+                    pos["t"] = c
+                elif txt.startswith("fuerza") and "f" not in pos:
+                    pos["f"] = c
+                elif txt.startswith("deform") and "d" not in pos:
+                    pos["d"] = c
+            if len(pos) < 3:
+                continue
+            datos = []
+            for fila_dato in filas[r + 1:]:
+                if max(pos.values()) >= len(fila_dato):
+                    continue
+                t, f, d = (to_float(fila_dato[pos[k]]) for k in ("t", "f", "d"))
+                if t is not None and d is not None:
+                    datos.append([t, f, d])
+            if datos:
+                return datos
+    return []
+
+
 def resultados_compresion_inconfinada(data):
     """Mismas fórmulas de la plantilla GDA-FLC-008 (GUIA): humedad, densidades, esfuerzo con área corregida,
     qu, Su y módulo de elasticidad (entre las dos primeras lecturas, como la plantilla)."""
@@ -5812,19 +5878,21 @@ def resultados_compresion_inconfinada(data):
         filas.append(("Densidad húmeda ρh (g/cm³)", fmt_num(rho_h, 3)))
         if w is not None:
             filas.append(("Densidad seca ρd (g/cm³)", fmt_num(rho_h / (1 + w / 100), 3)))
-    puntos = []
-    for deformacion, carga in _ci_lecturas(data):
-        mm = deformacion * 0.0254
+    puntos = {}  # fila de la plantilla -> (deformación unitaria %, esfuerzo kPa)
+    for fila, _t, mm, carga in _ci_puntos(data):
         eps = mm / (h * 10) * 100
         if eps >= 100:
             continue
-        puntos.append((eps, carga / (area / (1 - eps / 100) / 10000)))
+        if fila == CI_FILA_MAQUINA:
+            puntos[fila] = (eps, 0.0)  # la fila 26 de la plantilla trae el esfuerzo en 0
+        elif carga is not None:
+            puntos[fila] = (eps, carga / (area / (1 - eps / 100) / 10000))
     if puntos:
-        qu = max(s for _e, s in puntos)
+        qu = max(s for _e, s in puntos.values())
         filas += [("Resistencia a la compresión inconfinada qu (kPa)", fmt_num(qu, 1)),
                   ("Resistencia al corte Su (kPa)", fmt_num(qu / 2, 1))]
-        if len(puntos) >= 2 and puntos[1][0] != puntos[0][0]:
-            filas.append(("Módulo de elasticidad (kPa)", fmt_num((puntos[1][1] - puntos[0][1]) / (puntos[1][0] - puntos[0][0]) * 100, 0)))
+        if 27 in puntos and 28 in puntos and puntos[28][0] != puntos[27][0]:
+            filas.append(("Módulo de elasticidad (kPa)", fmt_num((puntos[28][1] - puntos[27][1]) / (puntos[28][0] - puntos[27][0]) * 100, 0)))
     return filas
 
 
@@ -5872,7 +5940,30 @@ def render_compresion_inconfinada_form(data, assay_id):
         _radio("ci_hum_antes", "Humedad obtenida", ["Antes del ensayo", "Después del ensayo"])
         _radio("ci_hum_muestra", "Sobre", ["Muestra completa", "Cortes de muestra"])
     with st.container(border=True):
-        st.markdown(card_header_html("show_chart", "Deformación y Carga"), unsafe_allow_html=True)
+        st.markdown(card_header_html("show_chart", "Datos de la Máquina"), unsafe_allow_html=True)
+        st.caption("Tiempo (s), fuerza (kN) y deformación (mm) que arroja la máquina: van a la tabla de datos de la máquina del "
+                   f"Excel (hasta {CI_MAX_MAQUINA} filas, desde el cero). Si los cargas, se usan en lugar de la tabla de la bitácora.")
+        texto = st.text_area("Pegar datos de la máquina", value="", key=f"ci_maq_texto_{assay_id}", height=110,
+                              placeholder="Pega aquí las 3 columnas copiadas de Excel (tiempo, fuerza, deformación)")
+        archivo = st.file_uploader("O sube el Excel de la máquina", type=["xlsx"], key=f"ci_maq_archivo_{assay_id}")
+        if (texto.strip() or archivo) and st.button("Cargar datos de la máquina", key=f"ci_maq_cargar_{assay_id}",
+                                                     icon=":material/publish:", use_container_width=True):
+            filas_maq = parse_maquina_ci_texto(texto) if texto.strip() else parse_maquina_ci_xlsx(archivo.getvalue())
+            if not filas_maq:
+                st.error("No encontré filas con tiempo, fuerza y deformación. Revisa que estén las 3 columnas.")
+            else:
+                data["ci_maq"] = filas_maq
+                st.success(f"Se cargaron {len(filas_maq)} filas.")
+                if len(filas_maq) > CI_MAX_MAQUINA:
+                    st.warning(f"La plantilla admite {CI_MAX_MAQUINA} filas: solo se exportan las primeras {CI_MAX_MAQUINA}.")
+        if data.get("ci_maq"):
+            st.markdown(f'<div class="cell-muted">Cargado: {len(data["ci_maq"])} filas, hasta {data["ci_maq"][-1][0]:.0f} s</div>',
+                        unsafe_allow_html=True)
+            if st.button("Quitar datos de la máquina", key=f"ci_maq_quitar_{assay_id}"):
+                data.pop("ci_maq", None)
+                st.rerun()
+    with st.container(border=True):
+        st.markdown(card_header_html("show_chart", "Deformación y Carga (bitácora)"), unsafe_allow_html=True)
         st.caption("Deformación en 0.001 in y carga en kN. Solo se exportan las filas con carga digitada "
                    f"(la plantilla admite hasta {len(CI_FILAS_EXCEL)}).")
         head = st.columns([1, 1, 1, 1])
@@ -5944,15 +6035,12 @@ def generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, 
     condicion = data.get("ci_condicion", "Inalterada")
     muestreo = {"Compactada": "Compactada", "Remodelada": "Remoldeada"}.get(condicion, data.get("ci_muestreo") or "Tubo Shelby")
     ws["F21"] = muestreos.get(muestreo, muestreo)
-    velocidad = to_float(data.get("ci_velocidad"))
-    ws["F22"] = velocidad
+    ws["F22"] = to_float(data.get("ci_velocidad"))
 
-    for fila, (deformacion, carga) in zip(CI_FILAS_EXCEL, _ci_lecturas(data)):
-        mm = round(deformacion * 0.0254, 4)
-        ws[f"R{fila}"] = carga
+    for fila, t, mm, fuerza in _ci_puntos(data):
+        ws[f"P{fila}"] = t
+        ws[f"R{fila}"] = fuerza
         ws[f"U{fila}"] = mm
-        if velocidad:
-            ws[f"P{fila}"] = round(mm / velocidad * 60, 1)
 
     bio = BytesIO()
     wb.save(bio)
@@ -6372,6 +6460,11 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             st.markdown(card_header_html("straighten", "Dimensiones"), unsafe_allow_html=True)
             st.markdown(param_table_ncol_html(["#", "ALTURA (cm)", "DIÁMETRO (cm)"],
                                               [(i, data.get(f"ci_h_{i}"), data.get(f"ci_d_{i}")) for i in (1, 2, 3)]), unsafe_allow_html=True)
+        if data.get("ci_maq"):
+            with st.container(border=True):
+                st.markdown(card_header_html("show_chart", "Datos de la Máquina"), unsafe_allow_html=True)
+                st.markdown(param_table_ncol_html(["TIEMPO (s)", "FUERZA (kN)", "DEFORMACIÓN (mm)"],
+                                                  [(t, "" if f is None else f, d) for t, f, d in data["ci_maq"]]), unsafe_allow_html=True)
         lecturas = [(d, data.get(f"ci_carga_{i}")) for i, d in enumerate(CI_DEFORMACIONES, start=1) if data.get(f"ci_carga_{i}")]
         if lecturas:
             with st.container(border=True):
