@@ -41,6 +41,7 @@ TEMPLATE_GESP_FINO = os.path.join(BASE_DIR, "templates", "GDA-FLC-027_gravedad_f
 TEMPLATE_GESP_GRUESO = os.path.join(BASE_DIR, "templates", "GDA-FLC-028_gravedad_grueso.xlsx")
 TEMPLATE_GESP_ARCILLA = os.path.join(BASE_DIR, "templates", "GDA-FLC-006_gravedad_arcilla.xlsx")
 TEMPLATE_PROCTOR = os.path.join(BASE_DIR, "templates", "GDA-FLC-002_proctor_cbr.xlsm")
+TEMPLATE_MATERIA_ORGANICA = os.path.join(BASE_DIR, "templates", "GDA-FLC-003_materia_organica.xlsx")
 
 ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "laboratorista": "Laboratorista", "ingeniero": "Director Técnico"}
 ROLE_INICIALES = {"jefe": "JL", "laboratorista": "LB", "ingeniero": "DT"}
@@ -564,7 +565,7 @@ SIEVES = [
     ("s_60", "No. 60", "0.25", "E32"), ("s_100", "No. 100", "0.149", "E33"), ("s_200", "No. 200", "0.075", "E34"),
 ]
 
-ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor"}
+ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor", "materia-organica": "Materia orgánica"}
 NORMAS_ENSAYO = {
     "granulometria": ["INV-214-13", "INV.E-213-13", "INV.E 123-13"],
     "humedad": ["INV E-122", "ASTM D2216"],
@@ -573,6 +574,7 @@ NORMAS_ENSAYO = {
     "corte-directo": ["INV E-154", "ASTM D3080"],
     "gravedad-especifica": ["INV E-222", "INV E-223", "INV E-128", "ASTM C128", "ASTM C127", "ASTM D854"],
     "proctor": ["INV E-141-13", "INV E-142-13"],
+    "materia-organica": ["INV E-121-13", "ASTM D2974"],
 }
 STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado"}
 STATUS_BADGE = {"sin-iniciar": "badge-danger", "en-proceso": "badge-warning", "finalizado": "badge-success"}
@@ -657,6 +659,14 @@ CBRC_HUM_FILAS = [
 CBRC_EXP_FILAS = [("exp_inicial", "Lectura inicial expansión (in)"), ("exp_final", "Lectura final expansión (in)")]
 # Filas de la plantilla (columna W/AA/AE) para las 12 profundidades de CBR_PENETRACION_FILAS.
 CBRC_PEN_FILAS_EXCEL = [22, 23, 24, 25, 26, 28, 30, 31, 33, 34, 35, 37]
+# Materia orgánica (INV E-121) — armado a partir de la plantilla GDA-FLC-003 (no hay bitácora en papel).
+MO_METODOS = ["A", "B"]
+MO_TEMPERATURAS = ["110 °C", "60 °C"]
+MO_CAMPOS = [
+    ("mo_masa_crisol_seco", "Masa del crisol + muestra de suelo seco (g)"),
+    ("mo_masa_crisol_ignicion", "Masa del crisol + muestra de suelo después de ignición (g)"),
+    ("mo_masa_crisol", "Masa del crisol (g)"),
+]
 PROCTOR_METODOS = ["A", "B", "C"]
 PROCTOR_TAMICES = ["", "3/4\"", "3/8\"", "No. 4"]
 PROCTOR_TAMIZ_EXCEL = {"3/4\"": "¾ \"", "3/8\"": "⅜ \"", "No. 4": "N.4"}  # lista desplegable de L25
@@ -886,6 +896,7 @@ SUPPORTED_ASSAY_MAP = {
     "Gravedad específica": "gravedad-especifica",
     "Corte Directo": "corte-directo",
     "Proctor": "proctor",
+    "Materia orgánica": "materia-organica",
 }
 
 
@@ -4471,6 +4482,39 @@ def generar_excel_gravedad_fino(codigo, perf_codigo, muestra, project, data, obs
                                     observaciones_ensayo)
 
 
+def generar_excel_materia_organica(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    """Contenido de materia orgánica (GDA-FLC-003, INV E-121). Se llenan encabezado y las cuatro
+    casillas de datos; la masa seca y el contenido (%) los calcula el Excel."""
+    wb = load_workbook(TEMPLATE_MATERIA_ORGANICA)
+    ws = wb["GUIA"]
+    ws["D6"] = project.get("cliente", "") if project else ""
+    ws["D7"] = project["nombre"] if project else codigo
+    ws["D8"] = project.get("correo_cliente", "") if project else ""
+    ws["D9"] = project.get("localizacion", "") if project else ""
+    if project and project.get("muestra_tomada_por"):
+        ws["D10"] = project["muestra_tomada_por"]
+    ws["K6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    ws["K7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
+    ws["K8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    ws["L9"] = project.get("numero", "") if project else ""
+    ws["M9"] = project.get("anio", "") if project else ""
+    perf = get_perforacion(codigo, perf_codigo)
+    ws["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
+    ws["F12"] = perf_codigo
+    ws["H12"] = muestra["numero"]
+    ws["K12"] = to_float(muestra.get("profundidad_de"))
+    ws["M12"] = to_float(muestra.get("profundidad_hasta"))
+    ws["D13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+    ws["I18"] = data.get("mo_recipiente") or None
+    ws["I19"] = to_float(data.get("mo_masa_crisol_seco"))
+    ws["I20"] = to_float(data.get("mo_masa_crisol_ignicion"))
+    ws["I21"] = to_float(data.get("mo_masa_crisol"))
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_MATERIA_ORGANICA)
+
+
 def generar_excel_proctor(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Proctor (GDA-FLC-002, INV E-141/E-142). La plantilla es un .xlsm que trae juntos el informe
     de Proctor (izquierda) y el de CBR (derecha) — acá solo se llena el Proctor; el CBR se descarga
@@ -5294,6 +5338,44 @@ def resultados_gravedad(data, modo):
             ("Gravedad específica", fmt_num(gt, 4))]
 
 
+def resultados_materia_organica(data):
+    """Mismas fórmulas de la plantilla GDA-FLC-003: masa seca y contenido de materia orgánica (%)."""
+    a, b, c = (to_float(data.get(k)) for k, _ in MO_CAMPOS)
+    if None in (a, b, c) or (b - c) == 0:
+        return []
+    return [("Masa seca (g)", fmt_num(b - c)), ("Contenido de materia orgánica (%)", fmt_num((a - b) / (b - c) * 100, 2))]
+
+
+def render_materia_organica_form(data, assay_id):
+    st.info("Formulario armado sobre la plantilla oficial GDA-FLC-003. El Excel para descargar está al final del ensayo.")
+    with st.container(border=True):
+        st.markdown(card_header_html("science", "Contenido de Materia Orgánica (w %)"), unsafe_allow_html=True)
+        row = st.columns([2.2, 1])
+        row[0].markdown('<div style="padding-top:8px;">Recipiente No.</div>', unsafe_allow_html=True)
+        data["mo_recipiente"] = row[1].text_input("Recipiente No.", value=data.get("mo_recipiente", ""),
+                                                   key=f"mo_recipiente_{assay_id}", label_visibility="collapsed")
+        for key, label in MO_CAMPOS:
+            row = st.columns([2.2, 1])
+            row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+            data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                           label_visibility="collapsed", placeholder="0.00")
+    with st.container(border=True):
+        st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+        filas = resultados_materia_organica(data)
+        if filas:
+            st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        else:
+            st.caption("Se muestran cuando estén digitadas las tres masas.")
+    with st.container(border=True):
+        st.markdown(card_header_html("tune", "Condiciones del Ensayo"), unsafe_allow_html=True)
+        st.caption("Se guardan en la app; la plantilla no tiene casilla para ellos.")
+        for key, label, opciones in (("mo_metodo", "Método", MO_METODOS), ("mo_temp", "Temperatura de ignición", MO_TEMPERATURAS)):
+            actual = data.get(key, opciones[0])
+            data[key] = st.radio(label, opciones, horizontal=True, index=opciones.index(actual) if actual in opciones else 0,
+                                  key=f"{key}_{assay_id}")
+    render_norma_selector("materia-organica", data, "mo")
+
+
 def render_proctor_form(data, assay_id):
     st.info("Formulario armado sobre la bitácora oficial GDA-FL-008: el Proctor y, abajo, su CBR de suelos "
             "compactados. Los dos salen en el mismo Excel (GDA-FLC-002) al final del ensayo.")
@@ -5619,6 +5701,15 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                         for i, (pulg, _mm) in enumerate(CBR_PENETRACION_FILAS, start=1)]
             st.markdown(param_table_ncol_html(headers, pen_rows), unsafe_allow_html=True)
         equipos, norma = data.get("cbr_equipos", []), data.get("cbr_norma", "—")
+    elif tipo == "materia-organica":
+        with st.container(border=True):
+            st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
+            st.markdown(param_table_html([("Recipiente No.", data.get("mo_recipiente"))]
+                                         + [(label, data.get(key)) for key, label in MO_CAMPOS]
+                                         + resultados_materia_organica(data)
+                                         + [("Método", data.get("mo_metodo")), ("Temperatura de ignición", data.get("mo_temp"))]),
+                        unsafe_allow_html=True)
+        equipos, norma = [], data.get("mo_norma", "—")
     elif tipo == "proctor":
         for titulo, icono, filas in (("Compactación", "science", PROCTOR_FILAS), ("Humedad", "water_drop", PROCTOR_HUMEDAD_FILAS)):
             with st.container(border=True):
@@ -5851,6 +5942,8 @@ def render_assay_form():
             render_gravedad_especifica_form(data, assay_id)
         elif assay["tipo"] == "proctor":
             render_proctor_form(data, assay_id)
+        elif assay["tipo"] == "materia-organica":
+            render_materia_organica_form(data, assay_id)
 
         with st.expander("Observaciones (opcional)", icon=":material/notes:", expanded=bool(assay.get("observations"))):
             observations = st.text_area("Observaciones", value=assay.get("observations", ""), label_visibility="collapsed",
@@ -5967,6 +6060,16 @@ def render_assay_form():
             data=excel_bytes, file_name=f"Peso_unitario_parafinado_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
+
+    if assay["tipo"] == "materia-organica" and muestra:
+        st.markdown("---")
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        st.download_button(
+            "Descargar Excel (plantilla oficial de Materia Orgánica)", icon=":material/download:",
+            data=generar_excel_materia_organica(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            file_name=f"Materia_organica_{muestra['id_unico']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
+            key="dl_materia_organica")
 
     if assay["tipo"] == "proctor" and muestra:
         st.markdown("---")
