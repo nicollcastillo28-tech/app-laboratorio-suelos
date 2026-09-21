@@ -624,7 +624,16 @@ EQUIPO_CBR = [
 # mano — todavía no hay una plantilla de Excel oficial conectada a este ensayo (ver
 # render_corte_directo_form), así que estos campos pueden necesitar ajuste cuando se consiga esa
 # plantilla, igual que le pasó a CBR con su primera versión armada solo a partir de una captura.
-EQUIPO_CORTE_DIRECTO = ["Balanza GDA-E-013", "Balanza GDA-E-003", "Horno GDA-E-004"]
+EQUIPO_CORTE_DIRECTO = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Horno GDA-E-007",
+                        "Horno GDA-E-404", "Máquina de corte GDA-E-001", "Máquina de corte GDA-E-002"]
+EQUIPO_CORTE_HUMEDAD = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Horno GDA-E-007", "Horno GDA-E-404"]
+EQUIPO_CORTE_GRAVEDAD = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Termómetro GDA-E-126", "Baño de María GDA-E-009"]
+CORTE_GRAVEDAD_CAMPOS = [
+    ("masa_suelo_seco", "Masa del suelo seco (g)"),
+    ("masa_pic_muestra", "Masa pic. + muestra aforado a temp. (g)"),
+    ("masa_pic", "Masa pic. aforado a temp. (g)"),
+    ("temperatura", "Temperatura (°C)"),
+]
 
 # Gravedad Específica — dos variantes en el formato físico: la que pasa el tamiz No. 4 (finos,
 # con picnómetro) y la que lo retiene (gruesos, material sumergido).
@@ -4797,8 +4806,8 @@ def render_cbr_form(data, assay_id, muestra_id):
 
 
 def render_corte_directo_form(data, assay_id):
-    st.info("Este ensayo todavía no tiene una plantilla oficial de Excel conectada — los datos "
-            "se guardan aquí en la app mientras se arma esa plantilla.")
+    st.info("Formulario armado sobre la bitácora oficial GDA-FL-006. Todavía no hay plantilla de Excel "
+            "de descarga conectada — los datos se guardan aquí en la app.")
 
     def _campo(key, label, placeholder="0.00"):
         row = st.columns([2.2, 1])
@@ -4846,10 +4855,32 @@ def render_corte_directo_form(data, assay_id):
             for campo, label in CORTE_HUMEDAD_CAMPOS:
                 _campo_inicial_final(f"corte_m{i}_{campo}", label)
             _radio(f"corte_m{i}_temp_secado", "Temperatura de secado", CORTE_TEMP_SECADO_OPTIONS)
+            st.markdown('<div class="cell-muted" style="font-weight:700;margin-top:8px;">Equipos utilizados (humedad)</div>',
+                        unsafe_allow_html=True)
+            sel = set(data.get(f"corte_m{i}_hum_equipos", []))
+            nuevos = []
+            cols_eq = st.columns(2)
+            for j, equipo in enumerate(EQUIPO_CORTE_HUMEDAD):
+                with cols_eq[j % 2]:
+                    if st.checkbox(equipo, value=equipo in sel, key=f"corte_m{i}_hum_equipo_{j}_{assay_id}"):
+                        nuevos.append(equipo)
+            data[f"corte_m{i}_hum_equipos"] = nuevos
 
     with st.container(border=True):
-        st.markdown(card_header_html("construction", "Máquina de Corte"), unsafe_allow_html=True)
-        _campo("corte_maquina", "Máquina de corte utilizada", placeholder="GDA-E-001")
+        st.markdown(card_header_html("science", "Gravedad Específica (INV E-128-13)"), unsafe_allow_html=True)
+        for campo, label in CORTE_GRAVEDAD_CAMPOS:
+            _campo(f"corte_ge_{campo}", label)
+        st.markdown('<div class="cell-muted" style="font-weight:700;margin-top:8px;">Equipos utilizados (gravedad)</div>',
+                    unsafe_allow_html=True)
+        _campo("corte_ge_picnometro", "Picnómetro No.", placeholder="1")
+        sel = set(data.get("corte_ge_equipos", []))
+        nuevos = []
+        cols_eq = st.columns(2)
+        for j, equipo in enumerate(EQUIPO_CORTE_GRAVEDAD):
+            with cols_eq[j % 2]:
+                if st.checkbox(equipo, value=equipo in sel, key=f"corte_ge_equipo_{j}_{assay_id}"):
+                    nuevos.append(equipo)
+        data["corte_ge_equipos"] = nuevos
 
     render_equipo(data, "corte", EQUIPO_CORTE_DIRECTO)
     render_norma_selector("corte-directo", data, "corte")
@@ -5088,7 +5119,6 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                 ("Temperatura (°C) — final", data.get("corte_temp_final")),
                 ("Humedad (%) — inicial", data.get("corte_hum_inicial")),
                 ("Humedad (%) — final", data.get("corte_hum_final")),
-                ("Máquina de corte utilizada", data.get("corte_maquina")),
             ]
             st.markdown(param_table_html(rows), unsafe_allow_html=True)
         for i in (1, 2, 3):
@@ -5102,6 +5132,13 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                             for campo, label in CORTE_HUMEDAD_CAMPOS]
                 st.markdown(param_table_ncol_html(("PARÁMETRO", "INICIAL", "FINAL"), hum_rows), unsafe_allow_html=True)
                 st.caption(f"Temperatura de secado: {data.get(f'corte_m{i}_temp_secado') or '—'}")
+                st.caption("Equipos (humedad): " + (", ".join(data.get(f"corte_m{i}_hum_equipos", [])) or "—"))
+        with st.container(border=True):
+            st.markdown(card_header_html("science", "Gravedad Específica (INV E-128-13)"), unsafe_allow_html=True)
+            rows = [(label, data.get(f"corte_ge_{campo}")) for campo, label in CORTE_GRAVEDAD_CAMPOS]
+            rows.append(("Picnómetro No.", data.get("corte_ge_picnometro")))
+            st.markdown(param_table_html(rows), unsafe_allow_html=True)
+            st.caption("Equipos (gravedad): " + (", ".join(data.get("corte_ge_equipos", [])) or "—"))
         equipos, norma = data.get("corte_equipos", []), data.get("corte_norma", "—")
 
     with st.container(border=True):
