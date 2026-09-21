@@ -4250,8 +4250,8 @@ def generar_excel_cbr(codigo, perf_codigo, muestra, project, data, observaciones
     # Tabla de penetración: fila 22 es la profundidad "0" — la plantilla trae sus celdas de
     # fuerza vacías, así que se llenan con 0; las 12 profundidades reales (CBR_PENETRACION_FILAS)
     # caen en las filas 23 a 34, en el mismo orden.
-    ws["I22"] = 0
-    ws["K22"] = 0
+    ws["I22"] = to_float(data.get("cbr_pen_antes_0"), 0)
+    ws["K22"] = to_float(data.get("cbr_pen_despues_0"), 0)
     for i in range(1, len(CBR_PENETRACION_FILAS) + 1):
         fila = 22 + i
         antes = to_float(data.get(f"cbr_pen_antes_{i}"))
@@ -4735,6 +4735,7 @@ def render_cbr_form(data, assay_id, muestra_id):
                     if not valores:
                         st.error(aviso)
                     else:
+                        st.session_state[f"cbr_pen_{suf}_0_{assay_id}"] = "0"
                         for i, v in valores.items():
                             st.session_state[f"cbr_pen_{suf}_{i}_{assay_id}"] = v
                         if aviso:
@@ -4747,9 +4748,9 @@ def render_cbr_form(data, assay_id, muestra_id):
         head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Fuerza después (kN)</div>', unsafe_allow_html=True)
         row0 = st.columns([1.2, 1, 1])
         row0[0].markdown('<div style="padding-top:8px;">0.000" (0 mm)</div>', unsafe_allow_html=True)
-        for c in (row0[1], row0[2]):
-            c.markdown(f'<div style="padding:8px 12px;border:1px solid {BORDER};border-radius:8px;background:{BG};'
-                       f'color:{NEUTRAL};text-align:center;">0</div>', unsafe_allow_html=True)
+        for c, suf in ((row0[1], "antes"), (row0[2], "despues")):
+            data[f"cbr_pen_{suf}_0"] = c.text_input(f"Fuerza {suf} 0in", value=data.get(f"cbr_pen_{suf}_0", "0"),
+                                                     key=f"cbr_pen_{suf}_0_{assay_id}", label_visibility="collapsed")
         for i, (pulg, mm) in enumerate(CBR_PENETRACION_FILAS, start=1):
             row = st.columns([1.2, 1, 1])
             row[0].markdown(f'<div style="padding-top:8px;">{pulg}" ({mm} mm)</div>', unsafe_allow_html=True)
