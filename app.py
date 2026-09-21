@@ -4247,8 +4247,11 @@ def generar_excel_cbr(codigo, perf_codigo, muestra, project, data, observaciones
     if tiempo_despues is not None:
         ws["J40"] = tiempo_despues
 
-    # Tabla de penetración: fila 22 es la profundidad "0" (fuerza 0 fija, no se digita); las 12
-    # profundidades reales (CBR_PENETRACION_FILAS) caen en las filas 23 a 34, en el mismo orden.
+    # Tabla de penetración: fila 22 es la profundidad "0" — la plantilla trae sus celdas de
+    # fuerza vacías, así que se llenan con 0; las 12 profundidades reales (CBR_PENETRACION_FILAS)
+    # caen en las filas 23 a 34, en el mismo orden.
+    ws["I22"] = 0
+    ws["K22"] = 0
     for i in range(1, len(CBR_PENETRACION_FILAS) + 1):
         fila = 22 + i
         antes = to_float(data.get(f"cbr_pen_antes_{i}"))
