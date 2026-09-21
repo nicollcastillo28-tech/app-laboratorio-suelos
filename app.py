@@ -37,6 +37,8 @@ TEMPLATE_HUMEDAD = os.path.join(BASE_DIR, "templates", "GDA-FLC-014_humedad_natu
 TEMPLATE_MASA_UNITARIA = os.path.join(BASE_DIR, "templates", "GDA-FLC-004_masa_unitaria.xlsx")
 TEMPLATE_CBR = os.path.join(BASE_DIR, "templates", "GDA-FLC-013_cbr.xlsx")
 TEMPLATE_CORTE_DIRECTO = os.path.join(BASE_DIR, "templates", "GDA-FLC-007_corte_directo.xlsx")
+TEMPLATE_GESP_FINO = os.path.join(BASE_DIR, "templates", "GDA-FLC-027_gravedad_fino.xlsx")
+TEMPLATE_GESP_GRUESO = os.path.join(BASE_DIR, "templates", "GDA-FLC-028_gravedad_grueso.xlsx")
 
 ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "laboratorista": "Laboratorista", "ingeniero": "Director Técnico"}
 ROLE_INICIALES = {"jefe": "JL", "laboratorista": "LB", "ingeniero": "DT"}
@@ -567,7 +569,7 @@ NORMAS_ENSAYO = {
     "masa-unitaria": ["INV E-202", "ASTM D1188"],
     "cbr": ["INV E-148", "ASTM D1883"],
     "corte-directo": ["INV E-154", "ASTM D3080"],
-    "gravedad-especifica": ["INV E-128", "INV E-223", "ASTM D854", "ASTM C127"],
+    "gravedad-especifica": ["INV E-222", "INV E-223", "INV E-128", "ASTM C128", "ASTM C127", "ASTM D854"],
 }
 STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado"}
 STATUS_BADGE = {"sin-iniciar": "badge-danger", "en-proceso": "badge-warning", "finalizado": "badge-success"}
@@ -645,6 +647,7 @@ EQUIPO_GESP_GRUESOS = ["Balanza GDA-E-012", "Balanza GDA-E-011", "Horno GDA-E-00
 GESP_OPCIONES = ["Pasa el tamiz No. 4 (finos)", "Retiene el tamiz No. 4 (gruesos)", "Ambos"]
 GESP_FINOS_CAMPOS = [
     ("gesp_f_masa_seco", "Masa del suelo seco (g)"),
+    ("gesp_f_masa_sss", "Masa de la muestra saturada superficialmente seca (g)"),
     ("gesp_f_masa_pic_agua_suelo", "Masa del picnómetro + agua + suelo a la temperatura del ensayo (g)"),
     ("gesp_f_masa_pic_agua", "Masa del picnómetro + agua a la temperatura del ensayo (g)"),
     ("gesp_f_temp", "Temperatura del ensayo (°C)"),
@@ -4308,6 +4311,53 @@ def generar_excel_cbr(codigo, perf_codigo, muestra, project, data, observaciones
     return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_CBR)
 
 
+def _generar_excel_gravedad(template, hoja, celdas, codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    """Gravedad específica y absorción del agregado fino (GDA-FLC-027, INV E-222) o grueso
+    (GDA-FLC-028, INV E-223). `celdas` mapea cada celda de entrada de la plantilla a su valor;
+    las densidades y la absorción las calcula el propio Excel."""
+    wb = load_workbook(template)
+    ws = wb[hoja]
+    ws["C6"] = project.get("cliente", "") if project else ""
+    ws["C7"] = project["nombre"] if project else codigo
+    ws["C8"] = project.get("correo_cliente", "") if project else ""
+    ws["C9"] = project.get("localizacion", "") if project else ""
+    if project and project.get("muestra_tomada_por"):
+        ws["C10"] = project["muestra_tomada_por"]
+    ws["I6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    ws["I7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
+    ws["I8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    ws["J9"] = project.get("numero", "") if project else ""
+    ws["K9"] = project.get("anio", "") if project else ""
+    perf = get_perforacion(codigo, perf_codigo)
+    ws["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
+    ws["D12"] = perf_codigo
+    ws["F12"] = muestra["numero"]
+    ws["I12"] = to_float(muestra.get("profundidad_de"))
+    ws["K12"] = to_float(muestra.get("profundidad_hasta"))
+    ws["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+    for celda, valor in celdas.items():
+        ws[celda] = to_float(valor)
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return _restaurar_imagenes_perdidas(bio.getvalue(), template)
+
+
+def generar_excel_gravedad_fino(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    celdas = {"G19": data.get("gesp_f_masa_seco"), "G20": data.get("gesp_f_masa_pic_agua"),
+              "G21": data.get("gesp_f_masa_pic_agua_suelo"), "G22": data.get("gesp_f_masa_sss"),
+              "N54": data.get("gesp_f_pct_retenido"), "AD30": data.get("gesp_f_temp")}
+    return _generar_excel_gravedad(TEMPLATE_GESP_FINO, "GUIA", celdas, codigo, perf_codigo, muestra, project, data,
+                                    observaciones_ensayo)
+
+
+def generar_excel_gravedad_grueso(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    celdas = {"G19": data.get("gesp_g_masa_seco"), "G20": data.get("gesp_g_masa_sumergido"),
+              "G21": data.get("gesp_g_masa_sss"), "AD29": data.get("gesp_g_temp")}
+    return _generar_excel_gravedad(TEMPLATE_GESP_GRUESO, "Hoja1 (2)", celdas, codigo, perf_codigo, muestra, project,
+                                    data, observaciones_ensayo)
+
+
 CORTE_TIPO_EXCEL = {"CD": "CONSOLIDADO DRENADO (CD)", "CU": "CONSOLIDADO NO DRENADO (CU)",
                     "UU": "NO CONSOLIDADO NO DRENADO (UU)"}
 CORTE_CONDICION_EXCEL = {"Inalterada": "INALTERADA", "Remoldada": "REMOLDEADA", "Compactada": "COMPACTADA"}
@@ -5475,6 +5525,25 @@ def render_assay_form():
             data=excel_bytes, file_name=f"Peso_unitario_parafinado_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
+
+    if assay["tipo"] == "gravedad-especifica" and muestra:
+        st.markdown("---")
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        sel = data.get("gesp_sel", GESP_OPCIONES[0])
+        if sel in (GESP_OPCIONES[0], GESP_OPCIONES[2]):
+            st.download_button(
+                "Descargar Excel (Gravedad específica — agregado fino, INV E-222)", icon=":material/download:",
+                data=generar_excel_gravedad_fino(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+                file_name=f"Gravedad_especifica_fino_{muestra['id_unico']}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
+                key="dl_gesp_fino")
+        if sel in (GESP_OPCIONES[1], GESP_OPCIONES[2]):
+            st.download_button(
+                "Descargar Excel (Gravedad específica — agregado grueso, INV E-223)", icon=":material/download:",
+                data=generar_excel_gravedad_grueso(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+                file_name=f"Gravedad_especifica_grueso_{muestra['id_unico']}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
+                key="dl_gesp_grueso")
 
     if assay["tipo"] == "corte-directo" and muestra:
         st.markdown("---")
