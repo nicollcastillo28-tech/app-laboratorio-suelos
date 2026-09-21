@@ -39,6 +39,7 @@ TEMPLATE_CBR = os.path.join(BASE_DIR, "templates", "GDA-FLC-013_cbr.xlsx")
 TEMPLATE_CORTE_DIRECTO = os.path.join(BASE_DIR, "templates", "GDA-FLC-007_corte_directo.xlsx")
 TEMPLATE_GESP_FINO = os.path.join(BASE_DIR, "templates", "GDA-FLC-027_gravedad_fino.xlsx")
 TEMPLATE_GESP_GRUESO = os.path.join(BASE_DIR, "templates", "GDA-FLC-028_gravedad_grueso.xlsx")
+TEMPLATE_GESP_ARCILLA = os.path.join(BASE_DIR, "templates", "GDA-FLC-006_gravedad_arcilla.xlsx")
 
 ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "laboratorista": "Laboratorista", "ingeniero": "Director Técnico"}
 ROLE_INICIALES = {"jefe": "JL", "laboratorista": "LB", "ingeniero": "DT"}
@@ -644,7 +645,16 @@ EQUIPO_GESP_FINOS = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Horno GDA-E-007"
                      "Termómetro GDA-E-116", "Baño de María GDA-E-009"]
 EQUIPO_GESP_GRUESOS = ["Balanza GDA-E-012", "Balanza GDA-E-011", "Horno GDA-E-007",
                        "Termómetro GDA-E-116", "Horno GDA-E-404"]
-GESP_OPCIONES = ["Pasa el tamiz No. 4 (finos)", "Retiene el tamiz No. 4 (gruesos)", "Ambos"]
+GESP_OPCIONES = ["Pasa el tamiz No. 4 (finos)", "Retiene el tamiz No. 4 (gruesos)", "Ambos",
+                 "Arcillas y limos (INV E-128)"]
+GESP_ARCILLA_CAMPOS = [
+    ("gesp_a_picnometro", "Picnómetro No."),
+    ("gesp_a_masa_aire", "Masa en el aire de la muestra (g)"),
+    ("gesp_a_masa_pic_agua", "Masa del picnómetro lleno de agua (g)"),
+    ("gesp_a_masa_pic_muestra", "Masa del picnómetro aforado + muestra (g)"),
+    ("gesp_a_temp", "Temperatura del ensayo (°C)"),
+    ("gesp_a_pct_retenido", "% material retenido en el tamiz No. 4"),
+]
 GESP_FINOS_CAMPOS = [
     ("gesp_f_masa_seco", "Masa del suelo seco (g)"),
     ("gesp_f_masa_sss", "Masa de la muestra saturada superficialmente seca (g)"),
@@ -4351,6 +4361,18 @@ def generar_excel_gravedad_fino(codigo, perf_codigo, muestra, project, data, obs
                                     observaciones_ensayo)
 
 
+def generar_excel_gravedad_arcilla(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    """GDA-FLC-006 (INV E-128). G21 (masa del picnómetro lleno de agua) trae una fórmula que la
+    busca en la calibración del picnómetro — solo se pisa si el laboratorista digitó el valor."""
+    celdas = {"G19": data.get("gesp_a_picnometro"), "G20": data.get("gesp_a_masa_aire"),
+              "G22": data.get("gesp_a_masa_pic_muestra"), "G23": data.get("gesp_a_temp"),
+              "D32": data.get("gesp_a_pct_retenido")}
+    if to_float(data.get("gesp_a_masa_pic_agua")) is not None:
+        celdas["G21"] = data.get("gesp_a_masa_pic_agua")
+    return _generar_excel_gravedad(TEMPLATE_GESP_ARCILLA, "Hoja1", celdas, codigo, perf_codigo, muestra, project,
+                                    data, observaciones_ensayo)
+
+
 def generar_excel_gravedad_grueso(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     celdas = {"G19": data.get("gesp_g_masa_seco"), "G20": data.get("gesp_g_masa_sumergido"),
               "G21": data.get("gesp_g_masa_sss"), "AD29": data.get("gesp_g_temp")}
@@ -5033,6 +5055,9 @@ def render_gravedad_especifica_form(data, assay_id):
     if hace_gruesos:
         _campos("Gravedad Específica que retiene el tamiz No. 4", "science", GESP_GRUESOS_CAMPOS)
         render_equipo(data, "gesp_gruesos", EQUIPO_GESP_GRUESOS)
+    if data["gesp_sel"] == GESP_OPCIONES[3]:
+        _campos("Gravedad Específica relativa en arcillas y limos (INV E-128-13)", "science", GESP_ARCILLA_CAMPOS)
+        render_equipo(data, "gesp_finos", EQUIPO_GESP_FINOS)
     render_norma_selector("gravedad-especifica", data, "gesp")
 
 
@@ -5228,6 +5253,11 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                 st.markdown(card_header_html("science", "Gravedad Específica que retiene el tamiz No. 4"), unsafe_allow_html=True)
                 st.markdown(param_table_html([(label, data.get(key)) for key, label in GESP_GRUESOS_CAMPOS]), unsafe_allow_html=True)
             equipos += data.get("gesp_gruesos_equipos", [])
+        if sel == GESP_OPCIONES[3]:
+            with st.container(border=True):
+                st.markdown(card_header_html("science", "Gravedad Específica relativa en arcillas y limos (INV E-128-13)"), unsafe_allow_html=True)
+                st.markdown(param_table_html([(label, data.get(key)) for key, label in GESP_ARCILLA_CAMPOS]), unsafe_allow_html=True)
+            equipos += data.get("gesp_finos_equipos", [])
         norma = data.get("gesp_norma", "—")
     else:  # "corte-directo"
         with st.container(border=True):
@@ -5537,6 +5567,13 @@ def render_assay_form():
                 file_name=f"Gravedad_especifica_fino_{muestra['id_unico']}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
                 key="dl_gesp_fino")
+        if sel == GESP_OPCIONES[3]:
+            st.download_button(
+                "Descargar Excel (Gravedad específica — arcillas y limos, INV E-128)", icon=":material/download:",
+                data=generar_excel_gravedad_arcilla(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+                file_name=f"Gravedad_especifica_arcilla_{muestra['id_unico']}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
+                key="dl_gesp_arcilla")
         if sel in (GESP_OPCIONES[1], GESP_OPCIONES[2]):
             st.download_button(
                 "Descargar Excel (Gravedad específica — agregado grueso, INV E-223)", icon=":material/download:",
