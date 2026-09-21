@@ -4037,7 +4037,50 @@ def _reparar_graficos_perdidos(xlsm_bytes, template_path):
             return bio.getvalue()
 
 
+def _restaurar_orden_formato_condicional(xlsx_bytes, template_path):
+    """openpyxl reordena los rangos de las reglas de formato condicional con varias áreas (ej.
+    sqref="I6:M6 B6:B10 D6:D10 ...") al volver a guardar. La fórmula de esas reglas (ej.
+    LEN(TRIM(B6))=0, las casillas verdes/grises que se apagan al escribir) es relativa a la
+    primera celda del rango, así que con otro orden Excel las evalúa contra celdas equivocadas y
+    el verde puede quedarse en casillas ya llenas. Se devuelve cada sqref al orden exacto de la
+    plantilla original."""
+    patron = re.compile(r'<conditionalFormatting sqref="([^"]*)">(.*?)</conditionalFormatting>', re.S)
+
+    def clave(sqref, cuerpo):
+        m = re.search(r"<formula>([^<]*)</formula>", cuerpo)
+        return (frozenset(sqref.split()), m.group(1) if m else "")
+
+    originales = {}
+    with zipfile.ZipFile(template_path) as tpl:
+        for n in tpl.namelist():
+            if re.match(r"xl/worksheets/sheet\d+\.xml$", n):
+                for sqref, cuerpo in patron.findall(tpl.read(n).decode("utf-8")):
+                    originales.setdefault(clave(sqref, cuerpo), sqref)
+    if not originales:
+        return xlsx_bytes
+
+    def reemplazo(m):
+        sqref, cuerpo = m.group(1), m.group(2)
+        orig = originales.get(clave(sqref, cuerpo))
+        if orig is None or orig == sqref:
+            return m.group(0)
+        return f'<conditionalFormatting sqref="{orig}">{cuerpo}</conditionalFormatting>'
+
+    bio = BytesIO()
+    with zipfile.ZipFile(BytesIO(xlsx_bytes)) as out, zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as z:
+        for item in out.infolist():
+            contenido = out.read(item.filename)
+            if re.match(r"xl/worksheets/sheet\d+\.xml$", item.filename):
+                contenido = patron.sub(reemplazo, contenido.decode("utf-8")).encode("utf-8")
+            z.writestr(item, contenido)
+    return bio.getvalue()
+
+
 def _restaurar_imagenes_perdidas(xlsx_bytes, template_path):
+    return _restaurar_orden_formato_condicional(_restaurar_drawings_perdidos(xlsx_bytes, template_path), template_path)
+
+
+def _restaurar_drawings_perdidos(xlsx_bytes, template_path):
     """openpyxl vacía las <xdr:pic> (imágenes incrustadas — logo, firmas, diagramas de
     referencia de la hoja GUIA) de cualquier drawingN.xml al volver a guardar el archivo: el
     archivo drawingN.xml sigue existiendo y las formas/gráficos de adentro se conservan, pero
