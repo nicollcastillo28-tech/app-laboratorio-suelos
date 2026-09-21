@@ -704,6 +704,10 @@ CONS_GS_CAMPOS = [
     ("cons_pic_temp", "Temperatura de aforo (°C)"),
     ("cons_pic_masa_seco", "Masa suelo seco (g)"),
 ]
+# Bloques de la hoja "DATOS MAQUINA " de la plantilla: (encabezado, columna de tiempo en min, columna donde se
+# pega la deformación de la máquina, peso en el brazo de palanca en kg). El tiempo ya viene en la plantilla.
+CONS_MAQ_BLOQUES = [("0,25 kg", "B", "C", 0.25), ("0,5 kg", "E", "F", 0.5), ("1,0 kg", "H", "I", 1.0), ("2,0 kg", "K", "L", 2.0),
+                    ("4,0 kg", "N", "O", 4.0), ("8,0 kg", "Q", "R", 8.0), ("16 kg", "T", "U", 16.0)]
 EQUIPO_CONSOLIDACION = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Termómetro GDA-E-126", "Horno GDA-E-007", "Horno GDA-E-404"]
 # Calibración de los picnómetros (hoja Resultados de la plantilla): masa del picnómetro lleno de agua
 # = a·T + b, con T en °C.
@@ -5448,6 +5452,48 @@ def resultados_limite_contraccion(data):
             ("Relación de contracción, R", fmt_num(r, 3)), ("Cambio volumétrico, Cv (%)", fmt_num(cv, 2)),
             ("Contracción lineal, Cl (%)", fmt_num(cl, 2))]
 
+def parse_maquina_consolidacion_xlsx(file_bytes):
+    """Excel de la máquina de consolidación: hoja "Data2", tiempo en segundos (columna A), deformación en
+    mm (columna D) y peso en el brazo de palanca en kg (columna P). Devuelve (índice de CONS_MAQ_BLOQUES o
+    None, [[segundos, deformación mm]], aviso)."""
+    try:
+        wb = load_workbook(BytesIO(file_bytes), data_only=True, read_only=True)
+    except Exception:
+        return None, [], "No se pudo abrir el archivo como Excel."
+    nombre = next((n for n in wb.sheetnames if n.strip().lower() == "data2"), None)
+    if nombre is None:
+        return None, [], "No encontré la hoja \"Data2\" (la que arroja la máquina)."
+    puntos, brazo = {}, None
+    for row in wb[nombre].iter_rows(min_row=2, max_col=16, values_only=True):
+        t, d = row[0], row[3]
+        if isinstance(t, (int, float)) and isinstance(d, (int, float)):
+            puntos[float(t)] = round(float(d), 4)
+            if brazo is None and isinstance(row[15], (int, float)):
+                brazo = float(row[15])
+    if not puntos:
+        return None, [], "La hoja \"Data2\" no trae tiempo (columna A) y deformación (columna D)."
+    bloque = next((i for i, b in enumerate(CONS_MAQ_BLOQUES) if brazo is not None and abs(b[3] - brazo) < 1e-6), None)
+    aviso = "" if bloque is not None else "No pude saber a qué carga corresponde (peso del brazo, columna P): elígela a mano."
+    return bloque, [[t, puntos[t]] for t in sorted(puntos)], aviso
+
+
+def _cons_deformacion_en(puntos, t_seg):
+    """Deformación interpolada en el tiempo t (segundos); None si la máquina ya no tiene datos a ese tiempo."""
+    if not puntos or t_seg > puntos[-1][0]:
+        return None
+    if t_seg <= puntos[0][0]:
+        return puntos[0][1]
+    lo, hi = 0, len(puntos) - 1
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if puntos[mid][0] <= t_seg:
+            lo = mid
+        else:
+            hi = mid
+    (t0, d0), (t1, d1) = puntos[lo], puntos[hi]
+    return d0 if t1 == t0 else d0 + (d1 - d0) * (t_seg - t0) / (t1 - t0)
+
+
 def _cons_final(data, clave_fin, clave_ini):
     """Valor de la columna final; si no se digitó, repite el de la columna inicial."""
     v = to_float(data.get(clave_fin))
@@ -5594,6 +5640,41 @@ def render_consolidacion_form(data, assay_id):
                                                    label_visibility="collapsed")
         _campo("cons_precarga", "Precarga (g)")
     with st.container(border=True):
+        st.markdown(card_header_html("show_chart", "Lecturas de la Máquina"), unsafe_allow_html=True)
+        st.caption("Sube el Excel que arroja la máquina (hoja \"Data2\", columna D): se guardan las lecturas de cada carga y "
+                   "van directo a la hoja \"DATOS MAQUINA\" del Excel que descargas.")
+        archivos = st.file_uploader("Excel de la máquina", type=["xlsx"], accept_multiple_files=True,
+                                     key=f"cons_maq_upload_{assay_id}")
+        opciones = [f"{b[0]} en el brazo (hoja {int(b[3] * 2) if b[3] * 2 == int(b[3] * 2) else b[3] * 2} kg)"
+                    for b in CONS_MAQ_BLOQUES]
+        elegidos = []
+        for j, archivo in enumerate(archivos or []):
+            bloque, puntos, aviso = parse_maquina_consolidacion_xlsx(archivo.getvalue())
+            if not puntos:
+                st.error(f"{archivo.name}: {aviso}")
+                continue
+            if aviso:
+                st.warning(f"{archivo.name}: {aviso}")
+            fila = st.columns([1.3, 1])
+            fila[0].markdown(f'<div style="padding-top:8px;">{html.escape(archivo.name)} — {len(puntos)} lecturas, '
+                              f'hasta {puntos[-1][0] / 60:.0f} min</div>', unsafe_allow_html=True)
+            sel = fila[1].selectbox("Carga", range(len(opciones)), index=bloque or 0, format_func=lambda x: opciones[x],
+                                     key=f"cons_maq_bloque_{j}_{archivo.name}_{assay_id}", label_visibility="collapsed")
+            elegidos.append((sel, puntos))
+        if elegidos and st.button("Cargar lecturas", key=f"cons_maq_cargar_{assay_id}", icon=":material/publish:"):
+            for sel, puntos in elegidos:
+                data[f"cons_maq_{sel + 1}"] = puntos
+            st.success(f"Se cargaron {len(elegidos)} archivo(s).")
+        for i, b in enumerate(CONS_MAQ_BLOQUES, start=1):
+            pts = data.get(f"cons_maq_{i}")
+            if pts:
+                fila = st.columns([2, 1])
+                fila[0].markdown(f'<div style="padding-top:8px;">Carga {opciones[i - 1]}: {len(pts)} lecturas (hasta '
+                                  f'{pts[-1][0] / 60:.0f} min)</div>', unsafe_allow_html=True)
+                if fila[1].button("Quitar", key=f"cons_maq_quitar_{i}_{assay_id}"):
+                    data.pop(f"cons_maq_{i}", None)
+                    st.rerun()
+    with st.container(border=True):
         st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
         filas = resultados_consolidacion(data)
         if filas:
@@ -5663,6 +5744,18 @@ def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, obs
         ws[f"{col}109"] = "=$AB$22"
     ws["Z30"] = "=100-Z28"
     ws["K30"] = "=AB25"
+
+    # Lecturas de la máquina: la plantilla ya trae la rejilla de tiempos (min) de cada carga en "DATOS MAQUINA ";
+    # se escribe la deformación de la máquina interpolada en cada tiempo, hasta donde haya datos.
+    hoja_maq = wb["DATOS MAQUINA "]
+    for i, (_enc, col_t, col_d, _brazo) in enumerate(CONS_MAQ_BLOQUES, start=1):
+        puntos = data.get(f"cons_maq_{i}")
+        if not puntos:
+            continue
+        for fila in range(4, hoja_maq.max_row + 1):
+            t_min = hoja_maq[f"{col_t}{fila}"].value
+            if isinstance(t_min, (int, float)):
+                hoja_maq[f"{col_d}{fila}"] = _cons_deformacion_en(puntos, t_min * 60)
 
     bio = BytesIO()
     wb.save(bio)
