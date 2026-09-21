@@ -654,8 +654,6 @@ GESP_ARCILLA_CAMPOS = [
     ("gesp_a_masa_pic_muestra", "Masa del picnómetro aforado + muestra (g)"),
     ("gesp_a_temp", "Temperatura del ensayo (°C)"),
     ("gesp_a_pct_retenido", "% material retenido en el tamiz No. 4"),
-    ("gesp_a_ret_masa_aire", "Material retenido — masa en el aire (g) (solo si hay % retenido)"),
-    ("gesp_a_ret_masa_sumergida", "Material retenido — masa sumergida en agua (g) (solo si hay % retenido)"),
 ]
 GESP_FINOS_CAMPOS = [
     ("gesp_f_masa_seco", "Masa del suelo seco (g)"),
@@ -4402,6 +4400,23 @@ def generar_excel_gravedad_fino(codigo, perf_codigo, muestra, project, data, obs
                                     observaciones_ensayo)
 
 
+def _fijar_celda_formula(xlsx_bytes, celda, formula):
+    """Reemplaza la fórmula de una celda ya guardada, editando el XML de la primera hoja para no
+    pasar otra vez por openpyxl (que rompería lo que _restaurar_imagenes_perdidas ya restauró)."""
+    with zipfile.ZipFile(BytesIO(xlsx_bytes)) as zin:
+        nombre = "xl/worksheets/sheet1.xml"
+        xml = zin.read(nombre).decode("utf-8")
+        patron = re.compile(r'(<c r="' + celda + r'"[^>]*>)<f>[^<]*</f>(<v>[^<]*</v>|<v\s*/>)?')
+        nuevo, n = patron.subn(lambda m: m.group(1) + f"<f>{formula}</f>", xml, count=1)
+        if not n:
+            return xlsx_bytes
+        bio = BytesIO()
+        with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                zout.writestr(item, nuevo.encode("utf-8") if item.filename == nombre else zin.read(item.filename))
+        return bio.getvalue()
+
+
 def generar_excel_gravedad_arcilla(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """GDA-FLC-006 (INV E-128). G21 (masa del picnómetro lleno de agua) trae una fórmula que la
     busca en la calibración del picnómetro — solo se pisa si el laboratorista digitó el valor."""
@@ -4410,14 +4425,12 @@ def generar_excel_gravedad_arcilla(codigo, perf_codigo, muestra, project, data, 
               "D32": data.get("gesp_a_pct_retenido")}
     if to_float(data.get("gesp_a_masa_pic_agua")) is not None:
         celdas["G21"] = data.get("gesp_a_masa_pic_agua")
-    # F51/F52 (masa en el aire / sumergida del material retenido) vienen en la plantilla con 30 y
-    # 11 de ejemplo: si hay % retenido se llenan con lo digitado, y si no hay dato se vacían — dejar
-    # los de ejemplo daba un resultado total corregido equivocado sin ningún aviso.
-    if (to_float(data.get("gesp_a_pct_retenido")) or 0) > 0:
-        celdas["F51"] = data.get("gesp_a_ret_masa_aire")
-        celdas["F52"] = data.get("gesp_a_ret_masa_sumergida")
-    return _generar_excel_gravedad(TEMPLATE_GESP_ARCILLA, "Hoja1", celdas, codigo, perf_codigo, muestra, project,
-                                    data, observaciones_ensayo)
+    # G26 (total corregida) combinaba el % retenido con F51/F52, que en la plantilla son valores de
+    # ejemplo (30 y 11) — daba un número que no correspondía a la muestra. Se deja el resultado
+    # de la gravedad específica de la muestra ensayada, calculado en F48.
+    excel = _generar_excel_gravedad(TEMPLATE_GESP_ARCILLA, "Hoja1", celdas, codigo, perf_codigo, muestra, project,
+                                     data, observaciones_ensayo)
+    return _fijar_celda_formula(excel, "G26", "F48")
 
 
 def generar_excel_gravedad_grueso(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
@@ -5127,22 +5140,8 @@ def resultados_gravedad(data, modo):
     if not dens_k or (wpw + ws_ - wpws) == 0:
         return []
     gt = ws_ * dens_k[0] / (wpw + ws_ - wpws)
-    filas = [("Peso específico del agua (g/cm³)", fmt_num(dens_k[0], 5)),
-             ("Gravedad específica del material que pasa (a la temperatura del ensayo)", fmt_num(gt, 4))]
-    pct = f("gesp_a_pct_retenido") or 0
-    if pct == 0:
-        filas.append(("Gravedad específica total corregida a 20 °C", fmt_num(gt * dens_k[1], 4)))
-        return filas
-    r_aire, r_sum = f("gesp_a_ret_masa_aire"), f("gesp_a_ret_masa_sumergida")
-    if r_aire is None or r_sum is None or r_aire == r_sum:
-        filas.append(("Gravedad específica total corregida a 20 °C",
-                      "faltan masa en el aire y sumergida del material retenido"))
-        return filas
-    g_ret = r_aire / (r_aire - r_sum)
-    total = 1 / ((pct / (100 * g_ret)) + ((100 - pct) / (100 * gt)))
-    filas.append(("Gravedad específica aparente del material retenido", fmt_num(g_ret, 4)))
-    filas.append(("Gravedad específica total corregida a 20 °C", fmt_num(total, 4)))
-    return filas
+    return [("Peso específico del agua (g/cm³)", fmt_num(dens_k[0], 5)),
+            ("Gravedad específica", fmt_num(gt, 4))]
 
 
 def render_gravedad_especifica_form(data, assay_id):
