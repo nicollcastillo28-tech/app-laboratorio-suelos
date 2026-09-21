@@ -685,12 +685,13 @@ CONS_CONDICIONES = ["Inalterada", "Compactada", "Remoldada"]
 CONS_TEMP_SECADO = ["60 °C", "110 °C"]
 CONS_METODOS = ["A", "B"]
 CONS_CARGAS = ["0.5", "1.0", "2.0", "4.0", "8.0", "16.0", "32.0"]
+# (etiqueta, clave inicial, clave final). En "Masa muestra + anillo" cada columna lleva su valor; en el resto la
+# columna final repite la inicial mientras no se digite otro valor.
 CONS_DATOS_MUESTRA = [
-    ("cons_masa_anillo_muestra_ini", "Masa muestra + anillo inicial (g)"),
-    ("cons_masa_anillo", "Masa del anillo (g)"),
-    ("cons_masa_anillo_muestra_fin", "Masa muestra + anillo final (g)"),
-    ("cons_diametro", "Diámetro del anillo (mm)"),
-    ("cons_altura", "Altura del anillo (mm)"),
+    ("Masa muestra + anillo (g)", "cons_masa_anillo_muestra_ini", "cons_masa_anillo_muestra_fin"),
+    ("Masa del anillo (g)", "cons_masa_anillo", "cons_fin_masa_anillo"),
+    ("Diámetro del anillo (mm)", "cons_diametro", "cons_fin_diametro"),
+    ("Altura del anillo (mm)", "cons_altura", "cons_fin_altura"),
 ]
 CONS_HUMEDAD_FILAS = [
     ("recipiente", "Recipiente No."), ("humedo", "Masa muestra húmeda + recipiente (g)"),
@@ -5447,6 +5448,12 @@ def resultados_limite_contraccion(data):
             ("Relación de contracción, R", fmt_num(r, 3)), ("Cambio volumétrico, Cv (%)", fmt_num(cv, 2)),
             ("Contracción lineal, Cl (%)", fmt_num(cl, 2))]
 
+def _cons_final(data, clave_fin, clave_ini):
+    """Valor de la columna final; si no se digitó, repite el de la columna inicial."""
+    v = to_float(data.get(clave_fin))
+    return v if v is not None else to_float(data.get(clave_ini))
+
+
 def _cons_humedad(data, prefijo):
     """Humedad (%) de la bitácora de consolidación: usa la última pesada de secado digitada."""
     def f(k):
@@ -5482,8 +5489,9 @@ def resultados_consolidacion(data):
         return to_float(data.get(k))
     filas = []
     ini, fin, anillo = f("cons_masa_anillo_muestra_ini"), f("cons_masa_anillo_muestra_fin"), f("cons_masa_anillo")
+    anillo_fin = _cons_final(data, "cons_fin_masa_anillo", "cons_masa_anillo")
     mt = ini - anillo if None not in (ini, anillo) else None
-    mf = fin - anillo if None not in (fin, anillo) else None
+    mf = fin - anillo_fin if None not in (fin, anillo_fin) else None
     if mt is not None:
         filas.append(("Masa de la muestra inicial (g)", fmt_num(mt, 2)))
     if mf is not None:
@@ -5540,8 +5548,18 @@ def render_consolidacion_form(data, assay_id):
             _campo(key, label, placeholder="0.0")
     with st.container(border=True):
         st.markdown(card_header_html("science", "Datos de la Muestra"), unsafe_allow_html=True)
-        for key, label in CONS_DATOS_MUESTRA:
-            _campo(key, label)
+        head = st.columns([2, 1, 1])
+        head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Inicial</div>', unsafe_allow_html=True)
+        head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Final</div>', unsafe_allow_html=True)
+        for label, k_ini, k_fin in CONS_DATOS_MUESTRA:
+            row = st.columns([2, 1, 1])
+            row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+            data[k_ini] = row[1].text_input(f"{label} — inicial", value=data.get(k_ini, ""), key=f"{k_ini}_{assay_id}",
+                                             label_visibility="collapsed", placeholder="0.00")
+            repite = k_fin not in ("cons_masa_anillo_muestra_fin",)
+            data[k_fin] = row[2].text_input(f"{label} — final", value=data.get(k_fin, ""), key=f"{k_fin}_{assay_id}",
+                                             label_visibility="collapsed",
+                                             placeholder=(data.get(k_ini) or "igual al inicial") if repite else "0.00")
     with st.container(border=True):
         st.markdown(card_header_html("water_drop", "Humedad de la Muestra"), unsafe_allow_html=True)
         head = st.columns([2, 1, 1])
@@ -5625,7 +5643,7 @@ def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, obs
     ws["E23"] = to_float(data.get("cons_masa_anillo_muestra_ini"))
     ws["F23"] = to_float(data.get("cons_masa_anillo_muestra_fin"))
     ws["E24"] = anillo
-    ws["F24"] = anillo
+    ws["F24"] = _cons_final(data, "cons_fin_masa_anillo", "cons_masa_anillo")
     for col, pref in (("E", "ini"), ("F", "fin")):
         ws[f"{col}28"] = data.get(f"cons_{pref}_recipiente") or None
         ws[f"{col}29"] = to_float(data.get(f"cons_{pref}_humedo"))
@@ -6052,10 +6070,15 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
             filas = ([("Condición inicial", data.get("cons_condicion")), ("Temperatura inicial (°C)", data.get("cons_temp_ini")),
                       ("Temperatura final (°C)", data.get("cons_temp_fin"))]
-                     + [(l, data.get(k)) for k, l in CONS_DATOS_MUESTRA + CONS_GS_CAMPOS]
+                     + [(l, data.get(k)) for k, l in CONS_GS_CAMPOS]
                      + [("Temperatura de secado", data.get("cons_temp_secado")), ("Método", data.get("cons_metodo")),
                         ("Consolidómetro", data.get("cons_consolidometro")), ("Precarga (g)", data.get("cons_precarga"))])
             st.markdown(param_table_html(filas), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("science", "Datos de la Muestra"), unsafe_allow_html=True)
+            st.markdown(param_table_ncol_html(["PARÁMETRO", "INICIAL", "FINAL"],
+                                              [(l, data.get(ki), data.get(kf) or (data.get(ki) if kf != "cons_masa_anillo_muestra_fin" else ""))
+                                               for l, ki, kf in CONS_DATOS_MUESTRA]), unsafe_allow_html=True)
         with st.container(border=True):
             st.markdown(card_header_html("water_drop", "Humedad"), unsafe_allow_html=True)
             st.markdown(param_table_ncol_html(["PARÁMETRO", "INICIAL", "FINAL"],
