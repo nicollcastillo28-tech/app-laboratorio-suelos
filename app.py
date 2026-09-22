@@ -51,6 +51,7 @@ TEMPLATE_COMPRESION_INCONFINADA = os.path.join(BASE_DIR, "templates", "GDA-FLC-0
 TEMPLATE_COMPRESION_ROCA = os.path.join(BASE_DIR, "templates", "GDA-FLC-043_compresion_roca.xlsx")
 TEMPLATE_CARGA_PUNTUAL = os.path.join(BASE_DIR, "templates", "GDA-FLC-018_carga_puntual.xlsx")
 TEMPLATE_SOLIDEZ_SULFATOS = os.path.join(BASE_DIR, "templates", "GDA-FLC-033_solidez_sulfatos.xlsx")
+TEMPLATE_TERRONES_ARCILLA = os.path.join(BASE_DIR, "templates", "GDA-FLC-034_terrones_arcilla.xlsx")
 
 ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "laboratorista": "Laboratorista", "ingeniero": "Director Técnico"}
 ROLE_INICIALES = {"jefe": "JL", "laboratorista": "LB", "ingeniero": "DT"}
@@ -574,7 +575,7 @@ SIEVES = [
     ("s_60", "No. 60", "0.25", "E32"), ("s_100", "No. 100", "0.149", "E33"), ("s_200", "No. 200", "0.075", "E34"),
 ]
 
-ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor", "materia-organica": "Materia orgánica", "limite-contraccion": "Límite de contracción", "consolidacion": "Consolidación", "compresion-inconfinada": "Compresión inconfinada", "compresion-roca": "Compresión en roca", "carga-puntual": "Carga puntual", "solidez-sulfatos": "Solidez en sulfatos"}
+ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor", "materia-organica": "Materia orgánica", "limite-contraccion": "Límite de contracción", "consolidacion": "Consolidación", "compresion-inconfinada": "Compresión inconfinada", "compresion-roca": "Compresión en roca", "carga-puntual": "Carga puntual", "solidez-sulfatos": "Solidez en sulfatos", "terrones-arcilla": "Terrones de arcilla"}
 NORMAS_ENSAYO = {
     "granulometria": ["INV-214-13", "INV.E-213-13", "INV.E 123-13"],
     "humedad": ["INV E-122", "ASTM D2216"],
@@ -590,6 +591,7 @@ NORMAS_ENSAYO = {
     "compresion-roca": ["ASTM D7012"],
     "carga-puntual": ["ASTM D5731"],
     "solidez-sulfatos": ["INV E-220-13", "ASTM C88"],
+    "terrones-arcilla": ["INV E-211-13"],
 }
 STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado"}
 STATUS_BADGE = {"sin-iniciar": "badge-danger", "en-proceso": "badge-warning", "finalizado": "badge-success"}
@@ -993,6 +995,7 @@ SUPPORTED_ASSAY_MAP = {
     "Compresión en roca": "compresion-roca",
     "Carga puntual": "carga-puntual",
     "Solidez en sulfatos": "solidez-sulfatos",
+    "Terrones de arcilla": "terrones-arcilla",
 }
 
 
@@ -7179,6 +7182,168 @@ def generar_excel_solidez_sulfatos(codigo, perf_codigo, muestra, project, data, 
                                                 TEMPLATE_SOLIDEZ_SULFATOS)
 
 
+# Gradación unificada (17 tamices, igual idea que Solidez en Sulfatos) — columnas O (% retenido
+# individual) y P (% retenido acumulado) son fórmulas "compartidas" de Excel, así que solo se
+# escribe la columna N (masa retenida corregida). El propio formato trae un aviso: estos valores
+# se leen del Excel de Granulometría de la misma muestra y se digitan aquí a mano (no hay una
+# forma confiable de copiarlos solos porque son "corregidos", no el retenido crudo).
+TER_TAMICES = [
+    ('6"', 18), ('4"', 19), ('3"', 20), ('2 1/2"', 21), ('2"', 22), ('1 1/2"', 23), ('1"', 24),
+    ('3/4"', 25), ('1/2"', 26), ('3/8"', 27), ("N°4", 28), ("N°10", 29), ("N°20", 30), ("N°40", 31),
+    ("N°60", 32), ("N°100", 33), ("N°200", 34),
+]
+# (fracción, fila E/G, tamices de la gradación que se suman para el % retenido acumulado (H),
+# masa mínima de la fracción según INV E-211 (g), tamiz designado para lavar esa fracción) — las
+# dos últimas ya vienen fijas en la plantilla, se muestran solo como referencia.
+TER_FRACCIONES = [
+    ('- a 1 1/2"', 18, (18, 19, 20, 21, 22, 23), 5000, "N° 4"),
+    ('1 1/2" a 3/4"', 19, (24, 25), 3000, "N° 4"),
+    ('3/4" a 3/8"', 20, (26, 27), 2000, "N° 4"),
+    ('3/8" a N° 4', 21, (28,), 1000, "N° 8"),
+    ("N° 4 a N° 10", 22, (29,), 25, "N° 20"),
+]
+# No hay bitácora física para confirmar los códigos exactos — se usa la misma balanza/horno/tamices
+# que Granulometría/Solidez en Sulfatos; corregir si no coincide con los equipos reales.
+EQUIPO_TERRONES_ARCILLA = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Balanza GDA-E-012", "Horno GDA-E-007",
+                           "Horno GDA-E-404", "Serie de tamices GDA-E-030 a GDA-E-045", "Recipientes de lavado"]
+
+
+def _ter_gradacion(data):
+    """[(fila, N=masa retenida corregida, O=% retenido individual)] de los 17 tamices — misma
+    fórmula que la plantilla: O = N / masa_inicial_seca_total * 100."""
+    total = to_float(data.get("ter_masa_total"))
+    filas = []
+    for _label, fila in TER_TAMICES:
+        n = to_float(data.get(f"ter_grad_{fila}"))
+        o = (n / total * 100) if (n is not None and total) else None
+        filas.append((fila, n, o))
+    return filas
+
+
+def resultados_terrones_arcilla(data):
+    """Réplica de las fórmulas de la plantilla GDA-FLC-034 (INV E-211): con la gradación unificada
+    se calcula el % retenido acumulado de cada una de las 5 fracciones fijas de la plantilla (H,
+    sumando los tamices que le corresponden a cada una) y se combina con el % de terrones y
+    partículas deleznables de esa fracción (I = (masa inicial lavada - masa final lavada) / masa
+    inicial lavada × 100) para dar el % de pérdida ponderada final = Σ(H_i·I_i)/100, que se compara
+    contra el criterio de aceptación INV-320-13 (≤ 2 %, fijo en la plantilla en D41)."""
+    o_por_fila = {fila: o for fila, _n, o in _ter_gradacion(data)}
+
+    def o(fila):
+        return o_por_fila.get(fila) or 0
+
+    filas, ponderado_total, completas, alguna = [], 0.0, True, False
+    for label, fila_eg, tamices_k, _masa_min, _tamiz_perdida in TER_FRACCIONES:
+        h = sum(o(f) for f in tamices_k)
+        e_i = to_float(data.get(f"ter_{fila_eg}_ini"))
+        g_i = to_float(data.get(f"ter_{fila_eg}_fin"))
+        if e_i is not None or g_i is not None:
+            alguna = True
+        i_pct = (e_i - g_i) / e_i * 100 if (e_i and g_i is not None) else None
+        if i_pct is None:
+            completas = False
+        else:
+            ponderado_total += h * i_pct / 100
+        filas.append((f"{label} — % retenido / % terrones",
+                      f"{fmt_num(h, 1)}% / {fmt_num(i_pct, 1) if i_pct is not None else '—'}%"))
+    if not alguna:
+        return []
+    if completas:
+        filas.append(("% de pérdida ponderada", fmt_num(ponderado_total, 2)))
+        filas.append(("Cumple INV - Art. 320-13 (≤ 2 %)", "Sí" if ponderado_total <= 2 else "No"))
+    else:
+        filas.append(("% de pérdida ponderada", "Faltan masas por digitar"))
+    return filas
+
+
+def render_terrones_arcilla_form(data, assay_id):
+    st.info("Formulario armado sobre la plantilla oficial GDA-FLC-034 (no hay bitácora de papel para este ensayo). "
+            "La gradación se lee del Excel de Granulometría de esta misma muestra (la propia plantilla lo indica) "
+            "y se digita aquí. El Excel para descargar está al final del ensayo.")
+
+    def _campo(key, label, placeholder="0.00"):
+        row = st.columns([2.2, 1])
+        row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+        data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                       label_visibility="collapsed", placeholder=placeholder)
+
+    with st.container(border=True):
+        st.markdown(card_header_html("science", "Gradación de la Muestra (de Granulometría)"), unsafe_allow_html=True)
+        _campo("ter_masa_total", "Masa inicial seca total (g)")
+        head = st.columns([1.4, 1])
+        head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Masa retenida corregida (g)</div>',
+                          unsafe_allow_html=True)
+        for label, fila in TER_TAMICES:
+            row = st.columns([1.4, 1])
+            row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+            key = f"ter_grad_{fila}"
+            data[key] = row[1].text_input(f"Masa retenida {label}", value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                           label_visibility="collapsed", placeholder="0.00")
+    with st.container(border=True):
+        st.markdown(card_header_html("science", "Ensayo por Fracción (Terrones y Partículas Deleznables)"),
+                    unsafe_allow_html=True)
+        head = st.columns([1.8, 1, 1, 1.3])
+        head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Masa inicial lavada seca (g)</div>', unsafe_allow_html=True)
+        head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Masa final lavada seca (g)</div>', unsafe_allow_html=True)
+        head[3].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Masa mín. / tamiz pérdida</div>', unsafe_allow_html=True)
+        for label, fila, _tamices_k, masa_min, tamiz_perdida in TER_FRACCIONES:
+            row = st.columns([1.8, 1, 1, 1.3])
+            row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+            for col_i, sufijo in ((1, "ini"), (2, "fin")):
+                key = f"ter_{fila}_{sufijo}"
+                data[key] = row[col_i].text_input(f"{label} {sufijo}", value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                                   label_visibility="collapsed", placeholder="0.00")
+            row[3].markdown(f'<div class="cell-muted" style="text-align:center;padding-top:8px;">'
+                             f'{fmt_num(masa_min, 0)} g / {tamiz_perdida}</div>', unsafe_allow_html=True)
+    with st.container(border=True):
+        st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+        filas = resultados_terrones_arcilla(data)
+        if filas:
+            st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        else:
+            st.caption("Se muestran a medida que se digita la gradación y las masas de arriba.")
+    render_equipo(data, "ter", EQUIPO_TERRONES_ARCILLA)
+    render_norma_selector("terrones-arcilla", data, "ter")
+
+
+def generar_excel_terrones_arcilla(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    """Terrones de arcilla y partículas deleznables (GDA-FLC-034, INV E-211). Se escribe directo en
+    el XML de la hoja: la gradación unificada (columna N) y las masas de cada fracción — el %
+    retenido, el % de terrones y la pérdida ponderada final los calcula el propio Excel con sus
+    fórmulas (varias son "compartidas", así que no se tocan)."""
+    c = {}
+    c["C6"] = project.get("cliente", "") if project else ""
+    c["C7"] = project["nombre"] if project else codigo
+    c["C8"] = project.get("correo_cliente", "") if project else ""
+    c["C9"] = project.get("localizacion", "") if project else ""
+    if project and project.get("muestra_tomada_por"):
+        c["C10"] = project["muestra_tomada_por"]
+    c["H6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    c["H7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
+    c["H8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    c["I9"] = project.get("numero", "") if project else ""
+    c["J9"] = project.get("anio", "") if project else ""
+    perf = get_perforacion(codigo, perf_codigo)
+    c["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
+    c["D12"] = perf_codigo
+    c["F12"] = muestra["numero"]
+    c["H12"] = to_float(muestra.get("profundidad_de"))
+    c["J12"] = to_float(muestra.get("profundidad_hasta"))
+    c["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+
+    c["O15"] = to_float(data.get("ter_masa_total"))
+    for _label, fila in TER_TAMICES:
+        c[f"N{fila}"] = to_float(data.get(f"ter_grad_{fila}"))
+    for _label, fila, _tamices_k, _masa_min, _tamiz_perdida in TER_FRACCIONES:
+        c[f"E{fila}"] = to_float(data.get(f"ter_{fila}_ini"))
+        c[f"G{fila}"] = to_float(data.get(f"ter_{fila}_fin"))
+
+    with open(TEMPLATE_TERRONES_ARCILLA, "rb") as f:
+        plantilla = f.read()
+    return _restaurar_orden_formato_condicional(_xlsx_escribir_celdas(plantilla, "xl/worksheets/sheet1.xml", c),
+                                                TEMPLATE_TERRONES_ARCILLA)
+
+
 def render_limite_contraccion_form(data, assay_id):
     st.info("Formulario armado sobre la plantilla oficial GDA-FLC-022. El Excel para descargar está al final del ensayo.")
 
@@ -7711,6 +7876,24 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                 st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
                 st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
         equipos, norma = data.get("sulf_equipos", []), data.get("sulf_norma", "—")
+    elif tipo == "terrones-arcilla":
+        with st.container(border=True):
+            st.markdown(card_header_html("science", "Gradación de la Muestra (de Granulometría)"), unsafe_allow_html=True)
+            st.markdown(param_table_html([("Masa inicial seca total (g)", data.get("ter_masa_total"))]), unsafe_allow_html=True)
+            st.markdown(param_table_ncol_html(["TAMIZ", "MASA RETENIDA CORREGIDA (g)"],
+                                              [(label, data.get(f"ter_grad_{fila}")) for label, fila in TER_TAMICES]),
+                        unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("science", "Ensayo por Fracción"), unsafe_allow_html=True)
+            st.markdown(param_table_ncol_html(["FRACCIÓN", "MASA INICIAL LAVADA (g)", "MASA FINAL LAVADA (g)"],
+                                              [(label, data.get(f"ter_{fila}_ini"), data.get(f"ter_{fila}_fin"))
+                                               for label, fila, *_ in TER_FRACCIONES]), unsafe_allow_html=True)
+        resultados = resultados_terrones_arcilla(data)
+        if resultados:
+            with st.container(border=True):
+                st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+                st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        equipos, norma = data.get("ter_equipos", []), data.get("ter_norma", "—")
     elif tipo == "consolidacion":
         with st.container(border=True):
             st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
@@ -8012,6 +8195,8 @@ def render_assay_form():
             render_carga_puntual_form(data, assay_id)
         elif assay["tipo"] == "solidez-sulfatos":
             render_solidez_sulfatos_form(data, assay_id)
+        elif assay["tipo"] == "terrones-arcilla":
+            render_terrones_arcilla_form(data, assay_id)
 
         with st.expander("Observaciones (opcional)", icon=":material/notes:", expanded=bool(assay.get("observations"))):
             observations = st.text_area("Observaciones", value=assay.get("observations", ""), label_visibility="collapsed",
@@ -8194,6 +8379,16 @@ def render_assay_form():
             file_name=f"Solidez_sulfatos_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_solidez_sulfatos")
+
+    if assay["tipo"] == "terrones-arcilla" and muestra:
+        st.markdown("---")
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        st.download_button(
+            "Descargar Excel (plantilla oficial de Terrones de Arcilla)", icon=":material/download:",
+            data=generar_excel_terrones_arcilla(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            file_name=f"Terrones_arcilla_{muestra['id_unico']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
+            key="dl_terrones_arcilla")
 
     if assay["tipo"] == "consolidacion" and muestra:
         st.markdown("---")
