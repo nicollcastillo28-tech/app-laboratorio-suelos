@@ -5168,6 +5168,35 @@ def _mub_humedad(data):
     return (humedo - seco) / (seco - rec) * 100
 
 
+def resultados_masa_unitaria_parafinado(data, muestra_id):
+    """Densidad húmeda y seca del método Parafinado (GDA-FLC-004), misma fórmula de la plantilla
+    (G24, G25, G26, G27): densidad húmeda (g/cm³) = B / ( -(D-A) + C - ((C-B)/densidad_parafina) ),
+    con A = masa de la cuerda (0, no se digita en la app), B = masa en el aire, C = masa en el aire
+    parafinado, D = masa en el agua parafinado, densidad_parafina = 0.86 (valor por defecto de la
+    plantilla). La humedad se toma del ensayo de Humedad de la misma muestra, igual que en CBR —
+    sin ese dato solo se puede mostrar la densidad húmeda, no la seca."""
+    b = to_float(data.get("mu_peso_aire"))
+    c = to_float(data.get("mu_peso_aire_par"))
+    d = to_float(data.get("mu_peso_agua_par"))
+    if b is None or c is None or d is None:
+        return [], None
+    denominador = -d + c - ((c - b) / 0.86)
+    if not denominador:
+        return [], None
+    dens_humeda = b / denominador
+    filas = [("Densidad húmeda (g/cm³)", fmt_num(dens_humeda, 3)),
+             ("Densidad húmeda (kN/m³)", fmt_num(dens_humeda * 10, 2))]
+    hum_assay = get_assay(muestra_id, "humedad") if muestra_id else None
+    humedad_pct = calcular_humedad_pct(hum_assay.get("data", {})) if hum_assay else None
+    if humedad_pct is not None:
+        filas.insert(0, ("Humedad (%) — del ensayo de Humedad", fmt_num(humedad_pct, 2)))
+        if humedad_pct != -100:
+            dens_seca = dens_humeda / (1 + humedad_pct / 100)
+            filas += [("Densidad seca (g/cm³)", fmt_num(dens_seca, 3)),
+                      ("Densidad seca (kN/m³)", fmt_num(dens_seca * 10, 2))]
+    return filas, humedad_pct
+
+
 def resultados_masa_unitaria_b(data):
     """Densidad húmeda y seca del Método B (INV/ASTM D7263-09, plantilla GDA-FLC-030 — una sola lectura, no
     promedio): volumen (cm³) = π·altura(mm)·(diámetro(mm)/2)²/1000, densidad húmeda = masa/volumen, densidad
@@ -5228,24 +5257,35 @@ def generar_excel_masa_unitaria_b(codigo, perf_codigo, muestra, project, data, o
                                                 TEMPLATE_MASA_UNITARIA_B)
 
 
-def render_masa_unitaria_form(data, assay_id):
+def render_masa_unitaria_form(data, assay_id, muestra_id=None):
     actual = data.get("mu_metodo", "Parafinado")
     data["mu_metodo"] = st.radio("Método", ["Parafinado", "Método B"], horizontal=True,
                                   index=["Parafinado", "Método B"].index(actual) if actual in ("Parafinado", "Método B") else 0,
                                   key=f"mu_metodo_{assay_id}")
     if data["mu_metodo"] == "Parafinado":
-        st.info("Estos datos se guardan tal cual, sin calcular el peso unitario dentro de la app.")
-        c1, c2 = st.columns(2)
-        with c1:
-            data["mu_peso_aire"] = st.text_input("Masa en el aire (g)", value=data.get("mu_peso_aire", ""),
-                                                  key=f"mu_peso_aire_{assay_id}", placeholder="245.80")
-            data["mu_peso_agua_par"] = st.text_input("Masa en el agua parafinado (g)", value=data.get("mu_peso_agua_par", ""),
-                                                      key=f"mu_peso_agua_par_{assay_id}", placeholder="138.20")
-        with c2:
-            data["mu_peso_aire_par"] = st.text_input("Masa en el aire parafinado (g)", value=data.get("mu_peso_aire_par", ""),
-                                                      key=f"mu_peso_aire_par_{assay_id}", placeholder="258.30")
-            data["mu_temp_agua"] = st.text_input("Temperatura del agua (°C)", value=data.get("mu_temp_agua", ""),
-                                                  key=f"mu_temp_agua_{assay_id}", placeholder="22.0")
+        with st.container(border=True):
+            st.markdown(card_header_html("straighten", "Masas del Ensayo"), unsafe_allow_html=True)
+            c1, c2 = st.columns(2)
+            with c1:
+                data["mu_peso_aire"] = st.text_input("Masa en el aire (g)", value=data.get("mu_peso_aire", ""),
+                                                      key=f"mu_peso_aire_{assay_id}", placeholder="245.80")
+                data["mu_peso_agua_par"] = st.text_input("Masa en el agua parafinado (g)", value=data.get("mu_peso_agua_par", ""),
+                                                          key=f"mu_peso_agua_par_{assay_id}", placeholder="138.20")
+            with c2:
+                data["mu_peso_aire_par"] = st.text_input("Masa en el aire parafinado (g)", value=data.get("mu_peso_aire_par", ""),
+                                                          key=f"mu_peso_aire_par_{assay_id}", placeholder="258.30")
+                data["mu_temp_agua"] = st.text_input("Temperatura del agua (°C)", value=data.get("mu_temp_agua", ""),
+                                                      key=f"mu_temp_agua_{assay_id}", placeholder="22.0")
+        with st.container(border=True):
+            st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+            filas, humedad_pct = resultados_masa_unitaria_parafinado(data, muestra_id)
+            if filas:
+                st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+                if humedad_pct is None:
+                    st.caption("Falta el ensayo de Humedad de esta muestra (o le faltan datos) para calcular "
+                               "la densidad seca — por ahora solo se muestra la húmeda.")
+            else:
+                st.caption("Se muestran a medida que se digitan las masas de arriba.")
         render_equipo(data, "mu", EQUIPO_MASA_UNITARIA)
     else:
         st.info("Formulario armado sobre la plantilla oficial GDA-FLC-030. El Excel para descargar está al final del ensayo.")
@@ -7434,6 +7474,11 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
         with st.container(border=True):
             st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
             st.markdown(param_table_html(rows), unsafe_allow_html=True)
+        filas, _humedad_pct = resultados_masa_unitaria_parafinado(data, muestra_id)
+        if filas:
+            with st.container(border=True):
+                st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+                st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
         equipos, norma = data.get("mu_equipos", []), data.get("mu_norma", "—")
     elif tipo == "cbr":
         with st.container(border=True):
@@ -7878,7 +7923,7 @@ def render_assay_form():
         elif assay["tipo"] == "limites":
             render_limites_form(data, assay_id)
         elif assay["tipo"] == "masa-unitaria":
-            render_masa_unitaria_form(data, assay_id)
+            render_masa_unitaria_form(data, assay_id, muestra_id)
         elif assay["tipo"] == "cbr":
             render_cbr_form(data, assay_id, muestra_id)
         elif assay["tipo"] == "corte-directo":
