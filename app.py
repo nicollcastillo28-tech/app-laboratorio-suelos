@@ -6049,12 +6049,11 @@ def render_compresion_inconfinada_form(data, assay_id):
     with st.container(border=True):
         st.markdown(card_header_html("tune", "Falla"), unsafe_allow_html=True)
         _campo("ci_penetrometro", "Resistencia al penetrómetro (kg/cm²)")
-        row = st.columns([2.2, 1])
-        row[0].markdown('<div style="padding-top:8px;">Tipo de falla (diagrama)</div>', unsafe_allow_html=True)
+        st.markdown('<div style="padding-top:4px;">Tipo de falla (diagrama)</div>', unsafe_allow_html=True)
         actual = data.get("ci_falla", CI_FALLAS[0])
-        data["ci_falla"] = row[1].selectbox("Tipo de falla (diagrama)", CI_FALLAS,
-                                             index=CI_FALLAS.index(actual) if actual in CI_FALLAS else 0,
-                                             key=f"ci_falla_{assay_id}", label_visibility="collapsed")
+        data["ci_falla"] = st.selectbox("Tipo de falla (diagrama)", CI_FALLAS,
+                                         index=CI_FALLAS.index(actual) if actual in CI_FALLAS else 0,
+                                         key=f"ci_falla_{assay_id}", label_visibility="collapsed")
         _campo("ci_velocidad", "Velocidad de falla (mm/min)", placeholder="1")
         _campo("ci_tiempo_falla", "Tiempo de falla (min)")
     with st.container(border=True):
@@ -6450,12 +6449,11 @@ def render_compresion_roca_form(data, assay_id):
                     st.rerun()
     with st.container(border=True):
         st.markdown(card_header_html("tune", "Falla"), unsafe_allow_html=True)
-        row = st.columns([2.2, 1])
-        row[0].markdown('<div style="padding-top:8px;">Tipo de falla (diagrama)</div>', unsafe_allow_html=True)
+        st.markdown('<div style="padding-top:4px;">Tipo de falla (diagrama)</div>', unsafe_allow_html=True)
         actual = data.get("roca_falla", ROCA_FALLAS[0])
-        data["roca_falla"] = row[1].selectbox("Tipo de falla (diagrama)", ROCA_FALLAS,
-                                               index=ROCA_FALLAS.index(actual) if actual in ROCA_FALLAS else 0,
-                                               key=f"roca_falla_{assay_id}", label_visibility="collapsed")
+        data["roca_falla"] = st.selectbox("Tipo de falla (diagrama)", ROCA_FALLAS,
+                                           index=ROCA_FALLAS.index(actual) if actual in ROCA_FALLAS else 0,
+                                           key=f"roca_falla_{assay_id}", label_visibility="collapsed")
         _campo("roca_velocidad", "Velocidad de falla (mm/min)", placeholder="1")
         _campo("roca_tiempo_falla", "Tiempo de falla (min)")
         _campo("roca_esfuerzo_maximo_manual", "Esfuerzo máximo leído en la máquina (MPa, opcional)", placeholder="0.0")
