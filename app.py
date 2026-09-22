@@ -5918,15 +5918,21 @@ def resultados_compresion_inconfinada(data):
     return filas
 
 
-def _procesar_foto(imagen_bytes, ancho_max=1600):
+def _procesar_foto(imagen_bytes, ancho_max=1280, peso_max_kb=300):
     """Comprime la foto del plano de falla antes de guardarla en el ensayo (jsonb): se reduce a un ancho máximo y se
-    guarda como JPEG. Devuelve {"b64", "ext", "ancho", "alto"}."""
+    guarda como JPEG. La foto de una cámara de celular pesa varios MB (a veces HEIC/RAW) — subirla y guardarla así de
+    pesada es lo que dejaba la app "cargando" sin terminar en redes lentas y, si la escritura a Supabase fallaba a
+    medio camino, la foto nunca quedaba guardada de verdad. Se baja la calidad hasta quedar bajo `peso_max_kb`
+    (o hasta una calidad mínima razonable, para no dejar una foto irreconocible). Devuelve {"b64", "ext", "ancho", "alto"}."""
     img = Image.open(BytesIO(imagen_bytes))
     img = ImageOps.exif_transpose(img).convert("RGB")
     if img.width > ancho_max:
         img = img.resize((ancho_max, round(img.height * ancho_max / img.width)))
-    bio = BytesIO()
-    img.save(bio, format="JPEG", quality=85)
+    for calidad in (70, 55, 40, 30):
+        bio = BytesIO()
+        img.save(bio, format="JPEG", quality=calidad)
+        if bio.tell() <= peso_max_kb * 1024 or calidad == 30:
+            break
     return {"b64": base64.b64encode(bio.getvalue()).decode("ascii"), "ext": "jpeg", "ancho": img.width, "alto": img.height}
 
 
@@ -6035,7 +6041,8 @@ def render_compresion_inconfinada_form(data, assay_id):
             captura = st.file_uploader("Foto del plano de falla", type=["png", "jpg", "jpeg"],
                                        key=f"ci_foto_archivo_{assay_id}", label_visibility="collapsed")
             if captura is not None:
-                data["ci_foto_falla"] = _procesar_foto(captura.getvalue())
+                with st.spinner("Procesando foto…"):
+                    data["ci_foto_falla"] = _procesar_foto(captura.getvalue())
                 st.rerun()
     with st.container(border=True):
         st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
@@ -6977,13 +6984,24 @@ def render_assay_form():
         if (data != assay.get("data", {}) or observations != assay.get("observations", "")
                 or laboratorist != assay.get("laboratorist", "")):
             nuevo_status = "en-proceso" if assay["status"] == "sin-iniciar" else assay["status"]
-            db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status=nuevo_status)
-            if pasa200_gran_sibling:
-                db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
-            assay["data"] = data
-            assay["observations"] = observations
-            assay["laboratorist"] = laboratorist
-            assay["status"] = nuevo_status
+            # Un ensayo con foto (compresión inconfinada) manda un jsonb varias veces más pesado que uno solo con
+            # números — en una red de celular lenta la escritura a Supabase puede tardar; se avisa con un spinner
+            # en vez de dejar la pantalla quieta sin explicación. Si la escritura falla (señal mala, se cierra la
+            # pestaña a medio guardar) se avisa con un error en vez de dejarlo pasar en silencio: sin este intento
+            # explícito, la excepción tumbaba toda la página sin decir qué pasó ni qué hacer.
+            hay_foto = any(isinstance(v, dict) and "b64" in v for v in data.values())
+            try:
+                with st.spinner("Guardando la foto…" if hay_foto else "Guardando…"):
+                    db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status=nuevo_status)
+                    if pasa200_gran_sibling:
+                        db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
+                assay["data"] = data
+                assay["observations"] = observations
+                assay["laboratorist"] = laboratorist
+                assay["status"] = nuevo_status
+            except Exception:
+                st.error("No se pudo guardar el último cambio (revisa tu conexión). Sigue en pantalla — vuelve a intentarlo "
+                          "digitando algo más o dale a \"Guardar borrador\".")
         st.markdown(f'<div class="timestamp-caption">{icon("cloud_done", size=13)} Los cambios se guardan automáticamente mientras digitas.</div>',
                     unsafe_allow_html=True)
 
@@ -6991,11 +7009,15 @@ def render_assay_form():
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Guardar borrador", use_container_width=True, icon=":material/save:"):
-                db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status="en-proceso")
-                if pasa200_gran_sibling:
-                    db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
-                assay.update(data=data, observations=observations, laboratorist=laboratorist, status="en-proceso")
-                st.toast("Borrador guardado.", icon=":material/check_circle:")
+                try:
+                    with st.spinner("Guardando…"):
+                        db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status="en-proceso")
+                        if pasa200_gran_sibling:
+                            db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
+                    assay.update(data=data, observations=observations, laboratorist=laboratorist, status="en-proceso")
+                    st.toast("Borrador guardado.", icon=":material/check_circle:")
+                except Exception:
+                    st.error("No se pudo guardar (revisa tu conexión) — vuelve a intentarlo.")
         with col2:
             if st.button("Enviar a revisión", type="primary", use_container_width=True, icon=":material/send:"):
                 faltantes = campos_faltantes(assay["tipo"], data)
