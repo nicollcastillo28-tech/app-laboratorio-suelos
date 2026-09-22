@@ -5852,7 +5852,11 @@ def parse_maquina_ci_texto(texto):
 
 def parse_maquina_ci_xlsx(file_bytes):
     """Excel con la tabla de la máquina: se busca en cualquier hoja la fila de encabezados (Tiempo / Fuerza /
-    Deformación) y se leen los datos que están debajo. Devuelve [[t, fuerza|None, deformación]]."""
+    Deformación o Desplazamiento) y se leen los datos que están debajo. Algunas máquinas traen una hoja "Informe"
+    con fórmulas rotas (#N/A en todas las filas al abrir sin Excel) antes de la hoja real de datos — esa se salta
+    sola porque no encuentra filas válidas. También pueden traer, además de la columna en mm, otra de "deformación
+    unitaria (%)" que también empieza por "deform"; se prioriza la que trae "mm" en el encabezado, que es la que
+    hace falta acá. Devuelve [[t, fuerza|None, deformación mm]]."""
     try:
         wb = load_workbook(BytesIO(file_bytes), data_only=True, read_only=True)
     except Exception:
@@ -5860,22 +5864,25 @@ def parse_maquina_ci_xlsx(file_bytes):
     for ws in wb.worksheets:
         filas = list(ws.iter_rows(min_row=1, max_row=3000, values_only=True))
         for r, fila in enumerate(filas):
-            pos = {}
+            pos_t = pos_f = None
+            candidatos_d = []  # (trae "mm" en el encabezado, columna)
             for c, v in enumerate(fila):
                 txt = str(v).strip().lower() if v is not None else ""
-                if txt.startswith("tiempo") and "t" not in pos:
-                    pos["t"] = c
-                elif txt.startswith("fuerza") and "f" not in pos:
-                    pos["f"] = c
-                elif txt.startswith("deform") and "d" not in pos:
-                    pos["d"] = c
-            if len(pos) < 3:
+                if pos_t is None and txt.startswith("tiempo"):
+                    pos_t = c
+                elif pos_f is None and txt.startswith("fuerza"):
+                    pos_f = c
+                elif txt.startswith("deform") or txt.startswith("desplazamiento"):
+                    candidatos_d.append(("mm" in txt, c))
+            if pos_t is None or pos_f is None or not candidatos_d:
                 continue
+            candidatos_d.sort(key=lambda x: not x[0])
+            pos_d = candidatos_d[0][1]
             datos = []
             for fila_dato in filas[r + 1:]:
-                if max(pos.values()) >= len(fila_dato):
+                if max(pos_t, pos_f, pos_d) >= len(fila_dato):
                     continue
-                t, f, d = (to_float(fila_dato[pos[k]]) for k in ("t", "f", "d"))
+                t, f, d = to_float(fila_dato[pos_t]), to_float(fila_dato[pos_f]), to_float(fila_dato[pos_d])
                 if t is not None and d is not None:
                     datos.append([t, f, d])
             if datos:
