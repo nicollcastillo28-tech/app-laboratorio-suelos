@@ -5681,7 +5681,8 @@ def render_consolidacion_form(data, assay_id):
                                     unsafe_allow_html=True)
                         if st.button("Quitar", key=f"cons_maq_quitar_{i}_{assay_id}", use_container_width=True):
                             data.pop(f"cons_maq_{i}", None)
-                            st.rerun()
+                            if _guardar_inmediato(assay_id, data):
+                                st.rerun()
     with st.container(border=True):
         st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
         filas = resultados_consolidacion(data)
@@ -5936,6 +5937,27 @@ def _procesar_foto(imagen_bytes, ancho_max=1280, peso_max_kb=300):
     return {"b64": base64.b64encode(bio.getvalue()).decode("ascii"), "ext": "jpeg", "ancho": img.width, "alto": img.height}
 
 
+def _guardar_inmediato(assay_id, data):
+    """Guarda `data` en Supabase ya mismo y sincroniza la copia en memoria del ensayo (`st.session_state.assays`) —
+    se usa antes de un `st.rerun()` que hace falta disparar EN EL ACTO (para que la interfaz cambie de una, como al
+    subir una foto o quitar un dato importado), en vez de esperar al autoguardado normal, que corre más abajo en el
+    flujo del formulario y por eso nunca llega a ejecutarse si el rerun corta el guion antes de esa línea.
+    Sin este guardado explícito, el cambio se perdía apenas se recargaba la página: la corrida siguiente volvía a
+    leer `data` desde la copia vieja en memoria, así que con un selector de archivo (que sigue "lleno" en cada
+    corrida, a diferencia de un botón) la foto se procesaba y se intentaba guardar una y otra vez sin parar nunca —
+    el "muñeco" de arriba quedaba corriendo para siempre y la foto jamás llegaba a guardarse de verdad. Devuelve
+    True si guardó bien."""
+    try:
+        db.update_assay_data(assay_id, data=data)
+    except Exception:
+        st.error("No se pudo guardar (revisa tu conexión) — vuelve a intentarlo.")
+        return False
+    assay_ref = next((a for a in st.session_state.assays if a["id"] == assay_id), None)
+    if assay_ref is not None:
+        assay_ref["data"] = data
+    return True
+
+
 def render_compresion_inconfinada_form(data, assay_id):
     st.info("Formulario armado sobre la bitácora GDA-FL-005. El Excel para descargar (plantilla oficial GDA-FLC-008) "
             "está al final del ensayo.")
@@ -6002,7 +6024,8 @@ def render_compresion_inconfinada_form(data, assay_id):
                         unsafe_allow_html=True)
             if st.button("Quitar datos de la máquina", key=f"ci_maq_quitar_{assay_id}"):
                 data.pop("ci_maq", None)
-                st.rerun()
+                if _guardar_inmediato(assay_id, data):
+                    st.rerun()
     with st.container(border=True):
         st.markdown(card_header_html("show_chart", "Deformación y Carga (bitácora)"), unsafe_allow_html=True)
         st.caption("Deformación en 0.001 in y carga en kN. Solo se exportan las filas con carga digitada "
@@ -6034,16 +6057,25 @@ def render_compresion_inconfinada_form(data, assay_id):
             st.image(base64.b64decode(data["ci_foto_falla"]["b64"]), width=220)
             if st.button("Quitar foto", key=f"ci_foto_quitar_{assay_id}"):
                 data.pop("ci_foto_falla", None)
-                st.rerun()
+                # Se cambia el número de intento para que el selector de archivo vuelva a nacer limpio: con la misma
+                # key, Streamlit sigue acordándose del archivo ya subido aunque el widget estuviera oculto (mientras
+                # se mostraba la foto), así que "Quitar" no quitaba nada de verdad — la misma foto volvía a aparecer.
+                data["_ci_foto_intento"] = data.get("_ci_foto_intento", 0) + 1
+                if _guardar_inmediato(assay_id, data):
+                    st.rerun()
         else:
             # En el celular, este selector de archivo ya abre la cámara del sistema (y ahí el laboratorista escoge
             # trasera o delantera) además de la galería — no hace falta el widget de cámara en vivo de Streamlit.
             captura = st.file_uploader("Foto del plano de falla", type=["png", "jpg", "jpeg"],
-                                       key=f"ci_foto_archivo_{assay_id}", label_visibility="collapsed")
+                                       key=f"ci_foto_archivo_{assay_id}_{data.get('_ci_foto_intento', 0)}",
+                                       label_visibility="collapsed")
             if captura is not None:
-                with st.spinner("Procesando foto…"):
+                with st.spinner("Guardando la foto…"):
                     data["ci_foto_falla"] = _procesar_foto(captura.getvalue())
-                st.rerun()
+                    if _guardar_inmediato(assay_id, data):
+                        st.rerun()
+                    else:
+                        data.pop("ci_foto_falla", None)
     with st.container(border=True):
         st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
         filas = resultados_compresion_inconfinada(data)
