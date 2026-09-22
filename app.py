@@ -6010,6 +6010,13 @@ def render_compresion_inconfinada_form(data, assay_id):
         st.markdown(card_header_html("water_drop", "Datos de Humedad"), unsafe_allow_html=True)
         for key, label in CI_HUMEDAD_FILAS:
             _campo(key, label, placeholder="" if key == "ci_hum_recipiente" else "0.00")
+            if key == "ci_hum_seco_17" and data.get("ci_hum_seco_17"):
+                # Normalmente el peso ya se estabilizó a las 17 horas y se repite igual a las 18 y 19 — se copia
+                # solo, sin pisar un valor distinto que ya se hubiera digitado a mano.
+                for siguiente in ("ci_hum_seco_18", "ci_hum_seco_19"):
+                    if not data.get(siguiente):
+                        st.session_state[f"{siguiente}_{assay_id}"] = data["ci_hum_seco_17"]
+                        data[siguiente] = data["ci_hum_seco_17"]
         _radio("ci_temp_secado", "Temperatura de secado", ["60 °C", "110 °C"])
         _radio("ci_metodo", "Método", ["A", "B"])
         _radio("ci_hum_antes", "Humedad obtenida", ["Antes del ensayo", "Después del ensayo"])
@@ -6406,6 +6413,11 @@ def render_compresion_roca_form(data, assay_id):
         st.markdown(card_header_html("water_drop", "Datos de Humedad"), unsafe_allow_html=True)
         for key, label in ROCA_HUMEDAD_FILAS:
             _campo(key, label, placeholder="" if key == "roca_hum_recipiente" else "0.00")
+            if key == "roca_hum_seco_17" and data.get("roca_hum_seco_17"):
+                for siguiente in ("roca_hum_seco_18", "roca_hum_seco_19"):
+                    if not data.get(siguiente):
+                        st.session_state[f"{siguiente}_{assay_id}"] = data["roca_hum_seco_17"]
+                        data[siguiente] = data["roca_hum_seco_17"]
         _radio("roca_temp_secado", "Temperatura de secado", ["60 °C", "110 °C"])
         _radio("roca_metodo", "Método", ["A", "B"])
         _radio("roca_hum_antes", "Humedad obtenida", ["Antes del ensayo", "Después del ensayo"])
@@ -6621,6 +6633,11 @@ def render_carga_puntual_form(data, assay_id):
         st.markdown(card_header_html("water_drop", "Datos de Humedad"), unsafe_allow_html=True)
         for key, label in CP_HUMEDAD_FILAS:
             _campo(key, label, placeholder="" if key == "cp_hum_recipiente" else "0.00")
+            if key == "cp_hum_seco_14" and data.get("cp_hum_seco_14"):
+                for siguiente in ("cp_hum_seco_15", "cp_hum_seco_16"):
+                    if not data.get(siguiente):
+                        st.session_state[f"{siguiente}_{assay_id}"] = data["cp_hum_seco_14"]
+                        data[siguiente] = data["cp_hum_seco_14"]
     with st.container(border=True):
         st.markdown(card_header_html("photo_camera", "Foto de la Muestra"), unsafe_allow_html=True)
         st.caption("Se agrega al Excel, junto a la tabla de ensayos (no queda ajustada a ningún recuadro): la acomodas a "
