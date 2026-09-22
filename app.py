@@ -643,6 +643,14 @@ MUB_HUMEDAD_FILAS = [
     ("mub_hum_seco_19", "Masa suelo seco + recipiente (g) (19 horas)"), ("mub_hum_masa_rec", "Masa del recipiente (g)"),
 ]
 
+# Mismos campos que MUB_HUMEDAD_FILAS, pero para Peso Unitario Parafinado cuando la muestra no
+# tiene un ensayo de Humedad asignado (prefijo mu_hum_ en vez de mub_hum_).
+MU_HUMEDAD_FILAS = [
+    ("mu_hum_recipiente", "Recipiente No."), ("mu_hum_humedo", "Masa muestra húmeda + recipiente (g)"),
+    ("mu_hum_seco_17", "Masa suelo seco + recipiente (g) (17 horas)"), ("mu_hum_seco_18", "Masa suelo seco + recipiente (g) (18 horas)"),
+    ("mu_hum_seco_19", "Masa suelo seco + recipiente (g) (19 horas)"), ("mu_hum_masa_rec", "Masa del recipiente (g)"),
+]
+
 # Equipos reales del CBR (INV E-148 / ASTM D1883), tal como aparecen en el formato físico
 # "EQUIPOS UTILIZADOS", en el mismo orden (fila por fila).
 EQUIPO_CBR = [
@@ -5167,15 +5175,26 @@ def _mub_humedad(data):
     return (humedo - seco) / (seco - rec) * 100
 
 
+def _mu_humedad_manual(data):
+    """Humedad (%) a partir de las masas digitadas aquí mismo (recipiente, húmeda, seca a
+    17/18/19h) cuando la muestra no tiene un ensayo de Humedad asignado — misma fórmula que
+    _mub_humedad y que el resto de ensayos. None si todavía faltan datos."""
+    humedo, rec = to_float(data.get("mu_hum_humedo")), to_float(data.get("mu_hum_masa_rec"))
+    seco = next((v for v in (to_float(data.get(f"mu_hum_seco_{x}")) for x in (19, 18, 17)) if v is not None), None)
+    if None in (humedo, seco, rec) or (seco - rec) == 0:
+        return None
+    return (humedo - seco) / (seco - rec) * 100
+
+
 def _mu_humedad_parafinado(data, muestra_id):
     """Humedad (%) a usar en Peso Unitario Parafinado: si la muestra tiene un ensayo de Humedad
-    asignado, se copia de ahí (igual que en CBR); si no tiene ninguno asignado, se usa la que se
-    digite manualmente en este mismo ensayo (campo "mu_humedad_manual"). Devuelve (valor, fuente),
-    con fuente en {"ensayo", "manual", None}."""
+    asignado, se copia de ahí (igual que en CBR); si no tiene ninguno asignado, se calcula a
+    partir de las masas (recipiente, húmeda, seca) digitadas en este mismo ensayo. Devuelve
+    (valor, fuente), con fuente en {"ensayo", "manual", None}."""
     hum_assay = get_assay(muestra_id, "humedad") if muestra_id else None
     if hum_assay:
         return calcular_humedad_pct(hum_assay.get("data", {})), "ensayo"
-    manual = to_float(data.get("mu_humedad_manual"))
+    manual = _mu_humedad_manual(data)
     return manual, ("manual" if manual is not None else None)
 
 
@@ -5299,13 +5318,26 @@ def render_masa_unitaria_form(data, assay_id, muestra_id=None):
                 if humedad_copiada is None:
                     st.caption("El ensayo de Humedad de esta muestra todavía no tiene datos suficientes.")
             else:
-                st.caption("Esta muestra no tiene un ensayo de Humedad asignado — digítala aquí para calcular "
-                           "la densidad seca.")
-                row = st.columns([2.2, 1])
-                row[0].markdown('<div style="padding-top:8px;">Humedad (%)</div>', unsafe_allow_html=True)
-                data["mu_humedad_manual"] = row[1].text_input("Humedad (%)", value=data.get("mu_humedad_manual", ""),
-                                                                key=f"mu_humedad_manual_{assay_id}",
-                                                                label_visibility="collapsed", placeholder="18.50")
+                st.caption("Esta muestra no tiene un ensayo de Humedad asignado — digita las masas para que se "
+                           "calcule aquí mismo (necesaria para la densidad seca).")
+
+                def _campo_hum_mu(key, label, placeholder="0.00"):
+                    row = st.columns([2.2, 1])
+                    row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+                    data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                                   label_visibility="collapsed", placeholder=placeholder)
+
+                for key, label in MU_HUMEDAD_FILAS:
+                    _campo_hum_mu(key, label, placeholder="" if key == "mu_hum_recipiente" else "0.00")
+                    if key == "mu_hum_seco_17" and data.get("mu_hum_seco_17"):
+                        for siguiente in ("mu_hum_seco_18", "mu_hum_seco_19"):
+                            if not data.get(siguiente):
+                                st.session_state[f"{siguiente}_{assay_id}"] = data["mu_hum_seco_17"]
+                                data[siguiente] = data["mu_hum_seco_17"]
+                humedad_calc = _mu_humedad_manual(data)
+                if humedad_calc is not None:
+                    st.markdown(param_table_html([("Humedad calculada (%)", fmt_num(humedad_calc, 2))]),
+                                unsafe_allow_html=True)
         with st.container(border=True):
             st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
             filas, humedad_pct, _fuente = resultados_masa_unitaria_parafinado(data, muestra_id)
@@ -7501,11 +7533,13 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
     elif tipo == "masa-unitaria":
         rows = [("Masa en el aire (g)", data.get("mu_peso_aire")), ("Masa en el aire parafinado (g)", data.get("mu_peso_aire_par")),
                 ("Masa en el agua parafinado (g)", data.get("mu_peso_agua_par")), ("Temperatura del agua (°C)", data.get("mu_temp_agua"))]
-        if not (get_assay(muestra_id, "humedad") if muestra_id else None):
-            rows.append(("Humedad (%) — digitada aquí", data.get("mu_humedad_manual")))
         with st.container(border=True):
             st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
             st.markdown(param_table_html(rows), unsafe_allow_html=True)
+        if not (get_assay(muestra_id, "humedad") if muestra_id else None):
+            with st.container(border=True):
+                st.markdown(card_header_html("water_drop", "Datos de Humedad"), unsafe_allow_html=True)
+                st.markdown(param_table_html([(l, data.get(k)) for k, l in MU_HUMEDAD_FILAS]), unsafe_allow_html=True)
         filas, _humedad_pct, _fuente = resultados_masa_unitaria_parafinado(data, muestra_id)
         if filas:
             with st.container(border=True):
