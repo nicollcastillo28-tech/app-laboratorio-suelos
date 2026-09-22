@@ -50,6 +50,7 @@ TEMPLATE_CONSOLIDACION = os.path.join(BASE_DIR, "templates", "GDA-FLC-009_consol
 TEMPLATE_COMPRESION_INCONFINADA = os.path.join(BASE_DIR, "templates", "GDA-FLC-008_compresion_inconfinada.xlsm")
 TEMPLATE_COMPRESION_ROCA = os.path.join(BASE_DIR, "templates", "GDA-FLC-043_compresion_roca.xlsx")
 TEMPLATE_CARGA_PUNTUAL = os.path.join(BASE_DIR, "templates", "GDA-FLC-018_carga_puntual.xlsx")
+TEMPLATE_SOLIDEZ_SULFATOS = os.path.join(BASE_DIR, "templates", "GDA-FLC-033_solidez_sulfatos.xlsx")
 
 ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "laboratorista": "Laboratorista", "ingeniero": "Director Técnico"}
 ROLE_INICIALES = {"jefe": "JL", "laboratorista": "LB", "ingeniero": "DT"}
@@ -573,7 +574,7 @@ SIEVES = [
     ("s_60", "No. 60", "0.25", "E32"), ("s_100", "No. 100", "0.149", "E33"), ("s_200", "No. 200", "0.075", "E34"),
 ]
 
-ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor", "materia-organica": "Materia orgánica", "limite-contraccion": "Límite de contracción", "consolidacion": "Consolidación", "compresion-inconfinada": "Compresión inconfinada", "compresion-roca": "Compresión en roca", "carga-puntual": "Carga puntual"}
+ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor", "materia-organica": "Materia orgánica", "limite-contraccion": "Límite de contracción", "consolidacion": "Consolidación", "compresion-inconfinada": "Compresión inconfinada", "compresion-roca": "Compresión en roca", "carga-puntual": "Carga puntual", "solidez-sulfatos": "Solidez en sulfatos"}
 NORMAS_ENSAYO = {
     "granulometria": ["INV-214-13", "INV.E-213-13", "INV.E 123-13"],
     "humedad": ["INV E-122", "ASTM D2216"],
@@ -588,6 +589,7 @@ NORMAS_ENSAYO = {
     "compresion-inconfinada": ["INV E-152-13", "ASTM D2166"],
     "compresion-roca": ["ASTM D7012"],
     "carga-puntual": ["ASTM D5731"],
+    "solidez-sulfatos": ["INV E-220-13", "ASTM C88"],
 }
 STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado"}
 STATUS_BADGE = {"sin-iniciar": "badge-danger", "en-proceso": "badge-warning", "finalizado": "badge-success"}
@@ -982,6 +984,7 @@ SUPPORTED_ASSAY_MAP = {
     "Compresión inconfinada": "compresion-inconfinada",
     "Compresión en roca": "compresion-roca",
     "Carga puntual": "carga-puntual",
+    "Solidez en sulfatos": "solidez-sulfatos",
 }
 
 
@@ -6882,6 +6885,197 @@ def generar_excel_carga_puntual(codigo, perf_codigo, muestra, project, data, obs
                                        ancho_emu=ancho_emu, alto_emu=alto_emu)
     return salida
 
+# Solidez de los agregados frente a sulfato de sodio o de magnesio (INV E-220, plantilla GDA-FLC-033). No tengo
+# bitácora de papel para este ensayo — el formulario se armó directo sobre la plantilla de descarga. La columna
+# O (% retenido individual) y P (% retenido acumulado) de la gradación unificada (filas 22-38) son "fórmulas
+# compartidas" de Excel (una fila trae la fórmula completa y las demás la referencian por índice) — igual que en
+# Carga Puntual, tocarlas rompe el archivo; solo se escribe la columna N (masa retenida corregida), que si es un
+# insumo normal.
+SULF_TAMICES = [
+    ("4\"", 22), ("3 1/2\"", 23), ("3\"", 24), ("2 1/2\"", 25), ("2\"", 26), ("1 1/2\"", 27), ("1\"", 28),
+    ("3/4\"", 29), ("1/2\"", 30), ("3/8\"", 31), ("N°4", 32), ("N°8", 33), ("N°16", 34), ("N°30", 35),
+    ("N°50", 36), ("N°100", 37), ("<100", 38),
+]
+SULF_GRUESO_FILAS = [("3\" a 2 1/2\"", 21), ("2 1/2\" a 1 1/2\"", 22), ("1 1/2\" a 3/4\"", 23),
+                     ("3/4\" a 3/8\"", 24), ("3/8\" a N°4", 25)]
+SULF_FINO_FILAS = [("Menor de N°100", 29), ("N°50 a N°100", 30), ("N°30 a N°50", 31), ("N°16 a N°30", 32),
+                   ("N°8 a N°16", 33), ("N°4 a N°8", 34), ("3/8\" a N°4", 35)]
+SULF_SOLUCIONES = ["Sulfato de sodio", "Sulfato de magnesio"]
+# No hay bitácora física para confirmar los códigos exactos — se usa la misma balanza/horno/tamices que
+# Granulometría más lo propio de la inmersión en sulfato; corregir si no coincide con los equipos reales.
+EQUIPO_SOLIDEZ_SULFATOS = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Balanza GDA-E-012", "Horno GDA-E-007",
+                           "Horno GDA-E-404", "Serie de tamices GDA-E-030 a GDA-E-045", "Recipientes de inmersión"]
+
+
+def _sulf_gradacion(data):
+    """[(fila, N=masa retenida corregida, O=% retenido individual)] de los 17 tamices de la gradación unificada —
+    misma fórmula que la plantilla: O = N / masa_inicial_total * 100."""
+    total = to_float(data.get("sulf_masa_total"))
+    filas = []
+    for _label, fila in SULF_TAMICES:
+        n = to_float(data.get(f"sulf_grad_{fila}"))
+        o = (n / total * 100) if (n is not None and total) else None
+        filas.append((fila, n, o))
+    return filas
+
+
+def resultados_solidez_sulfatos(data):
+    """Réplica de las fórmulas de la plantilla GDA-FLC-033 para el % de pérdida ponderada, agregado grueso y
+    fino por separado (mismo camino: gradación unificada → agrupar por tamaño → % retenido de cada grupo →
+    % de pérdida de cada grupo, que se arrastra del grupo anterior si ese grupo pesa menos del 5% → ponderar)."""
+    o_por_fila = {fila: o for fila, _n, o in _sulf_gradacion(data)}
+
+    def o(fila):
+        return o_por_fila.get(fila) or 0
+
+    l = {25: o(24) + o(25), 27: o(26) + o(27), 29: o(28) + o(29), 31: o(30) + o(31), 32: o(32)}
+    l33 = sum(l.values())
+    o39 = sum(o(f) for f in range(32, 39))
+
+    def _grupo(filas_pct, filas_frac, base_pct_por_fila):
+        # Misma regla que la plantilla: si la fracción pesa >=5% se calcula directo (F-G)/F; si pesa <5% se
+        # arrastra el % de pérdida de la fracción anterior. Si pesa >=5% pero faltan las masas F/G, NO se debe
+        # arrastrar un valor "parecido" — en Excel esa celda queda en #DIV/0! porque falta digitar esa fracción,
+        # así que aquí se marca como None (faltante) y ese hueco también se arrastra tal cual a las fracciones
+        # siguientes que dependan de ella (<5%), en vez de inventar un número.
+        resultado, h_prev = [], 0.0
+        for i, (label, fila) in enumerate(filas_frac, start=1):
+            pct = base_pct_por_fila(i)
+            f_ini, f_fin = to_float(data.get(f"sulf_{fila}_ini")), to_float(data.get(f"sulf_{fila}_fin"))
+            if pct is None:
+                h = None
+            elif pct >= 5:
+                h = (f_ini - f_fin) / f_ini * 100 if (f_ini and f_fin is not None) else None
+            else:
+                h = h_prev
+            h_prev = h
+            ponderado = h * pct / 100 if (h is not None and pct is not None) else None
+            resultado.append((label, pct, h, ponderado))
+        return resultado
+
+    filas_grueso = _grupo(None, SULF_GRUESO_FILAS, lambda i: (l[[25, 27, 29, 31, 32][i - 1]] / l33 * 100) if l33 else None)
+    filas_fino = _grupo(None, SULF_FINO_FILAS, lambda i: (o([38, 37, 36, 35, 34, 33, 32][i - 1]) / o39 * 100) if o39 else None)
+
+    filas = []
+    if any(p is not None for _l, p, _h, _pon in filas_grueso):
+        filas.append(("— Agregado grueso —", ""))
+        for label, pct, h, pon in filas_grueso:
+            if pct is not None:
+                filas.append((f"{label} — % retenido / pérdida", f"{fmt_num(pct, 1)}% / {fmt_num(h, 1) if h is not None else '—'}%"))
+        pct_grueso = [p for _l, p, _h, _pon in filas_grueso if p is not None]
+        if pct_grueso and all(pon is not None for _l, p, _h, pon in filas_grueso if p is not None):
+            total_grueso = sum(pon for _l, _p, _h, pon in filas_grueso if pon is not None)
+            filas.append(("% de pérdida ponderada — grueso", fmt_num(total_grueso, 2)))
+        elif pct_grueso:
+            filas.append(("% de pérdida ponderada — grueso", "Faltan masas por digitar"))
+    if any(p is not None for _l, p, _h, _pon in filas_fino):
+        filas.append(("— Agregado fino —", ""))
+        for label, pct, h, pon in filas_fino:
+            if pct is not None:
+                filas.append((f"{label} — % retenido / pérdida", f"{fmt_num(pct, 1)}% / {fmt_num(h, 1) if h is not None else '—'}%"))
+        pct_fino = [p for _l, p, _h, _pon in filas_fino if p is not None]
+        if pct_fino and all(pon is not None for _l, p, _h, pon in filas_fino if p is not None):
+            total_fino = sum(pon for _l, _p, _h, pon in filas_fino if pon is not None)
+            filas.append(("% de pérdida ponderada — fino", fmt_num(total_fino, 2)))
+        elif pct_fino:
+            filas.append(("% de pérdida ponderada — fino", "Faltan masas por digitar"))
+    return filas
+
+
+def render_solidez_sulfatos_form(data, assay_id):
+    st.info("Formulario armado sobre la plantilla oficial GDA-FLC-033 (no hay bitácora de papel para este ensayo). "
+            "El Excel para descargar está al final del ensayo.")
+
+    def _campo(key, label, placeholder="0.00"):
+        row = st.columns([2.2, 1])
+        row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+        data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                       label_visibility="collapsed", placeholder=placeholder)
+
+    with st.container(border=True):
+        st.markdown(card_header_html("science", "Gradación de la Muestra Original"), unsafe_allow_html=True)
+        _campo("sulf_masa_total", "Masa inicial seca total (g)")
+        head = st.columns([1.4, 1])
+        head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Masa retenida corregida (g)</div>',
+                          unsafe_allow_html=True)
+        for label, fila in SULF_TAMICES:
+            row = st.columns([1.4, 1])
+            row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+            key = f"sulf_grad_{fila}"
+            data[key] = row[1].text_input(f"Masa retenida {label}", value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                           label_visibility="collapsed", placeholder="0.00")
+    for titulo, filas_frac in (("Ensayo sobre el Agregado Grueso", SULF_GRUESO_FILAS),
+                                ("Ensayo sobre el Agregado Fino", SULF_FINO_FILAS)):
+        with st.container(border=True):
+            st.markdown(card_header_html("science", titulo), unsafe_allow_html=True)
+            head = st.columns([1.6, 1, 1])
+            head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Masa inicial (g)</div>', unsafe_allow_html=True)
+            head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Masa final (g)</div>', unsafe_allow_html=True)
+            for label, fila in filas_frac:
+                row = st.columns([1.6, 1, 1])
+                row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+                for col_i, sufijo in ((1, "ini"), (2, "fin")):
+                    key = f"sulf_{fila}_{sufijo}"
+                    data[key] = row[col_i].text_input(f"{label} {sufijo}", value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                                       label_visibility="collapsed", placeholder="0.00")
+    with st.container(border=True):
+        st.markdown(card_header_html("tune", "Condiciones del Ensayo"), unsafe_allow_html=True)
+        actual = data.get("sulf_solucion", SULF_SOLUCIONES[0])
+        data["sulf_solucion"] = st.radio("Tipo de solución usada", SULF_SOLUCIONES, horizontal=True,
+                                          index=SULF_SOLUCIONES.index(actual) if actual in SULF_SOLUCIONES else 0,
+                                          key=f"sulf_solucion_{assay_id}")
+        _campo("sulf_ciclos", "Número de ciclos", placeholder="5")
+    with st.container(border=True):
+        st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+        filas = resultados_solidez_sulfatos(data)
+        if filas:
+            st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        else:
+            st.caption("Se muestran a medida que se digita la gradación y las masas de arriba.")
+    render_equipo(data, "sulf", EQUIPO_SOLIDEZ_SULFATOS)
+    render_norma_selector("solidez-sulfatos", data, "sulf")
+
+
+def generar_excel_solidez_sulfatos(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    """Solidez frente a sulfatos (GDA-FLC-033, INV E-220). Se escribe directo en el XML de la hoja: la columna N
+    (masa retenida corregida) de la gradación y las masas de las fracciones — el % retenido, % de pérdida y el
+    ponderado final los calcula el propio Excel con sus fórmulas (varias son "compartidas", así que no se tocan)."""
+    c = {}
+    c["C6"] = project.get("cliente", "") if project else ""
+    c["C7"] = project["nombre"] if project else codigo
+    c["C8"] = project.get("correo_cliente", "") if project else ""
+    c["C9"] = project.get("localizacion", "") if project else ""
+    if project and project.get("muestra_tomada_por"):
+        c["C10"] = project["muestra_tomada_por"]
+    c["I6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    c["I7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
+    c["I8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    c["J9"] = project.get("numero", "") if project else ""
+    c["K9"] = project.get("anio", "") if project else ""
+    perf = get_perforacion(codigo, perf_codigo)
+    c["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
+    c["D12"] = perf_codigo
+    c["F12"] = muestra["numero"]
+    c["I12"] = to_float(muestra.get("profundidad_de"))
+    c["K12"] = to_float(muestra.get("profundidad_hasta"))
+    c["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+
+    c["O18"] = to_float(data.get("sulf_masa_total"))
+    for _label, fila in SULF_TAMICES:
+        c[f"N{fila}"] = to_float(data.get(f"sulf_grad_{fila}"))
+    for _label, fila in SULF_GRUESO_FILAS + SULF_FINO_FILAS:
+        c[f"F{fila}"] = to_float(data.get(f"sulf_{fila}_ini"))
+        c[f"G{fila}"] = to_float(data.get(f"sulf_{fila}_fin"))
+    textos = {t.strip(): t for t in _textos_compartidos(TEMPLATE_SOLIDEZ_SULFATOS)}
+    solucion = (data.get("sulf_solucion") or "").upper()
+    c["D38"] = textos.get(solucion, solucion or None)
+    c["D39"] = to_float(data.get("sulf_ciclos")) or (5 if data.get("sulf_ciclos") is None else None)
+
+    with open(TEMPLATE_SOLIDEZ_SULFATOS, "rb") as f:
+        plantilla = f.read()
+    return _restaurar_orden_formato_condicional(_xlsx_escribir_celdas(plantilla, "xl/worksheets/sheet1.xml", c),
+                                                TEMPLATE_SOLIDEZ_SULFATOS)
+
 
 def render_limite_contraccion_form(data, assay_id):
     st.info("Formulario armado sobre la plantilla oficial GDA-FLC-022. El Excel para descargar está al final del ensayo.")
@@ -7382,6 +7576,30 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                 st.markdown(card_header_html("photo_camera", "Foto de la Muestra"), unsafe_allow_html=True)
                 st.image(base64.b64decode(data["cp_foto_falla"]["b64"]), width=220)
         equipos, norma = data.get("cp_equipos", []), data.get("cp_norma", "—")
+    elif tipo == "solidez-sulfatos":
+        with st.container(border=True):
+            st.markdown(card_header_html("science", "Gradación de la Muestra Original"), unsafe_allow_html=True)
+            st.markdown(param_table_html([("Masa inicial seca total (g)", data.get("sulf_masa_total"))]), unsafe_allow_html=True)
+            st.markdown(param_table_ncol_html(["TAMIZ", "MASA RETENIDA CORREGIDA (g)"],
+                                              [(label, data.get(f"sulf_grad_{fila}")) for label, fila in SULF_TAMICES]),
+                        unsafe_allow_html=True)
+        for titulo, filas_frac in (("Ensayo sobre el Agregado Grueso", SULF_GRUESO_FILAS),
+                                    ("Ensayo sobre el Agregado Fino", SULF_FINO_FILAS)):
+            with st.container(border=True):
+                st.markdown(card_header_html("science", titulo), unsafe_allow_html=True)
+                st.markdown(param_table_ncol_html(["FRACCIÓN", "MASA INICIAL (g)", "MASA FINAL (g)"],
+                                                  [(label, data.get(f"sulf_{fila}_ini"), data.get(f"sulf_{fila}_fin"))
+                                                   for label, fila in filas_frac]), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("tune", "Condiciones del Ensayo"), unsafe_allow_html=True)
+            st.markdown(param_table_html([("Tipo de solución usada", data.get("sulf_solucion")),
+                                          ("Número de ciclos", data.get("sulf_ciclos"))]), unsafe_allow_html=True)
+        resultados = resultados_solidez_sulfatos(data)
+        if resultados:
+            with st.container(border=True):
+                st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+                st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        equipos, norma = data.get("sulf_equipos", []), data.get("sulf_norma", "—")
     elif tipo == "consolidacion":
         with st.container(border=True):
             st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
@@ -7681,6 +7899,8 @@ def render_assay_form():
             render_compresion_roca_form(data, assay_id)
         elif assay["tipo"] == "carga-puntual":
             render_carga_puntual_form(data, assay_id)
+        elif assay["tipo"] == "solidez-sulfatos":
+            render_solidez_sulfatos_form(data, assay_id)
 
         with st.expander("Observaciones (opcional)", icon=":material/notes:", expanded=bool(assay.get("observations"))):
             observations = st.text_area("Observaciones", value=assay.get("observations", ""), label_visibility="collapsed",
@@ -7853,6 +8073,16 @@ def render_assay_form():
             file_name=f"Carga_puntual_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_carga_puntual")
+
+    if assay["tipo"] == "solidez-sulfatos" and muestra:
+        st.markdown("---")
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        st.download_button(
+            "Descargar Excel (plantilla oficial de Solidez en Sulfatos)", icon=":material/download:",
+            data=generar_excel_solidez_sulfatos(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            file_name=f"Solidez_sulfatos_{muestra['id_unico']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
+            key="dl_solidez_sulfatos")
 
     if assay["tipo"] == "consolidacion" and muestra:
         st.markdown("---")
