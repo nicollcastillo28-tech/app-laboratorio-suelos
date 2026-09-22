@@ -47,6 +47,7 @@ TEMPLATE_MATERIA_ORGANICA = os.path.join(BASE_DIR, "templates", "GDA-FLC-003_mat
 TEMPLATE_LIMITE_CONTRACCION = os.path.join(BASE_DIR, "templates", "GDA-FLC-022_limite_contraccion.xlsx")
 TEMPLATE_CONSOLIDACION = os.path.join(BASE_DIR, "templates", "GDA-FLC-009_consolidacion.xlsx")
 TEMPLATE_COMPRESION_INCONFINADA = os.path.join(BASE_DIR, "templates", "GDA-FLC-008_compresion_inconfinada.xlsm")
+TEMPLATE_COMPRESION_ROCA = os.path.join(BASE_DIR, "templates", "GDA-FLC-043_compresion_roca.xlsx")
 
 ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "laboratorista": "Laboratorista", "ingeniero": "Director Técnico"}
 ROLE_INICIALES = {"jefe": "JL", "laboratorista": "LB", "ingeniero": "DT"}
@@ -570,7 +571,7 @@ SIEVES = [
     ("s_60", "No. 60", "0.25", "E32"), ("s_100", "No. 100", "0.149", "E33"), ("s_200", "No. 200", "0.075", "E34"),
 ]
 
-ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor", "materia-organica": "Materia orgánica", "limite-contraccion": "Límite de contracción", "consolidacion": "Consolidación", "compresion-inconfinada": "Compresión inconfinada"}
+ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor", "materia-organica": "Materia orgánica", "limite-contraccion": "Límite de contracción", "consolidacion": "Consolidación", "compresion-inconfinada": "Compresión inconfinada", "compresion-roca": "Compresión en roca"}
 NORMAS_ENSAYO = {
     "granulometria": ["INV-214-13", "INV.E-213-13", "INV.E 123-13"],
     "humedad": ["INV E-122", "ASTM D2216"],
@@ -583,6 +584,7 @@ NORMAS_ENSAYO = {
     "limite-contraccion": ["INV E-129-13", "ASTM D4943"],
     "consolidacion": ["INV E-151-13", "ASTM D2435"],
     "compresion-inconfinada": ["INV E-152-13", "ASTM D2166"],
+    "compresion-roca": ["ASTM D7012"],
 }
 STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado"}
 STATUS_BADGE = {"sin-iniciar": "badge-danger", "en-proceso": "badge-warning", "finalizado": "badge-success"}
@@ -966,6 +968,7 @@ SUPPORTED_ASSAY_MAP = {
     "Límite de contracción": "limite-contraccion",
     "Consolidación": "consolidacion",
     "Compresión inconfinada": "compresion-inconfinada",
+    "Compresión en roca": "compresion-roca",
 }
 
 
@@ -6270,6 +6273,266 @@ def generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, 
                                        ancho_emu=ancho_emu, alto_emu=alto_emu)
     return salida
 
+# Compresión simple en roca (ASTM D7012 método B) — bitácora GDA-FL-007 y plantilla GDA-FLC-043. La plantilla de
+# descarga es prácticamente igual a la de Compresión inconfinada (mismas columnas de la tabla de la máquina, mismos
+# datos de la muestra y de humedad) salvo que no reporta resistencia al corte Su (no aplica a roca) y tiene su
+# propia lista de tipos de falla.
+ROCA_DEFORMACIONES = list(range(5, 166, 5))  # 0.001 in — bitácora GDA-FL-007, filas E19:E52 (34 filas, una en blanco)
+ROCA_FILA_MAQUINA, ROCA_MAX_MAQUINA = 26, 33  # igual que compresión inconfinada: la plantilla trae 33 filas (la del cero incluida)
+ROCA_FILAS_EXCEL = list(range(27, 59))
+ROCA_FALLAS = ["FALLA CONTROLADA POR DISCONTINUIDADES", "FALLA POR DIVISIÓN AXIAL", "FALLA POR CORTE", "FALLA CÓNICA",
+               "FALLA COLUMNAR O MÚLTIPLE", "FALLA ESCALONADA"]
+ROCA_HUMEDAD_FILAS = [
+    ("roca_hum_recipiente", "Recipiente No."), ("roca_hum_humedo", "Masa muestra húmeda + recipiente (g)"),
+    ("roca_hum_seco_17", "Masa suelo seco + recipiente (g) (17 horas)"), ("roca_hum_seco_18", "Masa suelo seco + recipiente (g) (18 horas)"),
+    ("roca_hum_seco_19", "Masa suelo seco + recipiente (g) (19 horas)"), ("roca_hum_masa_rec", "Masa del recipiente (g)"),
+]
+EQUIPO_COMPRESION_ROCA = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Máquina de compresión GDA-E-008",
+                          "Máquina de compresión GDA-E-014", "Pie de rey GDA-E-110", "Horno GDA-E-007", "Horno GDA-E-404"]
+
+
+def _roca_promedio(data, prefijo):
+    valores = [v for v in (to_float(data.get(f"{prefijo}_{i}")) for i in (1, 2, 3)) if v is not None]
+    return sum(valores) / len(valores) if valores else None
+
+
+def _roca_lecturas(data):
+    """[(deformación en 0.001 in, carga en kN)] de las filas de la bitácora que tienen carga digitada."""
+    lecturas = []
+    for i, deformacion in enumerate(ROCA_DEFORMACIONES, start=1):
+        carga = to_float(data.get(f"roca_carga_{i}"))
+        if carga is not None:
+            lecturas.append((deformacion, carga))
+    return lecturas
+
+
+def _roca_puntos(data):
+    """Igual que _ci_puntos: usa los datos de la máquina si se cargaron, si no las lecturas de la bitácora."""
+    maquina = data.get("roca_maq")
+    if maquina:
+        return [(ROCA_FILA_MAQUINA + i, t, d, f) for i, (t, f, d) in enumerate(_ci_remuestrear(maquina, ROCA_MAX_MAQUINA))]
+    velocidad = to_float(data.get("roca_velocidad"))
+    puntos = []
+    for fila, (deformacion, carga) in zip(ROCA_FILAS_EXCEL, _roca_lecturas(data)):
+        mm = round(deformacion * 0.0254, 4)
+        puntos.append((fila, round(mm / velocidad * 60, 1) if velocidad else None, mm, carga))
+    return puntos
+
+
+def resultados_compresion_roca(data):
+    """Mismas fórmulas de la plantilla GDA-FLC-043 (GUIA): humedad, densidades, esfuerzo con área corregida y qu
+    (no reporta Su ni módulo de elasticidad aparte de qu, igual que en la plantilla de roca)."""
+    filas = []
+    d, h, masa = _roca_promedio(data, "roca_d"), _roca_promedio(data, "roca_h"), to_float(data.get("roca_peso"))
+    humedo, rec = to_float(data.get("roca_hum_humedo")), to_float(data.get("roca_hum_masa_rec"))
+    seco = next((v for v in (to_float(data.get(f"roca_hum_seco_{x}")) for x in (19, 18, 17)) if v is not None), None)
+    w = (humedo - seco) / (seco - rec) * 100 if None not in (humedo, seco, rec) and (seco - rec) != 0 else None
+    if w is not None:
+        filas.append(("Humedad (%)", fmt_num(w, 2)))
+    if not d or not h:
+        return filas
+    area = math.pi * d ** 2 / 4
+    vol = area * h
+    filas += [("Diámetro promedio (cm)", fmt_num(d, 2)), ("Altura promedio (cm)", fmt_num(h, 2)),
+              ("Área (cm²)", fmt_num(area, 2)), ("Volumen (cm³)", fmt_num(vol, 2))]
+    if masa:
+        rho_h = masa / vol
+        filas.append(("Densidad húmeda ρh (g/cm³)", fmt_num(rho_h, 3)))
+        if w is not None:
+            filas.append(("Densidad seca ρd (g/cm³)", fmt_num(rho_h / (1 + w / 100), 3)))
+    puntos = {}
+    for fila, _t, mm, carga in _roca_puntos(data):
+        eps = mm / (h * 10) * 100
+        if eps >= 100:
+            continue
+        if fila == ROCA_FILA_MAQUINA and data.get("roca_maq"):
+            puntos[fila] = (eps, 0.0)
+        elif carga is not None:
+            puntos[fila] = (eps, carga / (area / (1 - eps / 100) / 10000))
+    if puntos:
+        qu = max(s for _e, s in puntos.values())
+        filas.append(("Resistencia a la compresión qu (kPa)", fmt_num(qu, 1)))
+        if 27 in puntos and 28 in puntos and puntos[28][0] != puntos[27][0]:
+            filas.append(("Módulo de elasticidad (kPa)", fmt_num((puntos[28][1] - puntos[27][1]) / (puntos[28][0] - puntos[27][0]) * 100, 0)))
+    return filas
+
+
+def render_compresion_roca_form(data, assay_id):
+    st.info("Formulario armado sobre la bitácora GDA-FL-007. El Excel para descargar (plantilla oficial GDA-FLC-043) "
+            "está al final del ensayo.")
+
+    def _campo(key, label, placeholder="0.00"):
+        row = st.columns([2.2, 1])
+        row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+        data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                       label_visibility="collapsed", placeholder=placeholder)
+
+    def _radio(key, label, opciones):
+        actual = data.get(key, opciones[0])
+        data[key] = st.radio(label, opciones, horizontal=True, index=opciones.index(actual) if actual in opciones else 0,
+                              key=f"{key}_{assay_id}")
+
+    with st.container(border=True):
+        st.markdown(card_header_html("science", "Muestra"), unsafe_allow_html=True)
+        for key, label in (("roca_temp_ini", "Temperatura inicial (°C)"), ("roca_temp_fin", "Temperatura final (°C)")):
+            _campo(key, label, placeholder="0.0")
+    with st.container(border=True):
+        st.markdown(card_header_html("straighten", "Dimensiones de la Muestra"), unsafe_allow_html=True)
+        head = st.columns([1, 1, 1])
+        head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Altura (cm)</div>', unsafe_allow_html=True)
+        head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Diámetro (cm)</div>', unsafe_allow_html=True)
+        for i in (1, 2, 3):
+            row = st.columns([1, 1, 1])
+            row[0].markdown(f'<div style="padding-top:8px;">{i}</div>', unsafe_allow_html=True)
+            for col_i, pref in ((1, "roca_h"), (2, "roca_d")):
+                key = f"{pref}_{i}"
+                data[key] = row[col_i].text_input(f"{pref} {i}", value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                                   label_visibility="collapsed", placeholder="0.00")
+        _campo("roca_peso", "Peso de la muestra (g)")
+    with st.container(border=True):
+        st.markdown(card_header_html("water_drop", "Datos de Humedad"), unsafe_allow_html=True)
+        for key, label in ROCA_HUMEDAD_FILAS:
+            _campo(key, label, placeholder="" if key == "roca_hum_recipiente" else "0.00")
+        _radio("roca_temp_secado", "Temperatura de secado", ["60 °C", "110 °C"])
+        _radio("roca_metodo", "Método", ["A", "B"])
+        _radio("roca_hum_antes", "Humedad obtenida", ["Antes del ensayo", "Después del ensayo"])
+        _radio("roca_hum_muestra", "Sobre", ["Cortes de muestra", "Muestra completa"])
+    with st.container(border=True):
+        st.markdown(card_header_html("show_chart", "Datos de la Máquina"), unsafe_allow_html=True)
+        st.caption("Tiempo (s), fuerza (kN) y deformación (mm) que arroja la máquina: van a la tabla de datos de la máquina del "
+                   f"Excel ({ROCA_MAX_MAQUINA} filas; si traen más, se reparten en el tiempo). Si los cargas, se usan en lugar de "
+                   "la tabla de la bitácora.")
+        texto = st.text_area("Pegar datos de la máquina", value="", key=f"roca_maq_texto_{assay_id}", height=110,
+                              placeholder="Pega aquí las 3 columnas copiadas de Excel (tiempo, fuerza, deformación)")
+        archivo = st.file_uploader("O sube el Excel de la máquina", type=["xlsx"], key=f"roca_maq_archivo_{assay_id}")
+        if (texto.strip() or archivo) and st.button("Cargar datos de la máquina", key=f"roca_maq_cargar_{assay_id}",
+                                                     icon=":material/publish:", use_container_width=True):
+            filas_maq = parse_maquina_ci_texto(texto) if texto.strip() else parse_maquina_ci_xlsx(archivo.getvalue())
+            if not filas_maq:
+                st.error("No encontré filas con tiempo, fuerza y deformación. Revisa que estén las 3 columnas.")
+            else:
+                data["roca_maq"] = filas_maq
+                st.success(f"Se cargaron {len(filas_maq)} filas.")
+                if len(filas_maq) > ROCA_MAX_MAQUINA:
+                    st.info(f"La plantilla admite {ROCA_MAX_MAQUINA} filas: se exportan {ROCA_MAX_MAQUINA} puntos igualmente "
+                            "espaciados en el tiempo, desde el cero hasta el final del ensayo.")
+        if data.get("roca_maq"):
+            st.markdown(f'<div class="cell-muted">Cargado: {len(data["roca_maq"])} filas, hasta {data["roca_maq"][-1][0]:.0f} s</div>',
+                        unsafe_allow_html=True)
+            if st.button("Quitar datos de la máquina", key=f"roca_maq_quitar_{assay_id}"):
+                data.pop("roca_maq", None)
+                if _guardar_inmediato(assay_id, data):
+                    st.rerun()
+    with st.container(border=True):
+        st.markdown(card_header_html("show_chart", "Deformación y Carga (bitácora)"), unsafe_allow_html=True)
+        st.caption("Deformación en 0.001 in y carga en kN. Solo se exportan las filas con carga digitada "
+                   f"(la plantilla admite hasta {len(ROCA_FILAS_EXCEL)}).")
+        head = st.columns([1, 1, 1, 1])
+        for j, texto in enumerate(("Def. (0.001 in)", "Carga (kN)", "Def. (0.001 in)", "Carga (kN)")):
+            head[j].markdown(f'<div class="cell-muted" style="text-align:center;font-weight:700;">{texto}</div>', unsafe_allow_html=True)
+        mitad = (len(ROCA_DEFORMACIONES) + 1) // 2
+        for k in range(mitad):
+            row = st.columns([1, 1, 1, 1])
+            for lado, i in ((0, k + 1), (2, k + 1 + mitad)):
+                if i > len(ROCA_DEFORMACIONES):
+                    continue
+                row[lado].markdown(f'<div style="padding-top:8px;text-align:center;">{ROCA_DEFORMACIONES[i - 1]}</div>', unsafe_allow_html=True)
+                key = f"roca_carga_{i}"
+                data[key] = row[lado + 1].text_input(f"Carga {ROCA_DEFORMACIONES[i - 1]}", value=data.get(key, ""),
+                                                      key=f"{key}_{assay_id}", label_visibility="collapsed")
+    with st.container(border=True):
+        st.markdown(card_header_html("tune", "Falla"), unsafe_allow_html=True)
+        _radio("roca_falla", "Tipo de falla (diagrama)", ROCA_FALLAS)
+        _campo("roca_velocidad", "Velocidad de falla (mm/min)", placeholder="1")
+        _campo("roca_tiempo_falla", "Tiempo de falla (min)")
+        _campo("roca_esfuerzo_maximo_manual", "Esfuerzo máximo leído en la máquina (MPa, opcional)", placeholder="0.0")
+    with st.container(border=True):
+        st.markdown(card_header_html("photo_camera", "Foto del Plano de Falla"), unsafe_allow_html=True)
+        st.caption("Se agrega al Excel junto al recuadro \"PLANO DE FALLA\" (no reemplaza el dibujo de la plantilla ni queda "
+                   "ajustada a él): la acomodas a mano después de descargar.")
+        if data.get("roca_foto_falla"):
+            st.image(base64.b64decode(data["roca_foto_falla"]["b64"]), width=220)
+            if st.button("Quitar foto", key=f"roca_foto_quitar_{assay_id}"):
+                data.pop("roca_foto_falla", None)
+                data["_roca_foto_intento"] = data.get("_roca_foto_intento", 0) + 1
+                if _guardar_inmediato(assay_id, data):
+                    st.rerun()
+        else:
+            captura = st.file_uploader("Foto del plano de falla", type=["png", "jpg", "jpeg"],
+                                       key=f"roca_foto_archivo_{assay_id}_{data.get('_roca_foto_intento', 0)}",
+                                       label_visibility="collapsed")
+            if captura is not None:
+                with st.spinner("Guardando la foto…"):
+                    data["roca_foto_falla"] = _procesar_foto(captura.getvalue())
+                    if _guardar_inmediato(assay_id, data):
+                        st.rerun()
+                    else:
+                        data.pop("roca_foto_falla", None)
+    with st.container(border=True):
+        st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+        filas = resultados_compresion_roca(data)
+        if filas:
+            st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        else:
+            st.caption("Se muestran a medida que se digitan los datos de arriba.")
+    render_equipo(data, "roca", EQUIPO_COMPRESION_ROCA)
+    render_norma_selector("compresion-roca", data, "roca")
+
+
+def generar_excel_compresion_roca(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    """Compresión simple en roca (GDA-FLC-043, ASTM D7012 método B). Se escribe directo en el XML de la hoja (igual
+    que compresión inconfinada) para conservar el plano de falla, las firmas, las casillas y el gráfico de la
+    plantilla — pasar por openpyxl los perdía."""
+    c = {}
+    c["C6"] = project.get("cliente", "") if project else ""
+    c["C7"] = project["nombre"] if project else codigo
+    c["C8"] = project.get("correo_cliente", "") if project else ""
+    c["C9"] = project.get("localizacion", "") if project else ""
+    if project and project.get("muestra_tomada_por"):
+        c["C10"] = project["muestra_tomada_por"]
+    c["K6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    c["K7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
+    c["K8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    c["L9"] = project.get("numero", "") if project else ""
+    c["N9"] = project.get("anio", "") if project else ""
+    perf = get_perforacion(codigo, perf_codigo)
+    c["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
+    c["D12"] = perf_codigo
+    c["F12"] = muestra["numero"]
+    c["H12"] = to_float(muestra.get("profundidad_de"))
+    c["J12"] = to_float(muestra.get("profundidad_hasta"))
+    c["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+
+    c["C18"] = _roca_promedio(data, "roca_d")
+    c["C19"] = _roca_promedio(data, "roca_h")
+    c["C21"] = to_float(data.get("roca_peso"))
+    c["I18"] = to_float(data.get("roca_hum_humedo"))
+    c["I19"] = next((v for v in (to_float(data.get(f"roca_hum_seco_{x}")) for x in (19, 18, 17)) if v is not None), None)
+    c["I20"] = to_float(data.get("roca_hum_masa_rec"))
+
+    textos = {t.strip(): t for t in _textos_compartidos(TEMPLATE_COMPRESION_ROCA)}
+    c["F20"] = textos.get(data.get("roca_falla", ""), data.get("roca_falla") or None)
+    c["F21"] = textos.get("NQ - Barrena", "NQ - Barrena")  # la bitácora de roca no distingue método de muestreo
+    c["F22"] = to_float(data.get("roca_velocidad"))
+
+    for fila, t, mm, fuerza in _roca_puntos(data):
+        c[f"P{fila}"] = t
+        c[f"R{fila}"] = fuerza
+        c[f"U{fila}"] = mm
+
+    with open(TEMPLATE_COMPRESION_ROCA, "rb") as f:
+        plantilla = f.read()
+    salida = _restaurar_orden_formato_condicional(_xlsx_escribir_celdas(plantilla, "xl/worksheets/sheet1.xml", c),
+                                                   TEMPLATE_COMPRESION_ROCA)
+    foto = data.get("roca_foto_falla")
+    if foto:
+        imagen = base64.b64decode(foto["b64"])
+        ancho_emu = 2286000
+        alto_emu = round(ancho_emu * foto["alto"] / foto["ancho"])
+        salida = _insertar_imagen_hoja(salida, "xl/drawings/drawing1.xml", imagen, foto["ext"], col=11, fila=29,
+                                       ancho_emu=ancho_emu, alto_emu=alto_emu)
+    return salida
+
 
 def render_limite_contraccion_form(data, assay_id):
     st.info("Formulario armado sobre la plantilla oficial GDA-FLC-022. El Excel para descargar está al final del ensayo.")
@@ -6701,6 +6964,36 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                 st.markdown(card_header_html("photo_camera", "Foto del Plano de Falla"), unsafe_allow_html=True)
                 st.image(base64.b64decode(data["ci_foto_falla"]["b64"]), width=220)
         equipos, norma = data.get("ci_equipos", []), data.get("ci_norma", "—")
+    elif tipo == "compresion-roca":
+        with st.container(border=True):
+            st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
+            filas = [("Temperatura inicial (°C)", data.get("roca_temp_ini")), ("Temperatura final (°C)", data.get("roca_temp_fin")),
+                     ("Peso de la muestra (g)", data.get("roca_peso"))] + [(l, data.get(k)) for k, l in ROCA_HUMEDAD_FILAS] + [
+                     ("Temperatura de secado", data.get("roca_temp_secado")), ("Método", data.get("roca_metodo")),
+                     ("Humedad obtenida", f'{data.get("roca_hum_antes", "")} — {data.get("roca_hum_muestra", "")}'),
+                     ("Esfuerzo máximo leído en la máquina (MPa)", data.get("roca_esfuerzo_maximo_manual")),
+                     ("Tipo de falla", data.get("roca_falla")), ("Velocidad de falla (mm/min)", data.get("roca_velocidad")),
+                     ("Tiempo de falla (min)", data.get("roca_tiempo_falla"))]
+            st.markdown(param_table_html(filas), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("straighten", "Dimensiones"), unsafe_allow_html=True)
+            st.markdown(param_table_ncol_html(["#", "ALTURA (cm)", "DIÁMETRO (cm)"],
+                                              [(i, data.get(f"roca_h_{i}"), data.get(f"roca_d_{i}")) for i in (1, 2, 3)]), unsafe_allow_html=True)
+        lecturas = [(d, data.get(f"roca_carga_{i}")) for i, d in enumerate(ROCA_DEFORMACIONES, start=1) if data.get(f"roca_carga_{i}")]
+        if lecturas:
+            with st.container(border=True):
+                st.markdown(card_header_html("show_chart", "Deformación y Carga"), unsafe_allow_html=True)
+                st.markdown(param_table_ncol_html(["DEFORMACIÓN (0.001 in)", "CARGA (kN)"], lecturas), unsafe_allow_html=True)
+        resultados = resultados_compresion_roca(data)
+        if resultados:
+            with st.container(border=True):
+                st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+                st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        if data.get("roca_foto_falla"):
+            with st.container(border=True):
+                st.markdown(card_header_html("photo_camera", "Foto del Plano de Falla"), unsafe_allow_html=True)
+                st.image(base64.b64decode(data["roca_foto_falla"]["b64"]), width=220)
+        equipos, norma = data.get("roca_equipos", []), data.get("roca_norma", "—")
     elif tipo == "consolidacion":
         with st.container(border=True):
             st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
@@ -6996,6 +7289,8 @@ def render_assay_form():
             render_consolidacion_form(data, assay_id)
         elif assay["tipo"] == "compresion-inconfinada":
             render_compresion_inconfinada_form(data, assay_id)
+        elif assay["tipo"] == "compresion-roca":
+            render_compresion_roca_form(data, assay_id)
 
         with st.expander("Observaciones (opcional)", icon=":material/notes:", expanded=bool(assay.get("observations"))):
             observations = st.text_area("Observaciones", value=assay.get("observations", ""), label_visibility="collapsed",
@@ -7136,6 +7431,16 @@ def render_assay_form():
             data=generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Compresion_inconfinada_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True, key="dl_compresion_inconfinada")
+
+    if assay["tipo"] == "compresion-roca" and muestra:
+        st.markdown("---")
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        st.download_button(
+            "Descargar Excel (plantilla oficial de Compresión en Roca)", icon=":material/download:",
+            data=generar_excel_compresion_roca(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            file_name=f"Compresion_roca_{muestra['id_unico']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
+            key="dl_compresion_roca")
 
     if assay["tipo"] == "consolidacion" and muestra:
         st.markdown("---")
