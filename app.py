@@ -631,11 +631,15 @@ EQUIPO_LIMITES = [
 
 # Equipos reales usados en el ensayo de Peso Unitario Parafinado.
 EQUIPO_MASA_UNITARIA = ["Balanza GDA-E-011", "Termómetro GDA-E-126"]
-# Peso unitario Método B (bitácora GDA-FLC-029 — por volumen conocido: altura y diámetro de la muestra, en vez de
-# parafinado). Todavía no hay plantilla oficial de Excel para descargar, así que solo se muestran los resultados
-# en la app (mismas fórmulas que Peso Unitario Parafinado usaría: masa/volumen, y la conversión a kN/m³).
+# Peso unitario Método B (bitácora GDA-FLC-029 y plantilla GDA-FLC-030 — por volumen conocido: altura y diámetro
+# de la muestra, en vez de parafinado).
 EQUIPO_MASA_UNITARIA_B = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Horno GDA-E-007", "Horno GDA-E-404",
                          "Calibrador pie de rey GDA-E-110"]
+MUB_HUMEDAD_FILAS = [
+    ("mub_hum_recipiente", "Recipiente No."), ("mub_hum_humedo", "Masa muestra húmeda + recipiente (g)"),
+    ("mub_hum_seco_17", "Masa suelo seco + recipiente (g) (17 horas)"), ("mub_hum_seco_18", "Masa suelo seco + recipiente (g) (18 horas)"),
+    ("mub_hum_seco_19", "Masa suelo seco + recipiente (g) (19 horas)"), ("mub_hum_masa_rec", "Masa del recipiente (g)"),
+]
 
 # Equipos reales del CBR (INV E-148 / ASTM D1883), tal como aparecen en el formato físico
 # "EQUIPOS UTILIZADOS", en el mismo orden (fila por fila).
@@ -5151,10 +5155,21 @@ def render_humedad_form(data, assay_id):
             data["hum_metodo"] = st.selectbox("Método del Ensayo", METODO_HUMEDAD, index=midx, key=f"hum_metodo_{assay_id}")
 
 
+def _mub_humedad(data):
+    """Humedad (%) a partir de las masas digitadas (recipiente, húmeda, seca a 17/18/19h) — misma fórmula que los
+    demás ensayos. None si todavía faltan datos."""
+    humedo, rec = to_float(data.get("mub_hum_humedo")), to_float(data.get("mub_hum_masa_rec"))
+    seco = next((v for v in (to_float(data.get(f"mub_hum_seco_{x}")) for x in (19, 18, 17)) if v is not None), None)
+    if None in (humedo, seco, rec) or (seco - rec) == 0:
+        return None
+    return (humedo - seco) / (seco - rec) * 100
+
+
 def resultados_masa_unitaria_b(data):
     """Densidad húmeda y seca del Método B (INV/ASTM D7263-09, plantilla GDA-FLC-030 — una sola lectura, no
     promedio): volumen (cm³) = π·altura(mm)·(diámetro(mm)/2)²/1000, densidad húmeda = masa/volumen, densidad
-    seca = densidad húmeda/(1+w/100). El kN/m³ es la propia plantilla: densidad (g/cm³) × 10 (no × 9.80665)."""
+    seca = densidad húmeda/(1+w/100), con w calculada de las masas de humedad. El kN/m³ es la propia plantilla:
+    densidad (g/cm³) × 10 (no × 9.80665)."""
     altura, diametro, masa = to_float(data.get("mub_altura")), to_float(data.get("mub_diametro")), to_float(data.get("mub_masa"))
     if not altura or not diametro or masa is None:
         return []
@@ -5165,7 +5180,9 @@ def resultados_masa_unitaria_b(data):
     filas = [("Volumen de la muestra (cm³)", fmt_num(volumen, 2)),
              ("Densidad húmeda (g/cm³)", fmt_num(dens_humeda, 3)),
              ("Densidad húmeda (kN/m³)", fmt_num(dens_humeda * 10, 2))]
-    w = to_float(data.get("mub_humedad"))
+    w = _mub_humedad(data)
+    if w is not None:
+        filas.insert(0, ("Humedad (%)", fmt_num(w, 2)))
     if w is not None and w != -100:
         dens_seca = dens_humeda / (1 + w / 100)
         filas += [("Densidad seca (g/cm³)", fmt_num(dens_seca, 3)),
@@ -5200,7 +5217,7 @@ def generar_excel_masa_unitaria_b(codigo, perf_codigo, muestra, project, data, o
     c["D20"] = to_float(data.get("mub_altura"))
     c["E20"] = to_float(data.get("mub_diametro"))
     c["F20"] = to_float(data.get("mub_masa"))
-    c["G28"] = to_float(data.get("mub_humedad"))
+    c["G28"] = _mub_humedad(data)
 
     with open(TEMPLATE_MASA_UNITARIA_B, "rb") as f:
         plantilla = f.read()
@@ -5241,8 +5258,16 @@ def render_masa_unitaria_form(data, assay_id):
             _campo_b("mub_altura", "Altura de la muestra (mm)")
             _campo_b("mub_diametro", "Diámetro de la muestra (mm)")
             _campo_b("mub_masa", "Masa de la muestra (g)")
-            _campo_b("mub_humedad", "Humedad (%, opcional)")
-            st.caption("Con la humedad se calcula también la densidad seca; sin ella, solo la húmeda.")
+        with st.container(border=True):
+            st.markdown(card_header_html("water_drop", "Datos de Humedad"), unsafe_allow_html=True)
+            st.caption("Con esto se calcula también la densidad seca; sin ella, solo la húmeda.")
+            for key, label in MUB_HUMEDAD_FILAS:
+                _campo_b(key, label, placeholder="" if key == "mub_hum_recipiente" else "0.00")
+                if key == "mub_hum_seco_17" and data.get("mub_hum_seco_17"):
+                    for siguiente in ("mub_hum_seco_18", "mub_hum_seco_19"):
+                        if not data.get(siguiente):
+                            st.session_state[f"{siguiente}_{assay_id}"] = data["mub_hum_seco_17"]
+                            data[siguiente] = data["mub_hum_seco_17"]
         with st.container(border=True):
             st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
             filas = resultados_masa_unitaria_b(data)
@@ -7199,8 +7224,10 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             st.markdown(card_header_html("straighten", "Peso Unitario Volumétrico"), unsafe_allow_html=True)
             st.markdown(param_table_html([("Altura de la muestra (mm)", data.get("mub_altura")),
                                           ("Diámetro de la muestra (mm)", data.get("mub_diametro")),
-                                          ("Masa de la muestra (g)", data.get("mub_masa")),
-                                          ("Humedad (%)", data.get("mub_humedad"))]), unsafe_allow_html=True)
+                                          ("Masa de la muestra (g)", data.get("mub_masa"))]), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("water_drop", "Datos de Humedad"), unsafe_allow_html=True)
+            st.markdown(param_table_html([(l, data.get(k)) for k, l in MUB_HUMEDAD_FILAS]), unsafe_allow_html=True)
         resultados = resultados_masa_unitaria_b(data)
         if resultados:
             with st.container(border=True):
