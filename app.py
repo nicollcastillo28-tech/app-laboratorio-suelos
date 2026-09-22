@@ -6040,25 +6040,8 @@ def render_compresion_inconfinada_form(data, assay_id):
                 if _guardar_inmediato(assay_id, data):
                     st.rerun()
     with st.container(border=True):
-        st.markdown(card_header_html("show_chart", "Deformación y Carga (bitácora)"), unsafe_allow_html=True)
-        st.caption("Deformación en 0.001 in y carga en kN. Solo se exportan las filas con carga digitada "
-                   f"(la plantilla admite hasta {len(CI_FILAS_EXCEL)}).")
-        head = st.columns([1, 1, 1, 1])
-        for j, texto in enumerate(("Def. (0.001 in)", "Carga (kN)", "Def. (0.001 in)", "Carga (kN)")):
-            head[j].markdown(f'<div class="cell-muted" style="text-align:center;font-weight:700;">{texto}</div>', unsafe_allow_html=True)
-        mitad = (len(CI_DEFORMACIONES) + 1) // 2
-        for k in range(mitad):
-            row = st.columns([1, 1, 1, 1])
-            for lado, i in ((0, k + 1), (2, k + 1 + mitad)):
-                if i > len(CI_DEFORMACIONES):
-                    continue
-                row[lado].markdown(f'<div style="padding-top:8px;text-align:center;">{CI_DEFORMACIONES[i - 1]}</div>', unsafe_allow_html=True)
-                key = f"ci_carga_{i}"
-                data[key] = row[lado + 1].text_input(f"Carga {CI_DEFORMACIONES[i - 1]}", value=data.get(key, ""),
-                                                      key=f"{key}_{assay_id}", label_visibility="collapsed")
-        _campo("ci_penetrometro", "Resistencia al penetrómetro (kg/cm²)")
-    with st.container(border=True):
         st.markdown(card_header_html("tune", "Falla"), unsafe_allow_html=True)
+        _campo("ci_penetrometro", "Resistencia al penetrómetro (kg/cm²)")
         _radio("ci_falla", "Tipo de falla (diagrama)", CI_FALLAS)
         _campo("ci_velocidad", "Velocidad de falla (mm/min)", placeholder="1")
         _campo("ci_tiempo_falla", "Tiempo de falla (min)")
@@ -6449,23 +6432,6 @@ def render_compresion_roca_form(data, assay_id):
                 if _guardar_inmediato(assay_id, data):
                     st.rerun()
     with st.container(border=True):
-        st.markdown(card_header_html("show_chart", "Deformación y Carga (bitácora)"), unsafe_allow_html=True)
-        st.caption("Deformación en 0.001 in y carga en kN. Solo se exportan las filas con carga digitada "
-                   f"(la plantilla admite hasta {len(ROCA_FILAS_EXCEL)}).")
-        head = st.columns([1, 1, 1, 1])
-        for j, texto in enumerate(("Def. (0.001 in)", "Carga (kN)", "Def. (0.001 in)", "Carga (kN)")):
-            head[j].markdown(f'<div class="cell-muted" style="text-align:center;font-weight:700;">{texto}</div>', unsafe_allow_html=True)
-        mitad = (len(ROCA_DEFORMACIONES) + 1) // 2
-        for k in range(mitad):
-            row = st.columns([1, 1, 1, 1])
-            for lado, i in ((0, k + 1), (2, k + 1 + mitad)):
-                if i > len(ROCA_DEFORMACIONES):
-                    continue
-                row[lado].markdown(f'<div style="padding-top:8px;text-align:center;">{ROCA_DEFORMACIONES[i - 1]}</div>', unsafe_allow_html=True)
-                key = f"roca_carga_{i}"
-                data[key] = row[lado + 1].text_input(f"Carga {ROCA_DEFORMACIONES[i - 1]}", value=data.get(key, ""),
-                                                      key=f"{key}_{assay_id}", label_visibility="collapsed")
-    with st.container(border=True):
         st.markdown(card_header_html("tune", "Falla"), unsafe_allow_html=True)
         _radio("roca_falla", "Tipo de falla (diagrama)", ROCA_FALLAS)
         _campo("roca_velocidad", "Velocidad de falla (mm/min)", placeholder="1")
@@ -6646,6 +6612,28 @@ def render_carga_puntual_form(data, assay_id):
         for key, label in CP_HUMEDAD_FILAS:
             _campo(key, label, placeholder="" if key == "cp_hum_recipiente" else "0.00")
     with st.container(border=True):
+        st.markdown(card_header_html("photo_camera", "Foto de la Muestra"), unsafe_allow_html=True)
+        st.caption("Se agrega al Excel, junto a la tabla de ensayos (no queda ajustada a ningún recuadro): la acomodas a "
+                   "mano después de descargar.")
+        if data.get("cp_foto_falla"):
+            st.image(base64.b64decode(data["cp_foto_falla"]["b64"]), width=220)
+            if st.button("Quitar foto", key=f"cp_foto_quitar_{assay_id}"):
+                data.pop("cp_foto_falla", None)
+                data["_cp_foto_intento"] = data.get("_cp_foto_intento", 0) + 1
+                if _guardar_inmediato(assay_id, data):
+                    st.rerun()
+        else:
+            captura = st.file_uploader("Foto de la muestra", type=["png", "jpg", "jpeg"],
+                                       key=f"cp_foto_archivo_{assay_id}_{data.get('_cp_foto_intento', 0)}",
+                                       label_visibility="collapsed")
+            if captura is not None:
+                with st.spinner("Guardando la foto…"):
+                    data["cp_foto_falla"] = _procesar_foto(captura.getvalue())
+                    if _guardar_inmediato(assay_id, data):
+                        st.rerun()
+                    else:
+                        data.pop("cp_foto_falla", None)
+    with st.container(border=True):
         st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
         filas = resultados_carga_puntual(data)
         if filas:
@@ -6722,8 +6710,17 @@ def generar_excel_carga_puntual(codigo, perf_codigo, muestra, project, data, obs
 
     with open(TEMPLATE_CARGA_PUNTUAL, "rb") as f:
         plantilla = f.read()
-    return _restaurar_orden_formato_condicional(_xlsx_escribir_celdas(plantilla, "xl/worksheets/sheet2.xml", c),
-                                                TEMPLATE_CARGA_PUNTUAL)
+    salida = _restaurar_orden_formato_condicional(_xlsx_escribir_celdas(plantilla, "xl/worksheets/sheet2.xml", c),
+                                                   TEMPLATE_CARGA_PUNTUAL)
+    foto = data.get("cp_foto_falla")
+    if foto:
+        imagen = base64.b64decode(foto["b64"])
+        # Suelta, a la derecha de la tabla de ensayos (columna U, fila 18) — ahí no hay nada más en la plantilla.
+        ancho_emu = 2286000
+        alto_emu = round(ancho_emu * foto["alto"] / foto["ancho"])
+        salida = _insertar_imagen_hoja(salida, "xl/drawings/drawing2.xml", imagen, foto["ext"], col=20, fila=17,
+                                       ancho_emu=ancho_emu, alto_emu=alto_emu)
+    return salida
 
 
 def render_limite_contraccion_form(data, assay_id):
@@ -7205,6 +7202,10 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             with st.container(border=True):
                 st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
                 st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        if data.get("cp_foto_falla"):
+            with st.container(border=True):
+                st.markdown(card_header_html("photo_camera", "Foto de la Muestra"), unsafe_allow_html=True)
+                st.image(base64.b64decode(data["cp_foto_falla"]["b64"]), width=220)
         equipos, norma = data.get("cp_equipos", []), data.get("cp_norma", "—")
     elif tipo == "consolidacion":
         with st.container(border=True):
