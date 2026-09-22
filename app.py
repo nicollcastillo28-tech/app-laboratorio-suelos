@@ -6058,8 +6058,8 @@ def render_compresion_inconfinada_form(data, assay_id):
         _campo("ci_tiempo_falla", "Tiempo de falla (min)")
     with st.container(border=True):
         st.markdown(card_header_html("photo_camera", "Foto del Plano de Falla"), unsafe_allow_html=True)
-        st.caption("Se agrega al Excel junto al recuadro \"PLANO DE FALLA\" (no reemplaza el dibujo de la plantilla ni queda "
-                   "ajustada a él): la acomodas a mano después de descargar.")
+        st.caption("Se agrega al Excel dentro del recuadro \"PLANO DE FALLA\", centrada y con margen (queda encima del "
+                   "dibujo de la plantilla): la puedes mover o redimensionar a mano después de descargar.")
         if data.get("ci_foto_falla"):
             st.image(base64.b64decode(data["ci_foto_falla"]["b64"]), width=220)
             if st.button("Quitar foto", key=f"ci_foto_quitar_{assay_id}"):
@@ -6168,10 +6168,13 @@ def _xlsx_escribir_celdas(xlsx_bytes, hoja_xml, celdas):
         return bio.getvalue()
 
 
-def _insertar_imagen_hoja(xlsx_bytes, drawing_xml, imagen_bytes, imagen_ext, col, fila, ancho_emu, alto_emu):
+def _insertar_imagen_hoja(xlsx_bytes, drawing_xml, imagen_bytes, imagen_ext, col, fila, ancho_emu, alto_emu,
+                          col_off=0, fila_off=0):
     """Agrega una imagen suelta (sin encogerla a ninguna celda) al drawing ya existente de una hoja — se usa para
-    fotos que el laboratorista sube, que quedan junto a un recuadro de la plantilla para que las acomode a mano
-    tras descargar. `col`/`fila` son 0-indexados; `drawing_xml` es la ruta del drawingN.xml de esa hoja."""
+    fotos que el laboratorista sube, que quedan junto a (o dentro de) un recuadro de la plantilla para que las
+    acomode a mano tras descargar. `col`/`fila` son 0-indexados; `col_off`/`fila_off` son un desplazamiento en EMU
+    desde el borde de esa celda (914400 EMU = 1 pulgada), para meter la imagen unos milímetros adentro de un
+    recuadro en vez de pegarla justo al borde. `drawing_xml` es la ruta del drawingN.xml de esa hoja."""
     rels_xml = re.sub(r"([^/]+)\.xml$", r"_rels/\1.xml.rels", drawing_xml)
     with zipfile.ZipFile(BytesIO(xlsx_bytes)) as zin:
         nombres = set(zin.namelist())
@@ -6189,8 +6192,8 @@ def _insertar_imagen_hoja(xlsx_bytes, drawing_xml, imagen_bytes, imagen_ext, col
         drawing = zin.read(drawing_xml).decode("utf-8")
         pic_id = len(re.findall(r"<xdr:cNvPr ", drawing)) + 1
         ancla = (
-            f'<xdr:oneCellAnchor><xdr:from><xdr:col>{col}</xdr:col><xdr:colOff>0</xdr:colOff>'
-            f'<xdr:row>{fila}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>'
+            f'<xdr:oneCellAnchor><xdr:from><xdr:col>{col}</xdr:col><xdr:colOff>{col_off}</xdr:colOff>'
+            f'<xdr:row>{fila}</xdr:row><xdr:rowOff>{fila_off}</xdr:rowOff></xdr:from>'
             f'<xdr:ext cx="{ancho_emu}" cy="{alto_emu}"/>'
             f'<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="{pic_id}" name="Foto plano de falla"/><xdr:cNvPicPr/></xdr:nvPicPr>'
             f'<xdr:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="{rid}"/>'
@@ -6221,6 +6224,31 @@ def _insertar_imagen_hoja(xlsx_bytes, drawing_xml, imagen_bytes, imagen_ext, col
                 zout.writestr(rels_xml, rels.encode("utf-8"))
             zout.writestr(media_nombre, imagen_bytes)
         return bio.getvalue()
+
+
+# Recuadro "PLANO DE FALLA" de las plantillas de Compresión Inconfinada y en Roca (el mismo, ambas comparten esa
+# parte de la plantilla): ancla (columna/fila 0-indexadas + desplazamiento en EMU) y tamaño del recuadro completo,
+# leídos del propio grupo de dibujo de la plantilla ("Grupo 31").
+PLANO_FALLA_ANCLA = (11, 15, 62843, 92610)
+PLANO_FALLA_CX, PLANO_FALLA_CY = 2351187, 3789642
+
+
+def _foto_dentro_de_recuadro(foto, margen_emu=180000):
+    """Calcula col/fila/desplazamiento/tamaño para que la foto quede DENTRO del recuadro "PLANO DE FALLA", con
+    margen parejo a los cuatro lados y sin deformarla (se encoge al lado que le sobre para no salirse del
+    recuadro). Devuelve los kwargs listos para _insertar_imagen_hoja."""
+    col, fila, col_off, fila_off = PLANO_FALLA_ANCLA
+    interior_cx, interior_cy = PLANO_FALLA_CX - 2 * margen_emu, PLANO_FALLA_CY - 2 * margen_emu
+    aspecto = foto["alto"] / foto["ancho"]
+    if interior_cx * aspecto <= interior_cy:
+        ancho_emu, alto_emu = interior_cx, round(interior_cx * aspecto)
+    else:
+        alto_emu, ancho_emu = interior_cy, round(interior_cy / aspecto)
+    return {
+        "col": col, "fila": fila, "ancho_emu": ancho_emu, "alto_emu": alto_emu,
+        "col_off": col_off + margen_emu + (interior_cx - ancho_emu) // 2,
+        "fila_off": fila_off + margen_emu + (interior_cy - alto_emu) // 2,
+    }
 
 
 def _textos_compartidos(xlsx_path):
@@ -6284,12 +6312,10 @@ def generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, 
     foto = data.get("ci_foto_falla")
     if foto:
         imagen = base64.b64decode(foto["b64"])
-        # Se agrega suelta, debajo del recuadro "PLANO DE FALLA" de la plantilla (columnas L-N, filas 16-29) — no se
-        # encoge a ninguna celda ni reemplaza el recuadro; el laboratorista la reubica y redimensiona a mano en Excel.
-        ancho_emu = 2286000  # 2.5"
-        alto_emu = round(ancho_emu * foto["alto"] / foto["ancho"])
-        salida = _insertar_imagen_hoja(salida, "xl/drawings/drawing1.xml", imagen, foto["ext"], col=11, fila=29,
-                                       ancho_emu=ancho_emu, alto_emu=alto_emu)
+        # Se mete DENTRO del recuadro "PLANO DE FALLA" de la plantilla, con margen — no reemplaza el dibujo del
+        # cilindro (queda encima) ni se ajusta al recuadro exacto: se centra y se encoge lo justo para no salirse.
+        salida = _insertar_imagen_hoja(salida, "xl/drawings/drawing1.xml", imagen, foto["ext"],
+                                       **_foto_dentro_de_recuadro(foto))
     return salida
 
 # Compresión simple en roca (ASTM D7012 método B) — bitácora GDA-FL-007 y plantilla GDA-FLC-043. La plantilla de
@@ -6459,8 +6485,8 @@ def render_compresion_roca_form(data, assay_id):
         _campo("roca_esfuerzo_maximo_manual", "Esfuerzo máximo leído en la máquina (MPa, opcional)", placeholder="0.0")
     with st.container(border=True):
         st.markdown(card_header_html("photo_camera", "Foto del Plano de Falla"), unsafe_allow_html=True)
-        st.caption("Se agrega al Excel junto al recuadro \"PLANO DE FALLA\" (no reemplaza el dibujo de la plantilla ni queda "
-                   "ajustada a él): la acomodas a mano después de descargar.")
+        st.caption("Se agrega al Excel dentro del recuadro \"PLANO DE FALLA\", centrada y con margen (queda encima del "
+                   "dibujo de la plantilla): la puedes mover o redimensionar a mano después de descargar.")
         if data.get("roca_foto_falla"):
             st.image(base64.b64decode(data["roca_foto_falla"]["b64"]), width=220)
             if st.button("Quitar foto", key=f"roca_foto_quitar_{assay_id}"):
@@ -6538,10 +6564,8 @@ def generar_excel_compresion_roca(codigo, perf_codigo, muestra, project, data, o
     foto = data.get("roca_foto_falla")
     if foto:
         imagen = base64.b64decode(foto["b64"])
-        ancho_emu = 2286000
-        alto_emu = round(ancho_emu * foto["alto"] / foto["ancho"])
-        salida = _insertar_imagen_hoja(salida, "xl/drawings/drawing1.xml", imagen, foto["ext"], col=11, fila=29,
-                                       ancho_emu=ancho_emu, alto_emu=alto_emu)
+        salida = _insertar_imagen_hoja(salida, "xl/drawings/drawing1.xml", imagen, foto["ext"],
+                                       **_foto_dentro_de_recuadro(foto))
     return salida
 
 # Carga puntual — índice de fuerza de carga puntual de la roca (ASTM D5731) — bitácora GDA-FL-020 y plantilla
