@@ -5680,7 +5680,10 @@ def render_consolidacion_form(data, assay_id):
                             st.error(aviso)
                         else:
                             data[f"cons_maq_{i}"] = puntos
-                            st.success(f"Se cargaron {len(puntos)} lecturas.")
+                            if _guardar_inmediato(assay_id, data):
+                                st.success(f"Se cargaron y guardaron {len(puntos)} lecturas.")
+                            else:
+                                data.pop(f"cons_maq_{i}", None)
                     pts = data.get(f"cons_maq_{i}")
                     if pts:
                         st.markdown(f'<div class="cell-muted">Cargado: {len(pts)} lecturas, hasta {pts[-1][0] / 60:.0f} min</div>',
@@ -6035,10 +6038,16 @@ def render_compresion_inconfinada_form(data, assay_id):
                 st.error("No encontré filas con tiempo, fuerza y deformación. Revisa que estén las 3 columnas.")
             else:
                 data["ci_maq"] = filas_maq
-                st.success(f"Se cargaron {len(filas_maq)} filas.")
-                if len(filas_maq) > CI_MAX_MAQUINA:
-                    st.info(f"La plantilla admite {CI_MAX_MAQUINA} filas: se exportan {CI_MAX_MAQUINA} puntos igualmente "
-                            "espaciados en el tiempo, desde el cero hasta el final del ensayo.")
+                # Se guarda ya mismo (no se espera al autoguardado normal, que corre después en el formulario): sin
+                # esto, si el laboratorista recargaba la página o volvía a entrar antes de descargar, lo cargado
+                # se perdía y el Excel salía sin los datos de la máquina, aunque acá arriba mostrara "cargado".
+                if _guardar_inmediato(assay_id, data):
+                    st.success(f"Se cargaron y guardaron {len(filas_maq)} filas.")
+                    if len(filas_maq) > CI_MAX_MAQUINA:
+                        st.info(f"La plantilla admite {CI_MAX_MAQUINA} filas: se exportan {CI_MAX_MAQUINA} puntos igualmente "
+                                "espaciados en el tiempo, desde el cero hasta el final del ensayo.")
+                else:
+                    data.pop("ci_maq", None)
         if data.get("ci_maq"):
             st.markdown(f'<div class="cell-muted">Cargado: {len(data["ci_maq"])} filas, hasta {data["ci_maq"][-1][0]:.0f} s</div>',
                         unsafe_allow_html=True)
@@ -6462,10 +6471,13 @@ def render_compresion_roca_form(data, assay_id):
                 st.error("No encontré filas con tiempo, fuerza y deformación. Revisa que estén las 3 columnas.")
             else:
                 data["roca_maq"] = filas_maq
-                st.success(f"Se cargaron {len(filas_maq)} filas.")
-                if len(filas_maq) > ROCA_MAX_MAQUINA:
-                    st.info(f"La plantilla admite {ROCA_MAX_MAQUINA} filas: se exportan {ROCA_MAX_MAQUINA} puntos igualmente "
-                            "espaciados en el tiempo, desde el cero hasta el final del ensayo.")
+                if _guardar_inmediato(assay_id, data):
+                    st.success(f"Se cargaron y guardaron {len(filas_maq)} filas.")
+                    if len(filas_maq) > ROCA_MAX_MAQUINA:
+                        st.info(f"La plantilla admite {ROCA_MAX_MAQUINA} filas: se exportan {ROCA_MAX_MAQUINA} puntos igualmente "
+                                "espaciados en el tiempo, desde el cero hasta el final del ensayo.")
+                else:
+                    data.pop("roca_maq", None)
         if data.get("roca_maq"):
             st.markdown(f'<div class="cell-muted">Cargado: {len(data["roca_maq"])} filas, hasta {data["roca_maq"][-1][0]:.0f} s</div>',
                         unsafe_allow_html=True)
