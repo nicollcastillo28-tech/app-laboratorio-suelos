@@ -6,6 +6,7 @@ Cómo correrla en tu computador:
     streamlit run app.py
 """
 
+import base64
 import html
 import json
 import math
@@ -18,6 +19,7 @@ from io import BytesIO
 
 import extra_streamlit_components as stx
 import pandas as pd
+from PIL import Image, ImageOps
 import streamlit as st
 import streamlit.components.v1 as components
 from openpyxl import load_workbook
@@ -5916,6 +5918,18 @@ def resultados_compresion_inconfinada(data):
     return filas
 
 
+def _procesar_foto(imagen_bytes, ancho_max=1600):
+    """Comprime la foto del plano de falla antes de guardarla en el ensayo (jsonb): se reduce a un ancho máximo y se
+    guarda como JPEG. Devuelve {"b64", "ext", "ancho", "alto"}."""
+    img = Image.open(BytesIO(imagen_bytes))
+    img = ImageOps.exif_transpose(img).convert("RGB")
+    if img.width > ancho_max:
+        img = img.resize((ancho_max, round(img.height * ancho_max / img.width)))
+    bio = BytesIO()
+    img.save(bio, format="JPEG", quality=85)
+    return {"b64": base64.b64encode(bio.getvalue()).decode("ascii"), "ext": "jpeg", "ancho": img.width, "alto": img.height}
+
+
 def render_compresion_inconfinada_form(data, assay_id):
     st.info("Formulario armado sobre la bitácora GDA-FL-005. El Excel para descargar (plantilla oficial GDA-FLC-008) "
             "está al final del ensayo.")
@@ -6007,6 +6021,25 @@ def render_compresion_inconfinada_form(data, assay_id):
         _campo("ci_velocidad", "Velocidad de falla (mm/min)", placeholder="1")
         _campo("ci_tiempo_falla", "Tiempo de falla (min)")
     with st.container(border=True):
+        st.markdown(card_header_html("photo_camera", "Foto del Plano de Falla"), unsafe_allow_html=True)
+        st.caption("Se agrega al Excel junto al recuadro \"PLANO DE FALLA\" (no reemplaza el dibujo de la plantilla ni queda "
+                   "ajustada a él): la acomodas a mano después de descargar.")
+        if data.get("ci_foto_falla"):
+            st.image(base64.b64decode(data["ci_foto_falla"]["b64"]), width=220)
+            if st.button("Quitar foto", key=f"ci_foto_quitar_{assay_id}"):
+                data.pop("ci_foto_falla", None)
+                st.rerun()
+        else:
+            origen = st.radio("Origen de la foto", ["Cámara", "Subir archivo"], horizontal=True,
+                               key=f"ci_foto_origen_{assay_id}", label_visibility="collapsed")
+            captura = (st.camera_input("Tomar foto", key=f"ci_foto_camara_{assay_id}", label_visibility="collapsed")
+                       if origen == "Cámara" else
+                       st.file_uploader("Subir foto", type=["png", "jpg", "jpeg"], key=f"ci_foto_archivo_{assay_id}",
+                                        label_visibility="collapsed"))
+            if captura is not None:
+                data["ci_foto_falla"] = _procesar_foto(captura.getvalue())
+                st.rerun()
+    with st.container(border=True):
         st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
         filas = resultados_compresion_inconfinada(data)
         if filas:
@@ -6076,6 +6109,61 @@ def _xlsx_escribir_celdas(xlsx_bytes, hoja_xml, celdas):
         return bio.getvalue()
 
 
+def _insertar_imagen_hoja(xlsx_bytes, drawing_xml, imagen_bytes, imagen_ext, col, fila, ancho_emu, alto_emu):
+    """Agrega una imagen suelta (sin encogerla a ninguna celda) al drawing ya existente de una hoja — se usa para
+    fotos que el laboratorista sube, que quedan junto a un recuadro de la plantilla para que las acomode a mano
+    tras descargar. `col`/`fila` son 0-indexados; `drawing_xml` es la ruta del drawingN.xml de esa hoja."""
+    rels_xml = re.sub(r"([^/]+)\.xml$", r"_rels/\1.xml.rels", drawing_xml)
+    with zipfile.ZipFile(BytesIO(xlsx_bytes)) as zin:
+        nombres = set(zin.namelist())
+        existentes = [int(m.group(1)) for n in nombres for m in [re.match(r"xl/media/image(\d+)\.\w+$", n)] if m]
+        media_nombre = f"xl/media/image{(max(existentes) + 1) if existentes else 1}.{imagen_ext}"
+
+        rels = zin.read(rels_xml).decode("utf-8") if rels_xml in nombres else \
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>'
+        ids = [int(m.group(1)) for m in re.finditer(r'Id="rId(\d+)"', rels)]
+        rid = f"rId{(max(ids) + 1) if ids else 1}"
+        rels = rels.replace("</Relationships>",
+            f'<Relationship Id="{rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
+            f'Target="../media/{media_nombre.rsplit("/", 1)[1]}"/></Relationships>')
+
+        drawing = zin.read(drawing_xml).decode("utf-8")
+        pic_id = len(re.findall(r"<xdr:cNvPr ", drawing)) + 1
+        ancla = (
+            f'<xdr:oneCellAnchor><xdr:from><xdr:col>{col}</xdr:col><xdr:colOff>0</xdr:colOff>'
+            f'<xdr:row>{fila}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>'
+            f'<xdr:ext cx="{ancho_emu}" cy="{alto_emu}"/>'
+            f'<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="{pic_id}" name="Foto plano de falla"/><xdr:cNvPicPr/></xdr:nvPicPr>'
+            f'<xdr:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="{rid}"/>'
+            f'<a:stretch><a:fillRect/></a:stretch></xdr:blipFill>'
+            f'<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{ancho_emu}" cy="{alto_emu}"/></a:xfrm>'
+            f'<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>'
+        )
+        drawing = drawing.replace("</xdr:wsDr>", ancla + "</xdr:wsDr>")
+
+        content_types = zin.read("[Content_Types].xml").decode("utf-8")
+        if f'Extension="{imagen_ext}"' not in content_types:
+            mime = {"png": "image/png", "jpeg": "image/jpeg", "jpg": "image/jpeg"}.get(imagen_ext, "image/png")
+            content_types = content_types.replace(
+                "</Types>", f'<Default Extension="{imagen_ext}" ContentType="{mime}"/></Types>')
+
+        bio = BytesIO()
+        with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                if item.filename == drawing_xml:
+                    zout.writestr(item, drawing.encode("utf-8"))
+                elif item.filename == rels_xml:
+                    zout.writestr(item, rels.encode("utf-8"))
+                elif item.filename == "[Content_Types].xml":
+                    zout.writestr(item, content_types.encode("utf-8"))
+                else:
+                    zout.writestr(item, zin.read(item.filename))
+            if rels_xml not in nombres:
+                zout.writestr(rels_xml, rels.encode("utf-8"))
+            zout.writestr(media_nombre, imagen_bytes)
+        return bio.getvalue()
+
+
 def _textos_compartidos(xlsx_path):
     with zipfile.ZipFile(xlsx_path) as z:
         xml = z.read("xl/sharedStrings.xml").decode("utf-8")
@@ -6132,8 +6220,18 @@ def generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, 
 
     with open(TEMPLATE_COMPRESION_INCONFINADA, "rb") as f:
         plantilla = f.read()
-    return _restaurar_orden_formato_condicional(_xlsx_escribir_celdas(plantilla, "xl/worksheets/sheet1.xml", c),
-                                                TEMPLATE_COMPRESION_INCONFINADA)
+    salida = _restaurar_orden_formato_condicional(_xlsx_escribir_celdas(plantilla, "xl/worksheets/sheet1.xml", c),
+                                                   TEMPLATE_COMPRESION_INCONFINADA)
+    foto = data.get("ci_foto_falla")
+    if foto:
+        imagen = base64.b64decode(foto["b64"])
+        # Se agrega suelta, debajo del recuadro "PLANO DE FALLA" de la plantilla (columnas L-N, filas 16-29) — no se
+        # encoge a ninguna celda ni reemplaza el recuadro; el laboratorista la reubica y redimensiona a mano en Excel.
+        ancho_emu = 2286000  # 2.5"
+        alto_emu = round(ancho_emu * foto["alto"] / foto["ancho"])
+        salida = _insertar_imagen_hoja(salida, "xl/drawings/drawing1.xml", imagen, foto["ext"], col=11, fila=29,
+                                       ancho_emu=ancho_emu, alto_emu=alto_emu)
+    return salida
 
 
 def render_limite_contraccion_form(data, assay_id):
@@ -6561,6 +6659,10 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             with st.container(border=True):
                 st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
                 st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        if data.get("ci_foto_falla"):
+            with st.container(border=True):
+                st.markdown(card_header_html("photo_camera", "Foto del Plano de Falla"), unsafe_allow_html=True)
+                st.image(base64.b64decode(data["ci_foto_falla"]["b64"]), width=220)
         equipos, norma = data.get("ci_equipos", []), data.get("ci_norma", "—")
     elif tipo == "consolidacion":
         with st.container(border=True):
