@@ -48,6 +48,7 @@ TEMPLATE_LIMITE_CONTRACCION = os.path.join(BASE_DIR, "templates", "GDA-FLC-022_l
 TEMPLATE_CONSOLIDACION = os.path.join(BASE_DIR, "templates", "GDA-FLC-009_consolidacion.xlsx")
 TEMPLATE_COMPRESION_INCONFINADA = os.path.join(BASE_DIR, "templates", "GDA-FLC-008_compresion_inconfinada.xlsm")
 TEMPLATE_COMPRESION_ROCA = os.path.join(BASE_DIR, "templates", "GDA-FLC-043_compresion_roca.xlsx")
+TEMPLATE_CARGA_PUNTUAL = os.path.join(BASE_DIR, "templates", "GDA-FLC-018_carga_puntual.xlsx")
 
 ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "laboratorista": "Laboratorista", "ingeniero": "Director Técnico"}
 ROLE_INICIALES = {"jefe": "JL", "laboratorista": "LB", "ingeniero": "DT"}
@@ -571,7 +572,7 @@ SIEVES = [
     ("s_60", "No. 60", "0.25", "E32"), ("s_100", "No. 100", "0.149", "E33"), ("s_200", "No. 200", "0.075", "E34"),
 ]
 
-ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor", "materia-organica": "Materia orgánica", "limite-contraccion": "Límite de contracción", "consolidacion": "Consolidación", "compresion-inconfinada": "Compresión inconfinada", "compresion-roca": "Compresión en roca"}
+ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor", "materia-organica": "Materia orgánica", "limite-contraccion": "Límite de contracción", "consolidacion": "Consolidación", "compresion-inconfinada": "Compresión inconfinada", "compresion-roca": "Compresión en roca", "carga-puntual": "Carga puntual"}
 NORMAS_ENSAYO = {
     "granulometria": ["INV-214-13", "INV.E-213-13", "INV.E 123-13"],
     "humedad": ["INV E-122", "ASTM D2216"],
@@ -585,6 +586,7 @@ NORMAS_ENSAYO = {
     "consolidacion": ["INV E-151-13", "ASTM D2435"],
     "compresion-inconfinada": ["INV E-152-13", "ASTM D2166"],
     "compresion-roca": ["ASTM D7012"],
+    "carga-puntual": ["ASTM D5731"],
 }
 STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado"}
 STATUS_BADGE = {"sin-iniciar": "badge-danger", "en-proceso": "badge-warning", "finalizado": "badge-success"}
@@ -969,6 +971,7 @@ SUPPORTED_ASSAY_MAP = {
     "Consolidación": "consolidacion",
     "Compresión inconfinada": "compresion-inconfinada",
     "Compresión en roca": "compresion-roca",
+    "Carga puntual": "carga-puntual",
 }
 
 
@@ -6141,9 +6144,20 @@ def _xlsx_escribir_celdas(xlsx_bytes, hoja_xml, celdas):
                     break
             xml = xml[:inicio + pos] + celda_xml(ref, "", valor) + xml[inicio + pos:]
 
+        # xl/calcChain.xml es un caché de qué celdas tienen fórmula y en qué orden se recalculan — cuando esta
+        # función le quita la fórmula a una celda (por ejemplo, para reemplazarla por un valor ya calculado en
+        # Python, como en carga puntual) esa caché queda apuntando a una celda que ya no tiene fórmula. openpyxl
+        # abre el archivo igual, pero Excel lo rechaza directo ("no se puede abrir") sin decir por qué. Se quita
+        # el archivo entero (es solo una optimización, no hace falta) y sus referencias — con fullCalcOnLoad
+        # activado más abajo, Excel recalcula todo de cero al abrir sin necesitarlo.
+        rels_wb = "xl/_rels/workbook.xml.rels"
+        tiene_calc_chain = "xl/calcChain.xml" in zin.namelist()
+
         bio = BytesIO()
         with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as zout:
             for item in zin.infolist():
+                if item.filename == "xl/calcChain.xml":
+                    continue
                 contenido = zin.read(item.filename)
                 if item.filename == hoja_xml:
                     contenido = xml.encode("utf-8")
@@ -6152,6 +6166,10 @@ def _xlsx_escribir_celdas(xlsx_bytes, hoja_xml, celdas):
                     if "fullCalcOnLoad" not in texto:
                         texto = texto.replace("<calcPr ", '<calcPr fullCalcOnLoad="1" ', 1)
                     contenido = texto.encode("utf-8")
+                elif item.filename == "[Content_Types].xml" and tiene_calc_chain:
+                    contenido = re.sub(rb'<Override PartName="/xl/calcChain\.xml"[^>]*/>', b"", contenido)
+                elif item.filename == rels_wb and tiene_calc_chain:
+                    contenido = re.sub(rb'<Relationship[^>]*Target="calcChain\.xml"[^>]*/>', b"", contenido)
                 zout.writestr(item, contenido)
         return bio.getvalue()
 
@@ -6539,6 +6557,173 @@ def generar_excel_compresion_roca(codigo, perf_codigo, muestra, project, data, o
         salida = _insertar_imagen_hoja(salida, "xl/drawings/drawing1.xml", imagen, foto["ext"], col=11, fila=29,
                                        ancho_emu=ancho_emu, alto_emu=alto_emu)
     return salida
+
+# Carga puntual — índice de fuerza de carga puntual de la roca (ASTM D5731) — bitácora GDA-FL-020 y plantilla
+# GDA-FLC-018. Hasta 10 ensayos por muestra; cada uno puede ser diametral, axial, en bloque o irregular, y esa
+# elección cambia cómo se calcula el diámetro equivalente.
+CP_MAX_ENSAYOS = 10
+CP_FILAS_EXCEL = list(range(21, 31))
+CP_SENTIDOS = ["DIAMETRAL", "AXIAL", "BLOQUE", "IRREGULAR"]
+CP_HUMEDAD_FILAS = [
+    ("cp_hum_recipiente", "Recipiente No."), ("cp_hum_humedo", "Masa muestra húmeda + recipiente (g)"),
+    ("cp_hum_seco_14", "Masa suelo seco + recipiente (g) (14 horas)"), ("cp_hum_seco_15", "Masa suelo seco + recipiente (g) (15 horas)"),
+    ("cp_hum_seco_16", "Masa suelo seco + recipiente (g) (16 horas)"), ("cp_hum_masa_rec", "Masa del recipiente (g)"),
+]
+EQUIPO_CARGA_PUNTUAL = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Horno GDA-E-007", "Acople carga puntual GDA-E-021",
+                        "Pie de rey GDA-E-110", "Celda de carga GDA-E-016", "Celda de carga GDA-E-017", "Máquina multiusos GDA-E-008"]
+
+
+def _cp_resultado_fila(data, i):
+    """(De², De, K, Is, Is50) de un ensayo, con las mismas fórmulas de la plantilla GDA-FLC-018. None si faltan datos."""
+    carga = to_float(data.get(f"cp_{i}_carga"))
+    d = to_float(data.get(f"cp_{i}_d"))
+    sentido = data.get(f"cp_{i}_sentido", "DIAMETRAL")
+    if carga is None or d is None:
+        return None
+    if sentido == "DIAMETRAL":
+        de2 = d * d
+    else:
+        l1, w2 = to_float(data.get(f"cp_{i}_l1"), 0) or 0, to_float(data.get(f"cp_{i}_w2"), 0) or 0
+        h = (l1 + w2) / 2
+        if h == 0:
+            return None
+        de2 = (4 * h * d) / math.pi
+    if de2 <= 0:
+        return None
+    de = math.sqrt(de2)
+    k = (de / 50) ** 0.45 if (d < 49 or d > 51) else math.sqrt(de / 50)
+    is_ = carga * 1000 / de2
+    is50 = is_ * k
+    return de2, de, k, is_, is50
+
+
+def resultados_carga_puntual(data):
+    """[(etiqueta, valor)] con el Is50 promedio y la humedad, más una fila por ensayo con su Is50."""
+    filas = []
+    valores_is50 = []
+    for i in range(1, CP_MAX_ENSAYOS + 1):
+        r = _cp_resultado_fila(data, i)
+        if r:
+            valores_is50.append(r[4])
+            filas.append((f"Ensayo {i} — Is50 (MPa)", fmt_num(r[4], 3)))
+    if valores_is50:
+        filas.insert(0, ("Is50 promedio (MPa)", fmt_num(sum(valores_is50) / len(valores_is50), 3)))
+    humedo, rec = to_float(data.get("cp_hum_humedo")), to_float(data.get("cp_hum_masa_rec"))
+    seco = next((v for v in (to_float(data.get(f"cp_hum_seco_{x}")) for x in (16, 15, 14)) if v is not None), None)
+    if None not in (humedo, seco, rec) and (seco - rec) != 0:
+        filas.append(("Humedad (%)", fmt_num((humedo - seco) / (seco - rec) * 100, 2)))
+    return filas
+
+
+def render_carga_puntual_form(data, assay_id):
+    st.info("Formulario armado sobre la bitácora GDA-FL-020. El Excel para descargar (plantilla oficial GDA-FLC-018) "
+            "está al final del ensayo. Hasta 10 ensayos por muestra.")
+
+    def _campo(key, label, placeholder="0.00"):
+        row = st.columns([2.2, 1])
+        row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+        data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                       label_visibility="collapsed", placeholder=placeholder)
+
+    with st.container(border=True):
+        st.markdown(card_header_html("science", "Ensayos"), unsafe_allow_html=True)
+        head = st.columns([0.6, 1, 1, 1, 1, 1.3])
+        for j, texto in enumerate(("#", "Carga P (kN)", "Altura D (mm)", "L1 ó W1 (mm)", "W2 (mm)", "Sentido de falla")):
+            head[j].markdown(f'<div class="cell-muted" style="text-align:center;font-weight:700;">{texto}</div>', unsafe_allow_html=True)
+        for i in range(1, CP_MAX_ENSAYOS + 1):
+            row = st.columns([0.6, 1, 1, 1, 1, 1.3])
+            row[0].markdown(f'<div style="padding-top:8px;text-align:center;">{i}</div>', unsafe_allow_html=True)
+            for col_i, campo in ((1, "carga"), (2, "d"), (3, "l1"), (4, "w2")):
+                key = f"cp_{i}_{campo}"
+                data[key] = row[col_i].text_input(f"{campo} {i}", value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                                   label_visibility="collapsed")
+            actual = data.get(f"cp_{i}_sentido", "DIAMETRAL")
+            data[f"cp_{i}_sentido"] = row[5].selectbox(
+                f"Sentido {i}", CP_SENTIDOS, index=CP_SENTIDOS.index(actual) if actual in CP_SENTIDOS else 0,
+                key=f"cp_{i}_sentido_{assay_id}", label_visibility="collapsed")
+    with st.container(border=True):
+        st.markdown(card_header_html("water_drop", "Datos de Humedad"), unsafe_allow_html=True)
+        for key, label in CP_HUMEDAD_FILAS:
+            _campo(key, label, placeholder="" if key == "cp_hum_recipiente" else "0.00")
+    with st.container(border=True):
+        st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+        filas = resultados_carga_puntual(data)
+        if filas:
+            st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        else:
+            st.caption("Se muestran a medida que se digitan los datos de arriba.")
+    render_equipo(data, "cp", EQUIPO_CARGA_PUNTUAL)
+    render_norma_selector("carga-puntual", data, "cp")
+
+
+def generar_excel_carga_puntual(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    """Carga puntual (GDA-FLC-018, ASTM D5731). Se escribe directo en el XML de la hoja "FORMATO" (sheet2.xml en
+    esta plantilla) para conservar los diagramas y las firmas.
+
+    Los ensayos 1 a 6 (filas 21-26) tienen fórmulas vivas para De², De, K, Is e Is50 — pero encadenadas entre sí con
+    "fórmulas compartidas" de Excel (una fila trae la fórmula completa y las demás solo la referencian por índice);
+    si se borra o reemplaza la fila que trae la fórmula completa, las que la referencian quedan apuntando a nada y
+    el archivo no vuelve a abrir en Excel (se detectó así: openpyxl seguía abriéndolo bien, pero Excel no). Por eso
+    esas columnas (H a M) NUNCA se tocan en esas filas — solo se escriben los datos de entrada (C, D, E, G, N) y
+    Excel las calcula solo. Los ensayos 7 a 10 (filas 27-30) son un simple "-" sin fórmula, así que ahí sí se
+    escriben ya calculados (misma fórmula que la plantilla). El promedio final (E33, =AVERAGE(M21:M30) en la
+    plantilla) se reemplaza por el promedio calculado en Python, porque esa fórmula se rompe (#¡DIV/0!) apenas
+    algún ensayo queda sin digitar, sin importar cuántos otros sí tengan resultado."""
+    c = {}
+    c["D6"] = project.get("cliente", "") if project else ""
+    c["D7"] = project["nombre"] if project else codigo
+    c["D8"] = project.get("correo_cliente", "") if project else ""
+    c["D9"] = project.get("localizacion", "") if project else ""
+    if project and project.get("muestra_tomada_por"):
+        c["D10"] = project["muestra_tomada_por"]
+    c["L6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    c["L7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
+    c["L8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    c["M9"] = project.get("numero", "") if project else ""
+    c["N9"] = project.get("anio", "") if project else ""
+    perf = get_perforacion(codigo, perf_codigo)
+    c["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
+    c["F12"] = perf_codigo
+    c["I12"] = muestra["numero"]
+    c["L12"] = to_float(muestra.get("profundidad_de"))
+    c["N12"] = to_float(muestra.get("profundidad_hasta"))
+    c["D13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+
+    valores_is50 = []
+    for i, fila in enumerate(CP_FILAS_EXCEL, start=1):
+        carga, d = to_float(data.get(f"cp_{i}_carga")), to_float(data.get(f"cp_{i}_d"))
+        resultado = _cp_resultado_fila(data, i)
+        if resultado:
+            valores_is50.append(resultado[4])
+        con_formula_viva = i <= 6  # filas 21-26; ver nota de la función sobre las fórmulas compartidas
+        if carga is None or d is None:
+            if not con_formula_viva:  # en 21-26 no se toca nada si el ensayo quedó sin digitar
+                for col in "CDEGHIJKLMN":
+                    c[f"{col}{fila}"] = None
+            continue
+        l1, w2 = to_float(data.get(f"cp_{i}_l1")), to_float(data.get(f"cp_{i}_w2"))
+        sentido = data.get(f"cp_{i}_sentido") or "DIAMETRAL"
+        c[f"C{fila}"] = carga
+        c[f"D{fila}"] = d
+        c[f"E{fila}"] = l1
+        c[f"G{fila}"] = w2
+        c[f"N{fila}"] = sentido
+        if not con_formula_viva:
+            c[f"H{fila}"] = ((l1 or 0) + (w2 or 0)) / 2 if sentido != "DIAMETRAL" else None
+            for col in "IJKLM":
+                c[f"{col}{fila}"] = None
+            if resultado:
+                c[f"I{fila}"], c[f"J{fila}"], c[f"K{fila}"], c[f"L{fila}"], c[f"M{fila}"] = resultado
+    c["E33"] = sum(valores_is50) / len(valores_is50) if valores_is50 else None
+    c["E36"] = data.get("cp_hum_recipiente") or None
+    c["E37"] = to_float(data.get("cp_hum_humedo"))
+    c["E38"] = next((v for v in (to_float(data.get(f"cp_hum_seco_{x}")) for x in (16, 15, 14)) if v is not None), None)
+    c["E39"] = to_float(data.get("cp_hum_masa_rec"))
+
+    with open(TEMPLATE_CARGA_PUNTUAL, "rb") as f:
+        plantilla = f.read()
+    return _restaurar_orden_formato_condicional(_xlsx_escribir_celdas(plantilla, "xl/worksheets/sheet2.xml", c),
+                                                TEMPLATE_CARGA_PUNTUAL)
 
 
 def render_limite_contraccion_form(data, assay_id):
@@ -7001,6 +7186,26 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                 st.markdown(card_header_html("photo_camera", "Foto del Plano de Falla"), unsafe_allow_html=True)
                 st.image(base64.b64decode(data["roca_foto_falla"]["b64"]), width=220)
         equipos, norma = data.get("roca_equipos", []), data.get("roca_norma", "—")
+    elif tipo == "carga-puntual":
+        with st.container(border=True):
+            st.markdown(card_header_html("science", "Ensayos"), unsafe_allow_html=True)
+            filas_tabla = []
+            for i in range(1, CP_MAX_ENSAYOS + 1):
+                if any(data.get(f"cp_{i}_{c}") for c in ("carga", "d", "l1", "w2")):
+                    filas_tabla.append((i, data.get(f"cp_{i}_carga"), data.get(f"cp_{i}_d"), data.get(f"cp_{i}_l1"),
+                                        data.get(f"cp_{i}_w2"), data.get(f"cp_{i}_sentido")))
+            if filas_tabla:
+                st.markdown(param_table_ncol_html(["#", "CARGA P (kN)", "ALTURA D (mm)", "L1 ó W1 (mm)", "W2 (mm)", "SENTIDO"],
+                                                  filas_tabla), unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(card_header_html("water_drop", "Datos de Humedad"), unsafe_allow_html=True)
+            st.markdown(param_table_html([(l, data.get(k)) for k, l in CP_HUMEDAD_FILAS]), unsafe_allow_html=True)
+        resultados = resultados_carga_puntual(data)
+        if resultados:
+            with st.container(border=True):
+                st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+                st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        equipos, norma = data.get("cp_equipos", []), data.get("cp_norma", "—")
     elif tipo == "consolidacion":
         with st.container(border=True):
             st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
@@ -7298,6 +7503,8 @@ def render_assay_form():
             render_compresion_inconfinada_form(data, assay_id)
         elif assay["tipo"] == "compresion-roca":
             render_compresion_roca_form(data, assay_id)
+        elif assay["tipo"] == "carga-puntual":
+            render_carga_puntual_form(data, assay_id)
 
         with st.expander("Observaciones (opcional)", icon=":material/notes:", expanded=bool(assay.get("observations"))):
             observations = st.text_area("Observaciones", value=assay.get("observations", ""), label_visibility="collapsed",
@@ -7448,6 +7655,16 @@ def render_assay_form():
             file_name=f"Compresion_roca_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_compresion_roca")
+
+    if assay["tipo"] == "carga-puntual" and muestra:
+        st.markdown("---")
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        st.download_button(
+            "Descargar Excel (plantilla oficial de Carga Puntual)", icon=":material/download:",
+            data=generar_excel_carga_puntual(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            file_name=f"Carga_puntual_{muestra['id_unico']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
+            key="dl_carga_puntual")
 
     if assay["tipo"] == "consolidacion" and muestra:
         st.markdown("---")
