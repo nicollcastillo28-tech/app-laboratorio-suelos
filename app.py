@@ -5839,23 +5839,6 @@ def _ci_puntos(data):
     return puntos
 
 
-def parse_maquina_ci_texto(texto):
-    """Datos de la máquina pegados desde Excel: tiempo (s), fuerza (kN) y deformación (mm) separados por tabulador o
-    espacios; los encabezados se ignoran y una fuerza "#N/D" queda vacía. Devuelve [[t, fuerza|None, deformación]]."""
-    filas = []
-    for linea in (texto or "").splitlines():
-        linea = linea.strip()
-        partes = [x.strip() for x in linea.split("\t")] if "\t" in linea else linea.split()
-        partes = [x for x in partes if x != ""]
-        if len(partes) < 3:
-            continue
-        t, f, d = to_float(partes[0]), to_float(partes[1]), to_float(partes[2])
-        if t is None or d is None:
-            continue
-        filas.append([t, f, d])
-    return filas
-
-
 def parse_maquina_ci_xlsx(file_bytes):
     """Excel con la tabla de la máquina: se busca en cualquier hoja la fila de encabezados (Tiempo / Fuerza /
     Deformación o Desplazamiento) y se leen los datos que están debajo. Algunas máquinas traen una hoja "Informe"
@@ -6028,12 +6011,10 @@ def render_compresion_inconfinada_form(data, assay_id):
         st.markdown(card_header_html("show_chart", "Datos de la Máquina"), unsafe_allow_html=True)
         st.caption("Tiempo (s), fuerza (kN) y deformación (mm) que arroja la máquina: van a la tabla de datos de la máquina del "
                    f"Excel ({CI_MAX_MAQUINA} filas; si traen más, se reparten en el tiempo). Si los cargas, se usan en lugar de la tabla de la bitácora.")
-        texto = st.text_area("Pegar datos de la máquina", value="", key=f"ci_maq_texto_{assay_id}", height=110,
-                              placeholder="Pega aquí las 3 columnas copiadas de Excel (tiempo, fuerza, deformación)")
-        archivo = st.file_uploader("O sube el Excel de la máquina", type=["xlsx"], key=f"ci_maq_archivo_{assay_id}")
-        if (texto.strip() or archivo) and st.button("Cargar datos de la máquina", key=f"ci_maq_cargar_{assay_id}",
-                                                     icon=":material/publish:", use_container_width=True):
-            filas_maq = parse_maquina_ci_texto(texto) if texto.strip() else parse_maquina_ci_xlsx(archivo.getvalue())
+        archivo = st.file_uploader("Sube el Excel de la máquina", type=["xlsx"], key=f"ci_maq_archivo_{assay_id}")
+        if archivo and st.button("Cargar datos de la máquina", key=f"ci_maq_cargar_{assay_id}",
+                                  icon=":material/publish:", use_container_width=True):
+            filas_maq = parse_maquina_ci_xlsx(archivo.getvalue())
             if not filas_maq:
                 st.error("No encontré filas con tiempo, fuerza y deformación. Revisa que estén las 3 columnas.")
             else:
@@ -6461,12 +6442,10 @@ def render_compresion_roca_form(data, assay_id):
         st.caption("Tiempo (s), fuerza (kN) y deformación (mm) que arroja la máquina: van a la tabla de datos de la máquina del "
                    f"Excel ({ROCA_MAX_MAQUINA} filas; si traen más, se reparten en el tiempo). Si los cargas, se usan en lugar de "
                    "la tabla de la bitácora.")
-        texto = st.text_area("Pegar datos de la máquina", value="", key=f"roca_maq_texto_{assay_id}", height=110,
-                              placeholder="Pega aquí las 3 columnas copiadas de Excel (tiempo, fuerza, deformación)")
-        archivo = st.file_uploader("O sube el Excel de la máquina", type=["xlsx"], key=f"roca_maq_archivo_{assay_id}")
-        if (texto.strip() or archivo) and st.button("Cargar datos de la máquina", key=f"roca_maq_cargar_{assay_id}",
-                                                     icon=":material/publish:", use_container_width=True):
-            filas_maq = parse_maquina_ci_texto(texto) if texto.strip() else parse_maquina_ci_xlsx(archivo.getvalue())
+        archivo = st.file_uploader("Sube el Excel de la máquina", type=["xlsx"], key=f"roca_maq_archivo_{assay_id}")
+        if archivo and st.button("Cargar datos de la máquina", key=f"roca_maq_cargar_{assay_id}",
+                                  icon=":material/publish:", use_container_width=True):
+            filas_maq = parse_maquina_ci_xlsx(archivo.getvalue())
             if not filas_maq:
                 st.error("No encontré filas con tiempo, fuerza y deformación. Revisa que estén las 3 columnas.")
             else:
