@@ -37,6 +37,7 @@ TEMPLATE_GRANULOMETRIA = os.path.join(BASE_DIR, "templates", "CLASIFICACION_DE_S
 TEMPLATE_BITACORA_ORDEN = os.path.join(BASE_DIR, "templates", "GDA-FL-003_bitacora_orden.xlsx")
 TEMPLATE_HUMEDAD = os.path.join(BASE_DIR, "templates", "GDA-FLC-014_humedad_natural.xlsx")
 TEMPLATE_MASA_UNITARIA = os.path.join(BASE_DIR, "templates", "GDA-FLC-004_masa_unitaria.xlsx")
+TEMPLATE_MASA_UNITARIA_B = os.path.join(BASE_DIR, "templates", "GDA-FLC-030_peso_unitario_b.xlsx")
 TEMPLATE_CBR = os.path.join(BASE_DIR, "templates", "GDA-FLC-013_cbr.xlsx")
 TEMPLATE_CORTE_DIRECTO = os.path.join(BASE_DIR, "templates", "GDA-FLC-007_corte_directo.xlsx")
 TEMPLATE_GESP_FINO = os.path.join(BASE_DIR, "templates", "GDA-FLC-027_gravedad_fino.xlsx")
@@ -5151,28 +5152,60 @@ def render_humedad_form(data, assay_id):
 
 
 def resultados_masa_unitaria_b(data):
-    """Densidad húmeda y seca del Método B (por volumen conocido): volumen = π·(D/2)²·H con los promedios de
-    altura y diámetro, densidad húmeda = masa/volumen, densidad seca = densidad húmeda / (1 + w/100). La
-    conversión a peso unitario (kN/m³) es densidad (g/cm³) × 9.80665, igual que 1 t/m³ × gravedad."""
-    def prom(pref):
-        valores = [v for v in (to_float(data.get(f"{pref}_{i}")) for i in (1, 2, 3)) if v is not None]
-        return sum(valores) / len(valores) if valores else None
-    altura, diametro, masa = prom("mub_altura"), prom("mub_diametro"), to_float(data.get("mub_masa"))
+    """Densidad húmeda y seca del Método B (INV/ASTM D7263-09, plantilla GDA-FLC-030 — una sola lectura, no
+    promedio): volumen (cm³) = π·altura(mm)·(diámetro(mm)/2)²/1000, densidad húmeda = masa/volumen, densidad
+    seca = densidad húmeda/(1+w/100). El kN/m³ es la propia plantilla: densidad (g/cm³) × 10 (no × 9.80665)."""
+    altura, diametro, masa = to_float(data.get("mub_altura")), to_float(data.get("mub_diametro")), to_float(data.get("mub_masa"))
     if not altura or not diametro or masa is None:
         return []
-    volumen = math.pi * (diametro / 2) ** 2 * altura
+    volumen = math.pi * altura * (diametro / 2) ** 2 / 1000
     if volumen == 0:
         return []
     dens_humeda = masa / volumen
     filas = [("Volumen de la muestra (cm³)", fmt_num(volumen, 2)),
              ("Densidad húmeda (g/cm³)", fmt_num(dens_humeda, 3)),
-             ("Densidad húmeda (kN/m³)", fmt_num(dens_humeda * 9.80665, 2))]
+             ("Densidad húmeda (kN/m³)", fmt_num(dens_humeda * 10, 2))]
     w = to_float(data.get("mub_humedad"))
     if w is not None and w != -100:
         dens_seca = dens_humeda / (1 + w / 100)
         filas += [("Densidad seca (g/cm³)", fmt_num(dens_seca, 3)),
-                  ("Densidad seca (kN/m³)", fmt_num(dens_seca * 9.80665, 2))]
+                  ("Densidad seca (kN/m³)", fmt_num(dens_seca * 10, 2))]
     return filas
+
+
+def generar_excel_masa_unitaria_b(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    """Peso unitario Método B (GDA-FLC-030, D7263-09). Se escribe directo en el XML de la hoja (sin fórmulas
+    compartidas ni calcChain en esta plantilla — más simple que Compresión); volumen y densidades las calcula
+    el propio Excel a partir de altura, diámetro, masa y humedad."""
+    c = {}
+    c["C6"] = project.get("cliente", "") if project else ""
+    c["C7"] = project["nombre"] if project else codigo
+    c["C8"] = project.get("correo_cliente", "") if project else ""
+    c["C9"] = project.get("localizacion", "") if project else ""
+    if project and project.get("muestra_tomada_por"):
+        c["C10"] = project["muestra_tomada_por"]
+    c["I6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    c["I7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
+    c["I8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    c["J9"] = project.get("numero", "") if project else ""
+    c["K9"] = project.get("anio", "") if project else ""
+    perf = get_perforacion(codigo, perf_codigo)
+    c["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
+    c["D12"] = perf_codigo
+    c["F12"] = muestra["numero"]
+    c["I12"] = to_float(muestra.get("profundidad_de"))
+    c["K12"] = to_float(muestra.get("profundidad_hasta"))
+    c["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+
+    c["D20"] = to_float(data.get("mub_altura"))
+    c["E20"] = to_float(data.get("mub_diametro"))
+    c["F20"] = to_float(data.get("mub_masa"))
+    c["G28"] = to_float(data.get("mub_humedad"))
+
+    with open(TEMPLATE_MASA_UNITARIA_B, "rb") as f:
+        plantilla = f.read()
+    return _restaurar_orden_formato_condicional(_xlsx_escribir_celdas(plantilla, "xl/worksheets/sheet1.xml", c),
+                                                TEMPLATE_MASA_UNITARIA_B)
 
 
 def render_masa_unitaria_form(data, assay_id):
@@ -5195,28 +5228,20 @@ def render_masa_unitaria_form(data, assay_id):
                                                   key=f"mu_temp_agua_{assay_id}", placeholder="22.0")
         render_equipo(data, "mu", EQUIPO_MASA_UNITARIA)
     else:
-        st.info("Formulario armado sobre la bitácora GDA-FLC-029. Todavía no tengo la plantilla oficial de Excel para "
-                "descargar — por ahora se ven los resultados acá mismo para poder verificarlos.")
+        st.info("Formulario armado sobre la plantilla oficial GDA-FLC-030. El Excel para descargar está al final del ensayo.")
+
+        def _campo_b(key, label, placeholder="0.00"):
+            row = st.columns([2.2, 1])
+            row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+            data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                           label_visibility="collapsed", placeholder=placeholder)
+
         with st.container(border=True):
-            st.markdown(card_header_html("straighten", "Dimensiones de la Muestra"), unsafe_allow_html=True)
-            head = st.columns([1, 1, 1])
-            head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Altura (cm)</div>', unsafe_allow_html=True)
-            head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Diámetro (cm)</div>', unsafe_allow_html=True)
-            for i in (1, 2, 3):
-                row = st.columns([1, 1, 1])
-                row[0].markdown(f'<div style="padding-top:8px;">{i}</div>', unsafe_allow_html=True)
-                for col_i, pref in ((1, "mub_altura"), (2, "mub_diametro")):
-                    key = f"{pref}_{i}"
-                    data[key] = row[col_i].text_input(f"{pref} {i}", value=data.get(key, ""), key=f"{key}_{assay_id}",
-                                                       label_visibility="collapsed", placeholder="0.00")
-            row = st.columns([2.2, 1])
-            row[0].markdown('<div style="padding-top:8px;">Masa de la muestra (g)</div>', unsafe_allow_html=True)
-            data["mub_masa"] = row[1].text_input("Masa de la muestra (g)", value=data.get("mub_masa", ""),
-                                                  key=f"mub_masa_{assay_id}", label_visibility="collapsed", placeholder="0.00")
-            row = st.columns([2.2, 1])
-            row[0].markdown('<div style="padding-top:8px;">Humedad de la muestra (%, opcional)</div>', unsafe_allow_html=True)
-            data["mub_humedad"] = row[1].text_input("Humedad de la muestra (%)", value=data.get("mub_humedad", ""),
-                                                     key=f"mub_humedad_{assay_id}", label_visibility="collapsed", placeholder="0.00")
+            st.markdown(card_header_html("straighten", "Peso Unitario Volumétrico"), unsafe_allow_html=True)
+            _campo_b("mub_altura", "Altura de la muestra (mm)")
+            _campo_b("mub_diametro", "Diámetro de la muestra (mm)")
+            _campo_b("mub_masa", "Masa de la muestra (g)")
+            _campo_b("mub_humedad", "Humedad (%, opcional)")
             st.caption("Con la humedad se calcula también la densidad seca; sin ella, solo la húmeda.")
         with st.container(border=True):
             st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
@@ -7171,12 +7196,11 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
         equipos, norma = data.get("lim_equipos", []), "INV. E-125-13 / INV. E-126-13"
     elif tipo == "masa-unitaria" and data.get("mu_metodo") == "Método B":
         with st.container(border=True):
-            st.markdown(card_header_html("straighten", "Dimensiones"), unsafe_allow_html=True)
-            st.markdown(param_table_ncol_html(["#", "ALTURA (cm)", "DIÁMETRO (cm)"],
-                                              [(i, data.get(f"mub_altura_{i}"), data.get(f"mub_diametro_{i}")) for i in (1, 2, 3)]),
-                        unsafe_allow_html=True)
-            st.markdown(param_table_html([("Masa de la muestra (g)", data.get("mub_masa")),
-                                          ("Humedad de la muestra (%)", data.get("mub_humedad"))]), unsafe_allow_html=True)
+            st.markdown(card_header_html("straighten", "Peso Unitario Volumétrico"), unsafe_allow_html=True)
+            st.markdown(param_table_html([("Altura de la muestra (mm)", data.get("mub_altura")),
+                                          ("Diámetro de la muestra (mm)", data.get("mub_diametro")),
+                                          ("Masa de la muestra (g)", data.get("mub_masa")),
+                                          ("Humedad (%)", data.get("mub_humedad"))]), unsafe_allow_html=True)
         resultados = resultados_masa_unitaria_b(data)
         if resultados:
             with st.container(border=True):
@@ -7753,8 +7777,8 @@ def render_assay_form():
         )
 
     if es_supervisor and assay["tipo"] == "masa-unitaria" and muestra and data.get("mu_metodo") != "Método B":
-        # Método B no tiene botón de descarga: todavía no existe la plantilla oficial de Excel para ese método,
-        # solo Parafinado (GDA-FLC-004) la tiene.
+        # Parafinado y Método B usan plantillas de Excel distintas (GDA-FLC-004 y GDA-FLC-030) — cada una con su
+        # propio botón, más abajo para Método B.
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -7763,6 +7787,16 @@ def render_assay_form():
             data=excel_bytes, file_name=f"Peso_unitario_parafinado_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
+
+    if es_supervisor and assay["tipo"] == "masa-unitaria" and muestra and data.get("mu_metodo") == "Método B":
+        st.markdown("---")
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        st.download_button(
+            "Descargar Excel (plantilla oficial de Peso Unitario Método B)", icon=":material/download:",
+            data=generar_excel_masa_unitaria_b(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            file_name=f"Peso_unitario_metodo_b_{muestra['id_unico']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
+            key="dl_masa_unitaria_b")
 
     if assay["tipo"] == "compresion-inconfinada" and muestra:
         st.markdown("---")
