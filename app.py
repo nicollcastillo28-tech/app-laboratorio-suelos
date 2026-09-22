@@ -6036,6 +6036,15 @@ def render_compresion_inconfinada_form(data, assay_id):
                        if origen == "Cámara" else
                        st.file_uploader("Subir foto", type=["png", "jpg", "jpeg"], key=f"ci_foto_archivo_{assay_id}",
                                         label_visibility="collapsed"))
+            if origen == "Cámara":
+                # st.camera_input no tiene forma de elegir la cámara desde Python: abre siempre la delantera y solo
+                # deja cambiar a la trasera con el botón de "cambiar cámara" que dibuja en la esquina del video. Acá
+                # se simula un clic en ese botón apenas carga, para que abra directo en la trasera (si el dispositivo
+                # solo tiene una cámara, no hay botón que pulsar y esto no hace nada).
+                components.html(
+                    "<script>(function(){function t(n){try{var b=window.parent.document.querySelector("
+                    "'[data-testid=\"stCameraInputSwitchButton\"]');if(b){b.click();return;}}catch(e){}"
+                    "if(n>0)setTimeout(function(){t(n-1);},200);}t(20);})();</script>", height=0)
             if captura is not None:
                 data["ci_foto_falla"] = _procesar_foto(captura.getvalue())
                 st.rerun()
