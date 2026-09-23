@@ -2471,7 +2471,8 @@ def render_balanzas():
     if st.session_state.get("_bal_aviso"):
         st.info(st.session_state.pop("_bal_aviso"))
 
-    t1, t2, t3, t4 = st.columns([2.4, 2.6, 1.3, 1.5])
+    # Dos filas de dos (en una tablet vertical cuatro columnas quedan demasiado apretadas).
+    t1, t2 = st.columns(2)
     with t1:
         equipo = st.selectbox("Balanza", codigos, key="bal_sel_equipo",
                                format_func=lambda c: f"{c} — {BALANZAS_POR_CODIGO[c]['nombre']}")
@@ -2486,14 +2487,13 @@ def render_balanzas():
             sel_id = st.selectbox("Registro guardado", ids, key="bal_sel_registro",
                                    format_func=lambda i: _bal_rotulo(next(c for c in registros if c["id"] == i)))
         else:
-            st.markdown('<div style="padding-top:30px;color:#6B7570;">Esta balanza todavía no tiene registros.</div>',
+            st.markdown('<div style="padding-top:8px;color:#6B7570;">Esta balanza todavía no tiene registros.</div>',
                         unsafe_allow_html=True)
+    t3, t4 = st.columns(2)
     with t3:
-        st.markdown('<div style="height:27px"></div>', unsafe_allow_html=True)
         if st.button("Nuevo registro", key="bal_nuevo", type="primary", use_container_width=True, icon=":material/add:"):
             _bal_nuevo_registro(equipo)
     with t4:
-        st.markdown('<div style="height:27px"></div>', unsafe_allow_html=True)
         slot_descarga = st.empty()
 
     if st.session_state.get("_bal_control_error"):
