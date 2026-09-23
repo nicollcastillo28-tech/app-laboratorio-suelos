@@ -1289,7 +1289,19 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
 # Los sitios de ESCRITURA sí cambiaron: mutan vía db.py y luego hacen
 # st.rerun(), que dispara una nueva llamada a _load_data() con el dato fresco.
 # ════════════════════════════════════════════════════════════════════
-def _load_data():
+def _load_data(solo_balanzas=False):
+    """Carga desde Supabase lo que las pantallas necesitan. `solo_balanzas`: la pantalla de Calibración
+    de Balanzas no usa proyectos/perforaciones/muestras/ensayos (la barra superior solo usa las
+    notificaciones), así que no se piden — en cada navegación eso son 4 consultas menos y se acorta el
+    rato en que Streamlit deja el contenido de la pantalla anterior atenuado."""
+    if solo_balanzas:
+        notifications = db.list_notifications(st.session_state.role) if st.session_state.role else []
+        for n in notifications:
+            n["role"] = n["target_role"]
+            n["muestra_id"] = n.get("muestra_id_unico")
+        st.session_state.notifications = notifications
+        st.session_state.balance_checks = db.list_balance_checks() if st.session_state.role == "jefe" else []
+        return
     projects = db.list_projects()
     proj_by_id = {p["id"]: p for p in projects}
     st.session_state.projects = projects
@@ -9179,7 +9191,7 @@ else:
             _clear_remember_user_cookie()
     if st.session_state.pop("_pending_history_push", False):
         _push_history_entry()
-    _load_data()
+    _load_data(solo_balanzas=st.session_state.screen == "balanzas")
     # Si algo de lo anterior refrescó el token (ver _tokens_rotated en db._refresh_if_needed
     # y en el restore de cookie de init_state), la cookie del navegador queda con un
     # refresh_token ya rotado/vencido si no se vuelve a guardar aquí con el vigente.
