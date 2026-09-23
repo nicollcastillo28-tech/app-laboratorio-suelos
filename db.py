@@ -462,7 +462,8 @@ def create_balance_check(codigo_equipo: str, semana_lunes: str, fecha_comprobaci
 
 
 def update_balance_check(check_id: str, data: dict = None, estado: str = None,
-                          fecha_comprobacion: str = None, fecha_proxima: str = None) -> dict:
+                          fecha_comprobacion: str = None, fecha_proxima: str = None,
+                          semana_lunes: str = None) -> dict:
     fields = {}
     if data is not None:
         fields["data"] = data
@@ -472,9 +473,22 @@ def update_balance_check(check_id: str, data: dict = None, estado: str = None,
         fields["fecha_comprobacion"] = fecha_comprobacion
     if fecha_proxima is not None:
         fields["fecha_proxima"] = fecha_proxima
+    if semana_lunes is not None:
+        fields["semana_lunes"] = semana_lunes
     res = get_client().table("balance_checks").update(fields).eq("id", check_id).execute()
     return res.data[0]
 
 
 def delete_balance_check(check_id: str):
     get_client().table("balance_checks").delete().eq("id", check_id).execute()
+
+
+def get_balance_control() -> list:
+    """Filas del tablero "Control semanal" (una sola lista compartida, no una por registro)."""
+    res = get_client().table("balance_control").select("rows").eq("id", 1).execute()
+    rows = res.data or []
+    return rows[0]["rows"] if rows else []
+
+
+def save_balance_control(rows: list):
+    get_client().table("balance_control").upsert({"id": 1, "rows": rows}).execute()
