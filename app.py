@@ -1035,6 +1035,242 @@ BITACORA_XLSX_MAX_ROWS = 14  # la plantilla trae 14 filas fijas (18 a 31)
 
 
 # ════════════════════════════════════════════════════════════════════
+# CALIBRACIÓN DE BALANZAS (Jefe de Laboratorio) — GDA-FLC-029 · GDA-LABI-002
+# Traducido 1:1 del mockup HTML que el Jefe de Laboratorio ya aprobó (mismos textos, mismas
+# reglas de aceptación) y verificado contra las fórmulas reales de la plantilla de referencia
+# VERIFICACION DE BALANZAS.xlsx (hoja "Balanzas", filas 11-31): Error = indicación − carga de
+# referencia; Resultado = "Pendiente" si falta el dato o el ±EMP, si no "Cumple"/"No cumple"
+# según |error| <= EMP. El resto de la plantilla (patrones, condiciones, decisión — filas 33+)
+# es un borrador sin fórmulas ("Aprobación y vigencia: pendientes", según su propia hoja
+# "Control semanal"), así que esas secciones siguen el diseño del HTML, no esa plantilla.
+BALANZAS = [
+    {"codigo": "GDA-E-010", "nombre": "Balanza Cap. 600g", "marca": "TRUMAX", "serie": "MIX-H", "resolucion": "0,01"},
+    {"codigo": "GDA-E-011", "nombre": "Balanza Cap. 3200 g Pionner", "marca": "OHAUS", "serie": "Px3202/E", "resolucion": "0,01"},
+    {"codigo": "GDA-E-012", "nombre": "Balanza Cap. 30 Kg", "marca": "TRUMAX", "serie": "FENIX", "resolucion": "1"},
+    {"codigo": "GDA-E-013", "nombre": "Balanza Cap. 3000 g", "marca": "TS", "serie": "T200", "resolucion": "0,1"},
+]
+BALANZAS_POR_CODIGO = {b["codigo"]: b for b in BALANZAS}
+BAL_EXC_FORMAS = ["Cuadrado", "Circular", "Triangular"]
+BAL_CONDICIONES_PREVIAS = [
+    ("cond_limpieza", "Limpieza del receptor y del entorno"),
+    ("cond_nivelacion", "Nivelación verificada (burbuja centrada)"),
+    ("cond_cero_tara", "Cero / tara estable antes de cargar"),
+    ("cond_estabilizacion", "Tiempo de estabilización cumplido"),
+    ("cond_masas_limpias", "Masas patrón limpias y en buen estado"),
+]
+BAL_DATOS_TECNICOS = [
+    ("dt_capacidad_maxima", "Capacidad máxima (g)"), ("dt_division_e", "División e (si aplica)"),
+    ("dt_clase", "Clase (si aplica)"), ("dt_certificado_balanza", "Certificado de la balanza"),
+]
+BAL_PASOS = ["Excentricidad", "Repetibilidad", "Exactitud", "Patrones y condiciones", "Decisión y firmas"]
+# Paleta propia del mockup (cálida/crema, distinta de la "Verdant Precision" del resto de la
+# app) — se mantiene igual porque así se pidió explícitamente; solo se usa dentro del
+# contenedor "bal-wizard"/"bal-dash" para no filtrarse al resto de la app.
+BAL_GREEN, BAL_GREEN_DARK, BAL_GREEN_DARKER = "#2F7A3E", "#155C36", "#2A4A2E"
+BAL_GREEN_BG, BAL_GREEN_BG2 = "#E8F1E6", "#F3F9F5"
+BAL_RED, BAL_RED_BG = "#9E2716", "#FBE3DF"
+BAL_AMBER, BAL_AMBER_DARK, BAL_AMBER_BG = "#C0703A", "#7A5200", "#FFF6D9"
+BAL_TEXT, BAL_MUTED, BAL_MUTED2 = "#1C1F22", "#5E6167", "#6B6860"
+BAL_BORDER, BAL_BORDER_LIGHT, BAL_BG, BAL_SURFACE = "#D9D5CA", "#E2DED4", "#FAF9F6", "#FFFFFF"
+
+
+def _bal_resultado(error, emp):
+    """Mismo criterio que la plantilla: "Pendiente" si falta la indicación o el ±EMP (o el EMP
+    es 0/negativo), si no "Cumple"/"No cumple" según |error| <= EMP."""
+    if error is None or emp is None or emp <= 0:
+        return "Pendiente"
+    return "Cumple" if abs(error) <= emp else "No cumple"
+
+
+def resultados_bal_excentricidad(data):
+    carga = to_float(data.get("exc_carga_usada"))
+    filas = []
+    for p in range(1, 6):
+        ind = to_float(data.get(f"exc_p{p}_indicacion"))
+        emp = to_float(data.get(f"exc_p{p}_emp"))
+        error = (ind - carga) if (ind is not None and carga is not None) else None
+        filas.append({"punto": p, "indicacion": ind, "emp": emp, "error": error,
+                       "resultado": _bal_resultado(error, emp)})
+    indicaciones = [f["indicacion"] for f in filas if f["indicacion"] is not None]
+    errores = [f["error"] for f in filas if f["error"] is not None]
+    error_maximo = max((abs(e) for e in errores), default=None)
+    diferencia_max = (max(indicaciones) - min(indicaciones)) if len(indicaciones) == 5 else None
+    return filas, error_maximo, diferencia_max
+
+
+def resultados_bal_repetibilidad(data):
+    carga = to_float(data.get("rep_carga_usada"))
+    limite_r = to_float(data.get("rep_limite_r"))
+    filas = []
+    for p in range(1, 6):
+        ind = to_float(data.get(f"rep_r{p}_indicacion"))
+        emp = to_float(data.get(f"rep_r{p}_emp"))
+        error = (ind - carga) if (ind is not None and carga is not None) else None
+        filas.append({"punto": p, "indicacion": ind, "emp": emp, "error": error,
+                       "resultado": _bal_resultado(error, emp)})
+    indicaciones = [f["indicacion"] for f in filas if f["indicacion"] is not None]
+    rango_r = (max(indicaciones) - min(indicaciones)) if len(indicaciones) == 5 else None
+    if rango_r is None or limite_r is None or limite_r <= 0:
+        resultado_r = "Pendiente"
+    else:
+        resultado_r = "Cumple" if rango_r <= limite_r else "No cumple"
+    return filas, rango_r, resultado_r
+
+
+def resultados_bal_exactitud(data):
+    filas = []
+    for p in range(1, 9):
+        aplica = data.get(f"exact_p{p}_aplica", True)
+        carga = to_float(data.get(f"exact_p{p}_carga"))
+        asc = to_float(data.get(f"exact_p{p}_asc"))
+        desc = to_float(data.get(f"exact_p{p}_desc"))
+        emp = to_float(data.get(f"exact_p{p}_emp"))
+        error_asc = (asc - carga) if (asc is not None and carga is not None) else None
+        error_desc = (desc - carga) if (desc is not None and carga is not None) else None
+        if not aplica:
+            resultado_asc = resultado_desc = "No aplica"
+        else:
+            resultado_asc, resultado_desc = _bal_resultado(error_asc, emp), _bal_resultado(error_desc, emp)
+        filas.append({"punto": p, "aplica": aplica, "carga": carga, "asc": asc, "desc": desc, "emp": emp,
+                       "error_asc": error_asc, "error_desc": error_desc,
+                       "resultado_asc": resultado_asc, "resultado_desc": resultado_desc})
+    return filas
+
+
+def alertas_balanza(data):
+    """Lista de pendientes/alertas — mismo criterio que "No liberar el equipo con datos o
+    criterios pendientes" de la plantilla."""
+    alertas = []
+    exc_filas, _, _ = resultados_bal_excentricidad(data)
+    faltan_exc = sum(1 for f in exc_filas if f["indicacion"] is None or f["emp"] is None)
+    if faltan_exc:
+        alertas.append(f"Excentricidad: {faltan_exc} punto(s) sin indicación o EMP")
+    if not str(data.get("rep_carga_usada") or "").strip():
+        alertas.append("Repetibilidad: definir carga usada")
+    if not str(data.get("rep_limite_r") or "").strip():
+        alertas.append("Repetibilidad: definir límite aprobado de R")
+    rep_filas, _, _ = resultados_bal_repetibilidad(data)
+    faltan_rep = sum(1 for f in rep_filas if f["indicacion"] is None)
+    if faltan_rep:
+        alertas.append(f"Repetibilidad: {faltan_rep} lectura(s) pendiente(s)")
+    exact_filas = resultados_bal_exactitud(data)
+    incompletos_exact = sum(1 for f in exact_filas
+                             if f["aplica"] and (f["carga"] is None or f["asc"] is None or f["emp"] is None))
+    if incompletos_exact:
+        alertas.append(f"Exactitud: {incompletos_exact} punto(s) incompletos o marque «No aplica»")
+    if not data.get("patrones"):
+        alertas.append("Registrar al menos un instrumento patrón")
+    faltan_cond = sum(1 for key, _ in BAL_CONDICIONES_PREVIAS if not data.get(key))
+    if faltan_cond:
+        alertas.append(f"Condiciones previas: {faltan_cond} sin confirmar")
+    if not str(data.get("fuente_criterios") or "").strip():
+        alertas.append("Fuente y aprobación de criterios sin registrar")
+    if not (data.get("elaboro_firmo") and data.get("reviso_firmo")):
+        alertas.append("Firmas de elaboró y revisó pendientes")
+    return alertas
+
+
+def decision_sugerida_balanza(data):
+    """"apto"/"no-apto"/None(pendiente) según los resultados de las 3 pruebas: cualquier
+    "No cumple" → no apto; todo "Cumple" sin pendientes → apto; si falta algo, pendiente."""
+    resultados = []
+    exc_filas, _, _ = resultados_bal_excentricidad(data)
+    resultados += [f["resultado"] for f in exc_filas]
+    rep_filas, _, resultado_r = resultados_bal_repetibilidad(data)
+    resultados += [f["resultado"] for f in rep_filas] + [resultado_r]
+    for f in resultados_bal_exactitud(data):
+        if f["aplica"]:
+            resultados += [f["resultado_asc"], f["resultado_desc"]]
+    if any(r == "No cumple" for r in resultados):
+        return "no-apto"
+    if resultados and all(r == "Cumple" for r in resultados):
+        return "apto"
+    return None
+
+
+def _bal_lunes(d):
+    """Lunes de la semana ISO de `d` (date)."""
+    return d - timedelta(days=d.weekday())
+
+
+def control_semanal_balanzas(checks, semanas=8):
+    """Reconstruye el tablero "Control semanal" (A tiempo / Retraso · TNC / Pendientes) cruzando
+    las últimas `semanas` semanas de cada balanza contra los registros ya guardados."""
+    hoy = date.today()
+    lunes_actual = _bal_lunes(hoy)
+    por_equipo_semana = {(c["codigo_equipo"], c["semana_lunes"]): c for c in checks}
+    filas = []
+    for i in range(semanas - 1, -1, -1):
+        semana = lunes_actual - timedelta(weeks=i)
+        for b in BALANZAS:
+            c = por_equipo_semana.get((b["codigo"], str(semana)))
+            if c and c.get("fecha_comprobacion"):
+                estado = "A tiempo"
+            elif semana + timedelta(days=6) < hoy:
+                estado = "Retraso · TNC"
+            else:
+                estado = "Pendiente"
+            filas.append({"semana": semana, "codigo": b["codigo"], "nombre": b["nombre"], "check": c, "estado": estado})
+    return filas
+
+
+def _bal_css():
+    """Paleta cálida propia del mockup (IBM Plex Mono en los campos numéricos, verde #2F7A3E),
+    aplicada solo dentro de .st-key-bal-app — no toca el verde #007A33 del resto de la app."""
+    st.markdown(f"""<style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+    .st-key-bal-app div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] {{
+        border: 1px solid {BAL_BORDER_LIGHT} !important; background: {BAL_SURFACE} !important;
+        box-shadow: none !important;
+    }}
+    .st-key-bal-app [data-testid="stTextInput"] input, .st-key-bal-app [data-testid="stNumberInput"] input,
+    .st-key-bal-app [data-testid="stDateInput"] input, .st-key-bal-app [data-testid="stTextArea"] textarea {{
+        font-family: 'IBM Plex Mono', monospace !important; border: 1px solid {BAL_BORDER} !important;
+        border-radius: 8px !important; color: {BAL_TEXT} !important; background: {BAL_SURFACE} !important;
+    }}
+    .st-key-bal-app label p {{ color: {BAL_MUTED} !important; font-size: 12px !important; font-weight: 600 !important; }}
+    .bal-header-row {{ display:flex; align-items:center; gap:14px; margin: 4px 0 18px 0; }}
+    .bal-icon-sq {{ width:46px; height:46px; border-radius:12px; background:{BAL_GREEN}; display:flex;
+        align-items:center; justify-content:center; color:#fff; flex-shrink:0; }}
+    .bal-title {{ font-size:22px; font-weight:700; color:{BAL_TEXT}; margin:0; }}
+    .bal-subtitle {{ font-size:13px; color:{BAL_MUTED}; margin:0; }}
+    .bal-card-header {{ display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }}
+    .bal-card-header-title {{ display:flex; align-items:center; gap:9px; font-weight:700; color:{BAL_GREEN_DARKER}; font-size:17px; }}
+    .bal-label {{ font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:{BAL_MUTED}; font-weight:600; }}
+    .bal-value {{ font-family:'IBM Plex Mono',monospace; font-size:14px; color:{BAL_TEXT}; padding-top:2px; }}
+    .bal-badge {{ display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:600;
+        padding:3px 10px; border-radius:20px; white-space:nowrap; }}
+    .bal-badge .bal-dot {{ width:6px; height:6px; border-radius:50%; background:currentColor; display:inline-block; }}
+    .bal-badge-pendiente {{ background:{BAL_AMBER_BG}; color:{BAL_AMBER_DARK}; }}
+    .bal-badge-cumple, .bal-badge-apto, .bal-badge-a-tiempo {{ background:{BAL_GREEN_BG}; color:{BAL_GREEN_DARK}; }}
+    .bal-badge-no-cumple, .bal-badge-no-apto, .bal-badge-retraso {{ background:{BAL_RED_BG}; color:{BAL_RED}; }}
+    .bal-badge-no-aplica {{ background:{BAL_BG}; color:{BAL_MUTED2}; }}
+    .bal-alert-item {{ font-size:13px; color:{BAL_TEXT}; padding:4px 0; border-bottom:1px solid {BAL_BG}; }}
+    .bal-alert-item:last-child {{ border-bottom:none; }}
+    .bal-alert-dot {{ color:{BAL_AMBER}; margin-right:6px; }}
+    .bal-table {{ width:100%; border-collapse:collapse; font-size:13px; }}
+    .bal-table th {{ text-align:left; padding:8px 10px; font-size:11px; letter-spacing:.03em; text-transform:uppercase;
+        color:{BAL_MUTED}; border-bottom:1px solid {BAL_BORDER}; }}
+    .bal-table td {{ padding:8px 10px; border-bottom:1px solid {BAL_BG}; color:{BAL_TEXT}; font-family:'IBM Plex Mono',monospace; }}
+    .st-key-bal-app .stButton button[kind="secondary"] {{ border-color:{BAL_BORDER} !important; color:{BAL_TEXT} !important; }}
+    .st-key-bal-app .stButton button[kind="primary"] {{ background:{BAL_GREEN} !important; border-color:{BAL_GREEN} !important; }}
+    .st-key-bal-app .stButton button[kind="primary"]:hover {{ background:{BAL_GREEN_DARK} !important; }}
+    </style>""", unsafe_allow_html=True)
+
+
+def bal_badge_html(texto):
+    slug = {"Pendiente": "pendiente", "Cumple": "cumple", "No cumple": "no-cumple", "No aplica": "no-aplica",
+            "apto": "apto", "no-apto": "no-apto", "A tiempo": "a-tiempo", "Retraso · TNC": "retraso"}.get(texto, "pendiente")
+    etiqueta = {"apto": "Apto", "no-apto": "No apto"}.get(texto, texto)
+    return f'<span class="bal-badge bal-badge-{slug}"><span class="bal-dot"></span>{html.escape(str(etiqueta))}</span>'
+
+
+def bal_card_header_html(icon_name, title, extra_html=""):
+    return (f'<div class="bal-card-header"><div class="bal-card-header-title">'
+            f'{icon(icon_name, size=20, color=BAL_GREEN_DARKER)} {html.escape(title)}</div>{extra_html}</div>')
+
+
+# ════════════════════════════════════════════════════════════════════
 # IMPORTAR BITÁCORA DE ORDEN DESDE EXCEL (plantilla oficial GDA-FL-003 ya
 # diligenciada, ej. por el cliente) — lee el mismo mapeo de celdas de arriba,
 # en sentido inverso a generar_excel_bitacora_orden().
@@ -1222,6 +1458,10 @@ def _load_data():
         n["muestra_id"] = n.get("muestra_id_unico")
     st.session_state.notifications = notifications
 
+    # Solo el Jefe de Laboratorio usa Calibración de Balanzas (RLS también lo exige) — no pedirle
+    # esto a Supabase para los otros roles, que igual no podrían leerlo.
+    st.session_state.balance_checks = db.list_balance_checks() if st.session_state.role == "jefe" else []
+
 
 # ════════════════════════════════════════════════════════════════════
 # ESTADO INICIAL
@@ -1334,6 +1574,7 @@ def init_state():
     st.session_state.muestras = {}
     st.session_state.assays = []
     st.session_state.notifications = []
+    st.session_state.balance_checks = []
 
     st.session_state.nav_stack = []
     st.session_state.bitacora_draft = {}
@@ -1345,6 +1586,8 @@ def init_state():
     st.session_state.selected_assay_id = None
     st.session_state.selected_assay_type = None
     st.session_state.read_only_view = False
+    st.session_state.selected_balance_check_id = None
+    st.session_state.selected_balance_equipo = ""
 
     # Restaura la posición de navegación desde la URL tras un recargo o reconexión (ver
     # _sync_query_params) — la persona vuelve a la misma pantalla en vez de a Inicio.
@@ -1940,6 +2183,14 @@ def render_home():
                              unsafe_allow_html=True)
                 if st.button("Explorar archivo →", key="cta_done", use_container_width=True):
                     navigate("projects-done")
+            st.markdown("<br>", unsafe_allow_html=True)
+            c4, _c5 = st.columns([1, 2])
+            with c4:
+                st.markdown(f'<div class="bento-light"><div class="bento-icon">{icon("balance")}</div>'
+                             '<div><h3>Calibración de balanzas</h3><p>Comprobación intermedia semanal — GDA-FLC-029.</p></div></div>',
+                             unsafe_allow_html=True)
+                if st.button("Abrir →", key="cta_balanzas", use_container_width=True):
+                    navigate("balanzas")
         elif es_ingeniero:
             pendientes_ing = _ensayos_pendientes_dt()
             c1, c2, c3 = st.columns(3)
@@ -2182,6 +2433,714 @@ def _resumen_tecnico_perforaciones(codigo):
             linea += f" · {', '.join(ensayos)}"
         lineas.append(linea)
     return lineas
+
+
+def _bal_estado_texto(check):
+    return {"apto": "apto", "no-apto": "no-apto"}.get(check.get("estado"), "Pendiente")
+
+
+def _bal_ultimo_check(codigo):
+    """El registro más reciente (por semana) de esta balanza, o None."""
+    checks = [c for c in st.session_state.balance_checks if c["codigo_equipo"] == codigo]
+    return max(checks, key=lambda c: c["semana_lunes"]) if checks else None
+
+
+def render_balanzas():
+    require_role("jefe")
+    if st.button("← Atrás"):
+        go_back(fallback="home")
+
+    with st.container(key="bal-app"):
+        _bal_css()
+        st.markdown(f'<div class="bal-header-row"><div class="bal-icon-sq">{icon("balance", size=24)}</div>'
+                    f'<div><p class="bal-title">Calibración de Balanzas</p>'
+                    f'<p class="bal-subtitle">Laboratorio · Procedimiento GDA-LABI-002 · Control semanal GDA-FLC-029</p></div></div>',
+                    unsafe_allow_html=True)
+
+        filas_control = control_semanal_balanzas(st.session_state.balance_checks)
+        conteo = {"A tiempo": 0, "Retraso · TNC": 0, "Pendiente": 0}
+        for f in filas_control:
+            conteo[f["estado"]] += 1
+
+        with st.container(border=True):
+            st.markdown(bal_card_header_html("event_available", "Control semanal de balanzas"), unsafe_allow_html=True)
+            st.caption("Programar todas las balanzas previstas para uso y verificarlas el primer día operativo de "
+                       "cada semana antes de los ensayos. Sin actividad: justificar y registrar antes del siguiente "
+                       "uso. Retraso u omisión: tratar mediante GDA-FC-023. Últimas 8 semanas.")
+            s1, s2, s3 = st.columns(3)
+            s1.metric("A tiempo", conteo["A tiempo"])
+            s2.metric("Retraso · TNC", conteo["Retraso · TNC"])
+            s3.metric("Pendientes", conteo["Pendiente"])
+            filas_html = ""
+            for f in reversed(filas_control):
+                c = f["check"]
+                fecha_txt = f["semana"].strftime("%d/%m/%Y")
+                realizada_txt = c["fecha_comprobacion"] if (c and c.get("fecha_comprobacion")) else "—"
+                estado_html = bal_badge_html(f["estado"])
+                filas_html += (f'<tr><td>{fecha_txt}</td><td>{html.escape(f["codigo"])}</td>'
+                               f'<td>{html.escape(f["nombre"])}</td><td>{html.escape(realizada_txt)}</td>'
+                               f'<td>{estado_html}</td></tr>')
+            st.markdown(f'<table class="bal-table"><thead><tr><th>Semana del lunes</th><th>Código</th>'
+                        f'<th>Balanza</th><th>Fecha realizada</th><th>Estado</th></tr></thead>'
+                        f'<tbody>{filas_html}</tbody></table>', unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Balanzas</div>', unsafe_allow_html=True)
+        hoy = date.today()
+        semana_actual = _bal_lunes(hoy)
+        for b in BALANZAS:
+            with st.container(border=True):
+                st.markdown(bal_card_header_html("balance", f'{b["nombre"]}',
+                            f'<span class="bal-label">{html.escape(b["codigo"])}</span>'), unsafe_allow_html=True)
+                m1, m2, m3 = st.columns(3)
+                m1.markdown(f'<div class="bal-label">Marca</div><div class="bal-value">{html.escape(b["marca"])}</div>', unsafe_allow_html=True)
+                m2.markdown(f'<div class="bal-label">Serie</div><div class="bal-value">{html.escape(b["serie"])}</div>', unsafe_allow_html=True)
+                m3.markdown(f'<div class="bal-label">Resolución d (g)</div><div class="bal-value">{html.escape(b["resolucion"])}</div>', unsafe_allow_html=True)
+
+                check_semana_actual = next((c for c in st.session_state.balance_checks
+                                             if c["codigo_equipo"] == b["codigo"] and c["semana_lunes"] == str(semana_actual)), None)
+                ultimo = _bal_ultimo_check(b["codigo"])
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    if check_semana_actual:
+                        st.markdown(f'<div class="bal-label" style="margin-top:10px;">Registro de esta semana</div>'
+                                    f'{bal_badge_html(_bal_estado_texto(check_semana_actual))}', unsafe_allow_html=True)
+                        if st.button("Continuar registro →", key=f"bal_continuar_{b['codigo']}", use_container_width=True):
+                            st.session_state.selected_balance_check_id = check_semana_actual["id"]
+                            navigate("balanzas-registro")
+                    else:
+                        st.markdown('<div class="bal-label" style="margin-top:10px;">Esta semana</div>'
+                                    '<div class="bal-value">Sin registrar</div>', unsafe_allow_html=True)
+                        if st.button("Nuevo registro →", key=f"bal_nuevo_{b['codigo']}", type="primary", use_container_width=True):
+                            data0 = {"codigo_interno": b["codigo"], "nombre_equipo": b["nombre"],
+                                     "marca": b["marca"], "serie": b["serie"], "resolucion_d": b["resolucion"]}
+                            nuevo = db.create_balance_check(b["codigo"], str(semana_actual),
+                                                             fecha_comprobacion=str(hoy),
+                                                             fecha_proxima=str(hoy + timedelta(days=8)), data=data0)
+                            st.session_state.balance_checks.append(nuevo)
+                            st.session_state.selected_balance_check_id = nuevo["id"]
+                            navigate("balanzas-registro")
+                with col_b:
+                    if ultimo:
+                        st.markdown(f'<div class="bal-label" style="margin-top:10px;">Último registro</div>'
+                                    f'<div class="bal-value">Semana del {ultimo["semana_lunes"]}</div>'
+                                    f'{bal_badge_html(_bal_estado_texto(ultimo))}', unsafe_allow_html=True)
+                    else:
+                        st.markdown('<div class="bal-label" style="margin-top:10px;">Histórico</div>'
+                                    '<div class="bal-value">Sin registros todavía</div>', unsafe_allow_html=True)
+
+                historial = sorted([c for c in st.session_state.balance_checks if c["codigo_equipo"] == b["codigo"]],
+                                    key=lambda c: c["semana_lunes"], reverse=True)
+                if historial:
+                    with st.expander(f"Historial completo ({len(historial)} registro(s))", icon=":material/history:"):
+                        for c in historial:
+                            hc1, hc2, hc3 = st.columns([2, 2, 1])
+                            hc1.markdown(f'<div class="bal-value">Semana del {c["semana_lunes"]}</div>', unsafe_allow_html=True)
+                            hc2.markdown(bal_badge_html(_bal_estado_texto(c)), unsafe_allow_html=True)
+                            with hc3:
+                                if st.button("Abrir", key=f"bal_abrir_{c['id']}", use_container_width=True):
+                                    st.session_state.selected_balance_check_id = c["id"]
+                                    navigate("balanzas-registro")
+
+
+def _bal_campo(data, key, label, suffix, placeholder="0.00"):
+    row = st.columns([2.2, 1])
+    row[0].markdown(f'<div class="bal-label" style="padding-top:10px;">{label}</div>', unsafe_allow_html=True)
+    data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{suffix}",
+                                   label_visibility="collapsed", placeholder=placeholder)
+
+
+def _bal_paso_excentricidad(data, suffix):
+    st.markdown(bal_card_header_html("blur_circular", "Excentricidad", '<span class="bal-label">Paso 1 de 5</span>'),
+                unsafe_allow_html=True)
+    st.caption("Ubique la misma carga en cada posición del receptor, en orden 1 → 5, y registre la indicación.")
+    actual = data.get("exc_forma", "Cuadrado")
+    data["exc_forma"] = st.radio("Forma del receptor", BAL_EXC_FORMAS, horizontal=True,
+                                  index=BAL_EXC_FORMAS.index(actual) if actual in BAL_EXC_FORMAS else 0,
+                                  key=f"exc_forma_{suffix}")
+    c1, c2 = st.columns(2)
+    with c1:
+        _bal_campo(data, "exc_carga_usada", "Carga usada (g)", suffix, placeholder="100")
+    with c2:
+        row = st.columns([2, 1, 1])
+        row[0].markdown('<div class="bal-label" style="padding-top:10px;">± EMP común (g)</div>', unsafe_allow_html=True)
+        emp_comun = row[1].text_input("± EMP común", value=data.get("exc_emp_comun", ""), key=f"exc_emp_comun_{suffix}",
+                                       label_visibility="collapsed", placeholder="0.05")
+        data["exc_emp_comun"] = emp_comun
+        if row[2].button("Aplicar", key=f"exc_aplicar_{suffix}", use_container_width=True) and emp_comun:
+            for p in range(1, 6):
+                data[f"exc_p{p}_emp"] = emp_comun
+                st.session_state[f"exc_p{p}_emp_{suffix}"] = emp_comun
+            st.rerun()
+
+    head = st.columns([0.6, 1.4, 1.2, 1.2, 1.4])
+    for c, t in zip(head, ["PUNTO", "INDICACIÓN (G)", "ERROR (G)", "± EMP (G)", "RESULTADO"]):
+        c.markdown(f'<div class="bal-label">{t}</div>', unsafe_allow_html=True)
+    filas, error_maximo, diferencia_max = resultados_bal_excentricidad(data)
+    for f in filas:
+        p = f["punto"]
+        row = st.columns([0.6, 1.4, 1.2, 1.2, 1.4])
+        row[0].markdown(f'<div class="bal-value" style="padding-top:8px;">{p}</div>', unsafe_allow_html=True)
+        data[f"exc_p{p}_indicacion"] = row[1].text_input(f"Indicación punto {p}", value=data.get(f"exc_p{p}_indicacion", ""),
+                                                          key=f"exc_p{p}_indicacion_{suffix}", label_visibility="collapsed",
+                                                          placeholder="0,00")
+        row[2].markdown(f'<div class="bal-value" style="padding-top:8px;">{fmt_num(f["error"], 3) if f["error"] is not None else "—"}</div>',
+                         unsafe_allow_html=True)
+        data[f"exc_p{p}_emp"] = row[3].text_input(f"EMP punto {p}", value=data.get(f"exc_p{p}_emp", ""),
+                                                   key=f"exc_p{p}_emp_{suffix}", label_visibility="collapsed", placeholder="0,00")
+        row[4].markdown(f'<div style="padding-top:6px;">{bal_badge_html(f["resultado"])}</div>', unsafe_allow_html=True)
+    st.caption(f'Error máximo: {fmt_num(error_maximo, 3) if error_maximo is not None else "—"}   ·   '
+               f'Diferencia máx. entre posiciones: {fmt_num(diferencia_max, 3) if diferencia_max is not None else "—"}')
+
+
+def _bal_paso_repetibilidad(data, suffix):
+    st.markdown(bal_card_header_html("repeat", "Repetibilidad", '<span class="bal-label">Paso 2 de 5</span>'),
+                unsafe_allow_html=True)
+    st.caption("Cinco cargas sucesivas de la misma masa en el centro del receptor, volviendo a cero entre lecturas.")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        _bal_campo(data, "rep_carga_usada", "Carga usada (g)", suffix, placeholder="100")
+    with c2:
+        row = st.columns([2, 1, 1])
+        row[0].markdown('<div class="bal-label" style="padding-top:10px;">± EMP común (g)</div>', unsafe_allow_html=True)
+        emp_comun = row[1].text_input("± EMP común rep", value=data.get("rep_emp_comun", ""), key=f"rep_emp_comun_{suffix}",
+                                       label_visibility="collapsed", placeholder="0,05")
+        data["rep_emp_comun"] = emp_comun
+        if row[2].button("Aplicar", key=f"rep_aplicar_{suffix}", use_container_width=True) and emp_comun:
+            for p in range(1, 6):
+                data[f"rep_r{p}_emp"] = emp_comun
+                st.session_state[f"rep_r{p}_emp_{suffix}"] = emp_comun
+            st.rerun()
+    with c3:
+        st.markdown('<div class="bal-label" style="padding-top:10px;">Límite aprobado de R (g) — Jefe de Laboratorio</div>',
+                    unsafe_allow_html=True)
+        data["rep_limite_r"] = st.text_input("Límite aprobado de R", value=data.get("rep_limite_r", ""),
+                                              key=f"rep_limite_r_{suffix}", label_visibility="collapsed", placeholder="0,06")
+
+    head = st.columns([0.6, 1.4, 1.2, 1.2, 1.4])
+    for c, t in zip(head, ["REP.", "INDICACIÓN (G)", "ERROR (G)", "± EMP (G)", "RESULTADO"]):
+        c.markdown(f'<div class="bal-label">{t}</div>', unsafe_allow_html=True)
+    filas, rango_r, resultado_r = resultados_bal_repetibilidad(data)
+    for f in filas:
+        p = f["punto"]
+        row = st.columns([0.6, 1.4, 1.2, 1.2, 1.4])
+        row[0].markdown(f'<div class="bal-value" style="padding-top:8px;">#{p}</div>', unsafe_allow_html=True)
+        data[f"rep_r{p}_indicacion"] = row[1].text_input(f"Indicación rep {p}", value=data.get(f"rep_r{p}_indicacion", ""),
+                                                          key=f"rep_r{p}_indicacion_{suffix}", label_visibility="collapsed",
+                                                          placeholder="0,00")
+        row[2].markdown(f'<div class="bal-value" style="padding-top:8px;">{fmt_num(f["error"], 3) if f["error"] is not None else "—"}</div>',
+                         unsafe_allow_html=True)
+        data[f"rep_r{p}_emp"] = row[3].text_input(f"EMP rep {p}", value=data.get(f"rep_r{p}_emp", ""),
+                                                   key=f"rep_r{p}_emp_{suffix}", label_visibility="collapsed", placeholder="0,00")
+        row[4].markdown(f'<div style="padding-top:6px;">{bal_badge_html(f["resultado"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="bal-label" style="margin-top:6px;">Rango R = máx − mín</div>'
+                f'<div class="bal-value" style="font-size:18px;">{fmt_num(rango_r, 3) if rango_r is not None else "—"} g'
+                f'&nbsp;&nbsp;{bal_badge_html(resultado_r)}</div>', unsafe_allow_html=True)
+
+
+def _bal_paso_exactitud(data, suffix):
+    st.markdown(bal_card_header_html("show_chart", "Exactitud", '<span class="bal-label">Paso 3 de 5</span>'),
+                unsafe_allow_html=True)
+    st.caption("Defina antes de medir los puntos que cubren el intervalo de uso. Marque «No aplica» y justifique; "
+               "no omita fallas.")
+    row = st.columns([2, 1, 1])
+    row[0].markdown('<div class="bal-label" style="padding-top:10px;">± EMP común (g)</div>', unsafe_allow_html=True)
+    emp_comun = row[1].text_input("± EMP común exact", value=data.get("exact_emp_comun", ""), key=f"exact_emp_comun_{suffix}",
+                                   label_visibility="collapsed", placeholder="0,05")
+    data["exact_emp_comun"] = emp_comun
+    if row[2].button("Aplicar a los que aplican", key=f"exact_aplicar_{suffix}", use_container_width=True) and emp_comun:
+        for p in range(1, 9):
+            if data.get(f"exact_p{p}_aplica", True):
+                data[f"exact_p{p}_emp"] = emp_comun
+                st.session_state[f"exact_p{p}_emp_{suffix}"] = emp_comun
+        st.rerun()
+
+    head = st.columns([0.5, 0.8, 1, 1, 1, 1, 1.6])
+    for c, t in zip(head, ["#", "APLICA", "CARGA (G)", "ASCENDENTE", "DESCENDENTE", "± EMP", "RESULTADO"]):
+        c.markdown(f'<div class="bal-label">{t}</div>', unsafe_allow_html=True)
+    for f in resultados_bal_exactitud(data):
+        p = f["punto"]
+        row = st.columns([0.5, 0.8, 1, 1, 1, 1, 1.6])
+        row[0].markdown(f'<div class="bal-value" style="padding-top:8px;">{p}</div>', unsafe_allow_html=True)
+        aplica = row[1].checkbox("Aplica", value=data.get(f"exact_p{p}_aplica", True), key=f"exact_p{p}_aplica_{suffix}",
+                                  label_visibility="collapsed")
+        data[f"exact_p{p}_aplica"] = aplica
+        data[f"exact_p{p}_carga"] = row[2].text_input(f"Carga {p}", value=data.get(f"exact_p{p}_carga", ""),
+                                                       key=f"exact_p{p}_carga_{suffix}", label_visibility="collapsed",
+                                                       placeholder="0", disabled=not aplica)
+        data[f"exact_p{p}_asc"] = row[3].text_input(f"Ascendente {p}", value=data.get(f"exact_p{p}_asc", ""),
+                                                     key=f"exact_p{p}_asc_{suffix}", label_visibility="collapsed",
+                                                     placeholder="0,00", disabled=not aplica)
+        data[f"exact_p{p}_desc"] = row[4].text_input(f"Descendente {p}", value=data.get(f"exact_p{p}_desc", ""),
+                                                      key=f"exact_p{p}_desc_{suffix}", label_visibility="collapsed",
+                                                      placeholder="0,00", disabled=not aplica)
+        data[f"exact_p{p}_emp"] = row[5].text_input(f"EMP {p}", value=data.get(f"exact_p{p}_emp", ""),
+                                                     key=f"exact_p{p}_emp_{suffix}", label_visibility="collapsed",
+                                                     placeholder="0,00", disabled=not aplica)
+        row[6].markdown(f'<div style="padding-top:6px;">{bal_badge_html(f["resultado_asc"])} {bal_badge_html(f["resultado_desc"])}'
+                         f'</div>', unsafe_allow_html=True)
+
+
+BAL_PATRONES_MAX = 4
+
+
+def _bal_paso_patrones_condiciones(data, suffix):
+    st.markdown(bal_card_header_html("straighten", "Patrones y condiciones", '<span class="bal-label">Paso 4 de 5</span>'),
+                unsafe_allow_html=True)
+    st.caption("Masas patrón usadas, su vigencia a la fecha de comprobación, y condiciones previas al ensayo.")
+    patrones = data.get("patrones") or []
+    st.markdown('<div class="bal-label">Instrumentos patrón para la medición</div>', unsafe_allow_html=True)
+    head = st.columns([1.2, 1.6, 1.2, 1.2, 1.4])
+    for c, t in zip(head, ["CÓDIGO", "INSTRUMENTO PATRÓN", "FECHA CALIBRACIÓN", "PRÓXIMA CALIBRACIÓN", "NO. CERTIFICADO"]):
+        c.markdown(f'<div class="bal-label">{t}</div>', unsafe_allow_html=True)
+    nuevos_patrones = []
+    for i in range(max(len(patrones), 1)):
+        p = patrones[i] if i < len(patrones) else {}
+        row = st.columns([1.2, 1.6, 1.2, 1.2, 1.4])
+        codigo = row[0].text_input(f"Código patrón {i}", value=p.get("codigo", ""), key=f"pat_codigo_{i}_{suffix}",
+                                    label_visibility="collapsed", placeholder="GDA-E-XXX")
+        instrumento = row[1].text_input(f"Instrumento patrón {i}", value=p.get("instrumento", ""), key=f"pat_instr_{i}_{suffix}",
+                                         label_visibility="collapsed", placeholder="Masa patrón 100 g")
+        fecha_cal = row[2].text_input(f"Fecha calibración {i}", value=p.get("fecha_calibracion", ""), key=f"pat_fc_{i}_{suffix}",
+                                       label_visibility="collapsed", placeholder="dd/mm/aaaa")
+        fecha_prox = row[3].text_input(f"Próxima calibración {i}", value=p.get("proxima_calibracion", ""), key=f"pat_fp_{i}_{suffix}",
+                                        label_visibility="collapsed", placeholder="dd/mm/aaaa")
+        no_cert = row[4].text_input(f"No. certificado {i}", value=p.get("no_certificado", ""), key=f"pat_cert_{i}_{suffix}",
+                                     label_visibility="collapsed", placeholder="—")
+        if any((codigo, instrumento, fecha_cal, fecha_prox, no_cert)):
+            nuevos_patrones.append({"codigo": codigo, "instrumento": instrumento, "fecha_calibracion": fecha_cal,
+                                     "proxima_calibracion": fecha_prox, "no_certificado": no_cert})
+    data["patrones"] = nuevos_patrones
+    if len(nuevos_patrones) < BAL_PATRONES_MAX and st.button("+ Agregar patrón", key=f"pat_agregar_{suffix}"):
+        data["patrones"] = nuevos_patrones + [{}]
+        st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown('<div class="bal-label">Condiciones previas</div>', unsafe_allow_html=True)
+        for key, label in BAL_CONDICIONES_PREVIAS:
+            data[key] = st.checkbox(label, value=bool(data.get(key)), key=f"{key}_{suffix}")
+        t1, t2 = st.columns(2)
+        data["cond_temperatura"] = t1.text_input("Temperatura (°C)", value=data.get("cond_temperatura", ""),
+                                                  key=f"cond_temperatura_{suffix}", placeholder="22,0")
+        data["cond_humedad"] = t2.text_input("Humedad relativa (%)", value=data.get("cond_humedad", ""),
+                                              key=f"cond_humedad_{suffix}", placeholder="55")
+    with c2:
+        st.markdown('<div class="bal-label">Datos técnicos del equipo</div>', unsafe_allow_html=True)
+        for key, label in BAL_DATOS_TECNICOS:
+            data[key] = st.text_input(label, value=data.get(key, ""), key=f"{key}_{suffix}")
+
+
+def _bal_paso_decision(data, suffix):
+    st.markdown(bal_card_header_html("fact_check", "Decisión y firmas", '<span class="bal-label">Paso 5 de 5</span>'),
+                unsafe_allow_html=True)
+    st.caption("No liberar el equipo con datos o criterios pendientes.")
+    sugerida = decision_sugerida_balanza(data)
+    manual = data.get("decision")
+    with st.container(border=True):
+        st.markdown('<div class="bal-label">Resultado sugerido por los datos</div>', unsafe_allow_html=True)
+        st.markdown(bal_badge_html(sugerida if sugerida else "Pendiente"), unsafe_allow_html=True)
+        if sugerida is None:
+            st.caption("Hay datos o criterios pendientes. No liberar el equipo.")
+        b1, b2 = st.columns(2)
+        if b1.button("Declarar apto", key=f"bal_declarar_apto_{suffix}", use_container_width=True,
+                     type="primary" if manual == "apto" else "secondary"):
+            data["decision"] = "apto"
+            st.rerun()
+        if b2.button("Declarar no apto", key=f"bal_declarar_noapto_{suffix}", use_container_width=True,
+                     type="primary" if manual == "no-apto" else "secondary"):
+            data["decision"] = "no-apto"
+            st.rerun()
+
+    c1, c2 = st.columns(2)
+    with c1:
+        data["fuente_criterios"] = st.text_area(
+            "Fuente y aprobación de criterios", value=data.get("fuente_criterios", ""), key=f"fuente_criterios_{suffix}",
+            placeholder="Cargas, EMP por punto y límite de R definidos por Jefe de Laboratorio: sustento, "
+                        "incertidumbre y aprobación.", height=110)
+    with c2:
+        data["observaciones"] = st.text_area("Observaciones", value=data.get("observaciones", ""),
+                                              key=f"observaciones_{suffix}", height=110)
+    data["tnc_numero"] = st.text_input("Si falla o se omite: TNC relacionado GDA-FC-023 No.",
+                                        value=data.get("tnc_numero", ""), key=f"tnc_numero_{suffix}", placeholder="—")
+
+    f1, f2 = st.columns(2)
+    for prefix, titulo, col in (("elaboro", "Elaboró", f1), ("reviso", "Revisó", f2)):
+        with col:
+            with st.container(border=True):
+                st.markdown(f'<div class="bal-label">{titulo}</div>', unsafe_allow_html=True)
+                data[f"{prefix}_nombre"] = st.text_input("Nombre", value=data.get(f"{prefix}_nombre", ""),
+                                                          key=f"{prefix}_nombre_{suffix}", placeholder="Nombre")
+                data[f"{prefix}_cargo"] = st.text_input("Cargo", value=data.get(f"{prefix}_cargo", ""),
+                                                         key=f"{prefix}_cargo_{suffix}", placeholder="Cargo")
+                data[f"{prefix}_firmo"] = st.checkbox("Firmó este registro", value=bool(data.get(f"{prefix}_firmo")),
+                                                       key=f"{prefix}_firmo_{suffix}")
+
+
+def _bal_panel_estado(data, check):
+    sugerida = decision_sugerida_balanza(data)
+    manual = data.get("decision")
+    estado_final = manual or sugerida
+    with st.container(border=True):
+        st.markdown('<div class="bal-label">Estado del equipo</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:22px;font-weight:700;margin:4px 0 8px 0;">'
+                    f'{ {"apto": "Apto", "no-apto": "No apto"}.get(estado_final, "Pendiente") }</div>', unsafe_allow_html=True)
+        if not estado_final:
+            st.caption("Hay datos o criterios pendientes. No liberar el equipo.")
+        elif estado_final == "no-apto":
+            st.caption("Al menos una prueba no cumple. No liberar el equipo hasta corregir.")
+
+    exc_filas, _, _ = resultados_bal_excentricidad(data)
+    rep_filas, _, resultado_r = resultados_bal_repetibilidad(data)
+    exact_filas = resultados_bal_exactitud(data)
+
+    def _resumen_prueba(filas, extra=None):
+        vals = [f["resultado"] for f in filas]
+        if extra:
+            vals.append(extra)
+        if any(v == "No cumple" for v in vals):
+            return "No cumple"
+        if vals and all(v in ("Cumple", "No aplica") for v in vals):
+            return "Cumple"
+        return "Pendiente"
+
+    exact_vals = []
+    for f in exact_filas:
+        if f["aplica"]:
+            exact_vals += [f["resultado_asc"], f["resultado_desc"]]
+    resumen_exact = "No cumple" if any(v == "No cumple" for v in exact_vals) else (
+        "Cumple" if exact_vals and all(v == "Cumple" for v in exact_vals) else "Pendiente")
+
+    with st.container(border=True):
+        st.markdown('<div class="bal-label">Resumen por prueba</div>', unsafe_allow_html=True)
+        for nombre, resumen in (("Excentricidad", _resumen_prueba(exc_filas)),
+                                 ("Repetibilidad", _resumen_prueba(rep_filas, resultado_r)),
+                                 ("Exactitud", resumen_exact)):
+            st.markdown(f'<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;">'
+                        f'<span class="bal-value">{nombre}</span>{bal_badge_html(resumen)}</div>', unsafe_allow_html=True)
+
+    alertas = alertas_balanza(data)
+    with st.container(border=True):
+        st.markdown(f'<div class="bal-label">Pendientes y alertas ({len(alertas)})</div>', unsafe_allow_html=True)
+        if alertas:
+            st.markdown("".join(f'<div class="bal-alert-item"><span class="bal-alert-dot">●</span>{html.escape(a)}</div>'
+                                 for a in alertas), unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="bal-alert-item">{icon("check_circle", size=14, color=BAL_GREEN)} Todo completo.</div>',
+                        unsafe_allow_html=True)
+
+
+def render_balanzas_registro():
+    require_role("jefe")
+    check_id = st.session_state.selected_balance_check_id
+    check = next((c for c in st.session_state.balance_checks if c["id"] == check_id), None)
+    if not check:
+        navigate("balanzas")
+        return
+    suffix = check["id"]
+    b = BALANZAS_POR_CODIGO.get(check["codigo_equipo"], {})
+    data = dict(check.get("data", {}))
+
+    if st.button("← Atrás"):
+        go_back(fallback="balanzas")
+
+    with st.container(key="bal-app"):
+        _bal_css()
+        st.markdown(f'<div class="bal-header-row"><div class="bal-icon-sq">{icon("balance", size=24)}</div>'
+                    f'<div><p class="bal-title">Comprobación intermedia de balanzas</p>'
+                    f'<p class="bal-subtitle">Laboratorio · Procedimiento GDA-LABI-002 · Control semanal GDA-FLC-029</p></div></div>',
+                    unsafe_allow_html=True)
+
+        with st.container(border=True):
+            h1, h2, h3, h4, h5 = st.columns(5)
+            for col, label, valor in ((h1, "Código interno", b.get("codigo", check["codigo_equipo"])),
+                                       (h2, "Nombre del equipo", b.get("nombre", "—")),
+                                       (h3, "Marca", b.get("marca", "—")), (h4, "Serie", b.get("serie", "—")),
+                                       (h5, "Resolución d (g)", b.get("resolucion", "—"))):
+                col.markdown(f'<div class="bal-label">{label}</div><div class="bal-value">{html.escape(str(valor))}</div>',
+                              unsafe_allow_html=True)
+            f1, f2 = st.columns(2)
+            fecha_actual = check.get("fecha_comprobacion")
+            fecha_dt = datetime.strptime(fecha_actual, "%Y-%m-%d").date() if fecha_actual else date.today()
+            nueva_fecha = f1.date_input("Fecha de comprobación", value=fecha_dt, key=f"bal_fecha_{suffix}", format="DD/MM/YYYY")
+            fecha_proxima = nueva_fecha + timedelta(days=8)
+            f2.markdown(f'<div class="bal-label">Próxima comprobación</div>'
+                        f'<div class="bal-value">{fecha_proxima.strftime("%d/%m/%Y")}</div>', unsafe_allow_html=True)
+            if str(nueva_fecha) != fecha_actual:
+                db.update_balance_check(check["id"], fecha_comprobacion=str(nueva_fecha), fecha_proxima=str(fecha_proxima))
+                check["fecha_comprobacion"], check["fecha_proxima"] = str(nueva_fecha), str(fecha_proxima)
+
+        step_key = f"bal_wizard_paso_{suffix}"
+        if step_key not in st.session_state:
+            st.session_state[step_key] = 0
+        col_izq, col_centro, col_der = st.columns([1, 2.3, 1])
+
+        with col_izq:
+            st.markdown('<div class="bal-label">Registro de comprobación</div>', unsafe_allow_html=True)
+            estados_paso = {
+                0: _bal_estado_paso(resultados_bal_excentricidad(data)[0]),
+                1: _bal_estado_paso(resultados_bal_repetibilidad(data)[0]),
+                2: _bal_estado_paso([{"resultado": f["resultado_asc"]} for f in resultados_bal_exactitud(data) if f["aplica"]]
+                                    + [{"resultado": f["resultado_desc"]} for f in resultados_bal_exactitud(data) if f["aplica"]]),
+                3: "Pendiente", 4: "Pendiente",
+            }
+            for i, nombre in enumerate(BAL_PASOS):
+                activo = st.session_state[step_key] == i
+                if st.button(f'{i + 1}. {nombre}', key=f"bal_paso_{i}_{suffix}", use_container_width=True,
+                             type="primary" if activo else "secondary"):
+                    st.session_state[step_key] = i
+                    st.rerun()
+                st.markdown(f'<div style="margin:-8px 0 6px 4px;">{bal_badge_html(estados_paso[i])}</div>',
+                            unsafe_allow_html=True)
+
+        with col_centro:
+            with st.container(border=True):
+                paso = st.session_state[step_key]
+                if paso == 0:
+                    _bal_paso_excentricidad(data, suffix)
+                elif paso == 1:
+                    _bal_paso_repetibilidad(data, suffix)
+                elif paso == 2:
+                    _bal_paso_exactitud(data, suffix)
+                elif paso == 3:
+                    _bal_paso_patrones_condiciones(data, suffix)
+                else:
+                    _bal_paso_decision(data, suffix)
+            nav1, nav2 = st.columns(2)
+            if paso > 0 and nav1.button("← Anterior", key=f"bal_ant_{suffix}", use_container_width=True):
+                st.session_state[step_key] -= 1
+                st.rerun()
+            if paso < 4 and nav2.button("Siguiente →", key=f"bal_sig_{suffix}", type="primary", use_container_width=True):
+                st.session_state[step_key] += 1
+                st.rerun()
+
+        with col_der:
+            _bal_panel_estado(data, check)
+
+        if data != check.get("data", {}):
+            estado_nuevo = data.get("decision") or decision_sugerida_balanza(data) or "pendiente"
+            try:
+                db.update_balance_check(check["id"], data=data, estado=estado_nuevo)
+                check["data"], check["estado"] = data, estado_nuevo
+            except Exception:
+                st.error("No se pudo guardar el último cambio (revisa tu conexión). Sigue en pantalla — vuelve a "
+                          "intentarlo digitando algo más.")
+        st.markdown(f'<div class="timestamp-caption">{icon("cloud_done", size=13)} Los cambios se guardan '
+                    f'automáticamente mientras digitas.</div>', unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        st.download_button(
+            "Descargar bitácora (Excel)", icon=":material/download:",
+            data=generar_excel_balanza(check, b),
+            file_name=f"Comprobacion_balanza_{check['codigo_equipo']}_{check['semana_lunes']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
+            key=f"bal_dl_{suffix}")
+
+
+def _bal_estado_paso(filas):
+    vals = [f["resultado"] for f in filas]
+    if any(v == "No cumple" for v in vals):
+        return "No cumple"
+    if vals and all(v in ("Cumple", "No aplica") for v in vals):
+        return "Cumple"
+    return "Pendiente"
+
+
+def generar_excel_balanza(check, balanza):
+    """Bitácora descargable de un registro de Comprobación de Balanzas (GDA-FLC-029). Se arma
+    desde cero con openpyxl (no hay una plantilla oficial terminada para reutilizar — la única
+    disponible es un borrador sin fórmulas en las secciones de patrones/condiciones/decisión,
+    según su propia hoja "Control semanal": "Aprobación y vigencia: pendientes"), replicando la
+    misma estructura y reglas del formulario en pantalla."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    data = check.get("data", {})
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Comprobación"
+    ws.sheet_view.showGridLines = False
+
+    bold = Font(bold=True)
+    titulo_f = Font(bold=True, size=14)
+    header_fill = PatternFill("solid", fgColor="2F7A3E")
+    header_font = Font(bold=True, color="FFFFFF")
+    thin = Side(style="thin", color="D9D5CA")
+    borde = Border(left=thin, right=thin, top=thin, bottom=thin)
+    fill_cumple = PatternFill("solid", fgColor="E8F1E6")
+    fill_no_cumple = PatternFill("solid", fgColor="FBE3DF")
+    fill_pendiente = PatternFill("solid", fgColor="FFF6D9")
+    fill_resultado = {"Cumple": fill_cumple, "No cumple": fill_no_cumple, "Pendiente": fill_pendiente,
+                       "No aplica": PatternFill("solid", fgColor="F3F2EE"),
+                       "apto": fill_cumple, "no-apto": fill_no_cumple}
+
+    r = 1
+    ws.cell(r, 1, "BITÁCORA PARA VERIFICACIÓN DE EQUIPOS — Balanzas").font = titulo_f
+    ws.cell(r, 8, "GDA-FLC-029")
+    r += 1
+    ws.cell(r, 1, "Comprobación intermedia de balanzas · INV E-vigente / OIML R 76-1").font = Font(italic=True, size=10)
+    r += 2
+
+    def _fila_dato(fila, etiqueta, valor):
+        ws.cell(fila, 1, etiqueta).font = bold
+        ws.cell(fila, 3, valor if valor not in (None, "") else "—")
+
+    for etiqueta, valor in (("Código interno", check["codigo_equipo"]), ("Nombre del equipo", balanza.get("nombre", "—")),
+                             ("Marca", balanza.get("marca", "—")), ("Serie", balanza.get("serie", "—")),
+                             ("Resolución d (g)", balanza.get("resolucion", "—")),
+                             ("Fecha de comprobación", check.get("fecha_comprobacion") or "—"),
+                             ("Fecha próxima comprobación", check.get("fecha_proxima") or "—"),
+                             ("Semana del lunes", check.get("semana_lunes") or "—")):
+        _fila_dato(r, etiqueta, valor)
+        r += 1
+    r += 1
+
+    def _tabla_header(fila, columnas):
+        for i, t in enumerate(columnas):
+            c = ws.cell(fila, 1 + i, t)
+            c.fill, c.font, c.border = header_fill, header_font, borde
+            c.alignment = Alignment(horizontal="center", wrap_text=True)
+
+    def _celda(fila, col, valor, resultado=None):
+        c = ws.cell(fila, col, valor if valor not in (None, "") else "—")
+        c.border = borde
+        c.alignment = Alignment(horizontal="center")
+        if resultado:
+            c.fill = fill_resultado.get(resultado, fill_pendiente)
+        return c
+
+    # ── Excentricidad ──
+    ws.cell(r, 1, "1. EXCENTRICIDAD").font = bold
+    r += 1
+    _fila_dato(r, "Forma del receptor", data.get("exc_forma") or "—")
+    r += 1
+    _fila_dato(r, "Carga usada (g)", data.get("exc_carga_usada"))
+    r += 1
+    _tabla_header(r, ["Punto", "Indicación (g)", "Error (g)", "± EMP (g)", "Resultado"])
+    r += 1
+    exc_filas, error_maximo, diferencia_max = resultados_bal_excentricidad(data)
+    for f in exc_filas:
+        _celda(r, 1, f["punto"])
+        _celda(r, 2, fmt_num(f["indicacion"], 3) if f["indicacion"] is not None else None)
+        _celda(r, 3, fmt_num(f["error"], 3) if f["error"] is not None else None)
+        _celda(r, 4, fmt_num(f["emp"], 3) if f["emp"] is not None else None)
+        _celda(r, 5, f["resultado"], resultado=f["resultado"])
+        r += 1
+    _fila_dato(r, "Error máximo (g)", fmt_num(error_maximo, 3) if error_maximo is not None else "—")
+    r += 1
+    _fila_dato(r, "Diferencia máx. entre posiciones (g)", fmt_num(diferencia_max, 3) if diferencia_max is not None else "—")
+    r += 2
+
+    # ── Repetibilidad ──
+    ws.cell(r, 1, "2. REPETIBILIDAD").font = bold
+    r += 1
+    _fila_dato(r, "Carga usada (g)", data.get("rep_carga_usada"))
+    r += 1
+    _fila_dato(r, "Límite aprobado de R (g)", data.get("rep_limite_r"))
+    r += 1
+    _tabla_header(r, ["Repetición", "Indicación (g)", "Error (g)", "± EMP (g)", "Resultado"])
+    r += 1
+    rep_filas, rango_r, resultado_r = resultados_bal_repetibilidad(data)
+    for f in rep_filas:
+        _celda(r, 1, f["punto"])
+        _celda(r, 2, fmt_num(f["indicacion"], 3) if f["indicacion"] is not None else None)
+        _celda(r, 3, fmt_num(f["error"], 3) if f["error"] is not None else None)
+        _celda(r, 4, fmt_num(f["emp"], 3) if f["emp"] is not None else None)
+        _celda(r, 5, f["resultado"], resultado=f["resultado"])
+        r += 1
+    _fila_dato(r, "Rango R = máx − mín (g)", fmt_num(rango_r, 3) if rango_r is not None else "—")
+    r += 1
+    ws.cell(r, 1, "Resultado de repetibilidad").font = bold
+    _celda(r, 3, resultado_r, resultado=resultado_r)
+    r += 2
+
+    # ── Exactitud ──
+    ws.cell(r, 1, "3. EXACTITUD").font = bold
+    r += 1
+    _tabla_header(r, ["Punto", "Aplica", "Carga (g)", "Ascendente", "Descendente", "± EMP (g)", "Resultado asc.", "Resultado desc."])
+    r += 1
+    for f in resultados_bal_exactitud(data):
+        _celda(r, 1, f["punto"])
+        _celda(r, 2, "Sí" if f["aplica"] else "No")
+        _celda(r, 3, fmt_num(f["carga"], 3) if f["carga"] is not None else None)
+        _celda(r, 4, fmt_num(f["asc"], 3) if f["asc"] is not None else None)
+        _celda(r, 5, fmt_num(f["desc"], 3) if f["desc"] is not None else None)
+        _celda(r, 6, fmt_num(f["emp"], 3) if f["emp"] is not None else None)
+        _celda(r, 7, f["resultado_asc"], resultado=f["resultado_asc"])
+        _celda(r, 8, f["resultado_desc"], resultado=f["resultado_desc"])
+        r += 1
+    r += 1
+
+    # ── Patrones ──
+    ws.cell(r, 1, "4. INSTRUMENTOS PATRÓN PARA LA MEDICIÓN").font = bold
+    r += 1
+    _tabla_header(r, ["Código", "Instrumento patrón", "Fecha calibración", "Próxima calibración", "No. certificado"])
+    r += 1
+    for p in (data.get("patrones") or []):
+        _celda(r, 1, p.get("codigo"))
+        _celda(r, 2, p.get("instrumento"))
+        _celda(r, 3, p.get("fecha_calibracion"))
+        _celda(r, 4, p.get("proxima_calibracion"))
+        _celda(r, 5, p.get("no_certificado"))
+        r += 1
+    if not (data.get("patrones") or []):
+        _celda(r, 1, "—")
+        r += 1
+    r += 1
+
+    ws.cell(r, 1, "Condiciones previas").font = bold
+    r += 1
+    for key, label in BAL_CONDICIONES_PREVIAS:
+        _fila_dato(r, label, "Sí" if data.get(key) else "No")
+        r += 1
+    _fila_dato(r, "Temperatura (°C)", data.get("cond_temperatura") or "—")
+    r += 1
+    _fila_dato(r, "Humedad relativa (%)", data.get("cond_humedad") or "—")
+    r += 2
+
+    ws.cell(r, 1, "Datos técnicos del equipo").font = bold
+    r += 1
+    for key, label in BAL_DATOS_TECNICOS:
+        _fila_dato(r, label, data.get(key) or "—")
+        r += 1
+    r += 1
+
+    # ── Decisión y firmas ──
+    ws.cell(r, 1, "5. DECISIÓN Y FIRMAS").font = bold
+    r += 1
+    decision_final = data.get("decision") or decision_sugerida_balanza(data)
+    ws.cell(r, 1, "Resultado").font = bold
+    _celda(r, 3, {"apto": "APTO", "no-apto": "NO APTO"}.get(decision_final, "PENDIENTE"), resultado=decision_final or "Pendiente")
+    r += 1
+    _fila_dato(r, "Fuente y aprobación de criterios", data.get("fuente_criterios") or "—")
+    r += 1
+    _fila_dato(r, "Observaciones", data.get("observaciones") or "—")
+    r += 1
+    _fila_dato(r, "TNC relacionado (GDA-FC-023 No.)", data.get("tnc_numero") or "—")
+    r += 2
+    for prefix, titulo in (("elaboro", "Elaboró"), ("reviso", "Revisó")):
+        ws.cell(r, 1, titulo).font = bold
+        r += 1
+        _fila_dato(r, "Nombre", data.get(f"{prefix}_nombre") or "—")
+        r += 1
+        _fila_dato(r, "Cargo", data.get(f"{prefix}_cargo") or "—")
+        r += 1
+        _fila_dato(r, "Firmó", "Sí" if data.get(f"{prefix}_firmo") else "No")
+        r += 2
+
+    ws.cell(r, 1, "Regla de decisión: Error = indicación − masa de referencia. Aceptación simple: "
+                  "|error| ≤ EMP y R ≤ límite, solo con regla aprobada e incertidumbre evaluada."
+            ).font = Font(italic=True, size=9, color="6B6860")
+
+    for col, width in zip("ABCDEFGH", (26, 22, 16, 16, 16, 14, 16, 16)):
+        ws.column_dimensions[col].width = width
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return bio.getvalue()
 
 
 def render_projects_active():
@@ -8664,6 +9623,7 @@ else:
         "bitacora": render_bitacora, "assay-form": render_assay_form,
         "continue": render_continue, "search": render_search,
         "projects-active": render_projects_active, "projects-done": render_projects_done,
+        "balanzas": render_balanzas, "balanzas-registro": render_balanzas_registro,
     }
     SCREENS.get(st.session_state.screen, render_home)()
     render_bottomnav()

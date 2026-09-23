@@ -431,3 +431,50 @@ def mark_notification_read(notification_id: str):
 
 def mark_all_notifications_read(role: str):
     get_client().table("notifications").update({"leida": True}).eq("target_role", role).eq("leida", False).execute()
+
+
+# ════════════════════════════════════════════════════════════════════
+# COMPROBACIÓN DE BALANZAS (jefe de laboratorio) — GDA-FLC-029
+# ════════════════════════════════════════════════════════════════════
+def list_balance_checks() -> list[dict]:
+    res = get_client().table("balance_checks").select("*").order("semana_lunes", desc=True).execute()
+    return res.data or []
+
+
+def get_balance_check(check_id: str) -> dict | None:
+    res = get_client().table("balance_checks").select("*").eq("id", check_id).execute()
+    rows = res.data or []
+    return rows[0] if rows else None
+
+
+def create_balance_check(codigo_equipo: str, semana_lunes: str, fecha_comprobacion: str = None,
+                          fecha_proxima: str = None, data: dict = None) -> dict:
+    fields = {"codigo_equipo": codigo_equipo, "semana_lunes": semana_lunes, "data": data or {}}
+    if fecha_comprobacion is not None:
+        fields["fecha_comprobacion"] = fecha_comprobacion
+    if fecha_proxima is not None:
+        fields["fecha_proxima"] = fecha_proxima
+    profile = get_current_profile()
+    if profile:
+        fields["created_by"] = profile["id"]
+    res = get_client().table("balance_checks").insert(fields).execute()
+    return res.data[0]
+
+
+def update_balance_check(check_id: str, data: dict = None, estado: str = None,
+                          fecha_comprobacion: str = None, fecha_proxima: str = None) -> dict:
+    fields = {}
+    if data is not None:
+        fields["data"] = data
+    if estado is not None:
+        fields["estado"] = estado
+    if fecha_comprobacion is not None:
+        fields["fecha_comprobacion"] = fecha_comprobacion
+    if fecha_proxima is not None:
+        fields["fecha_proxima"] = fecha_proxima
+    res = get_client().table("balance_checks").update(fields).eq("id", check_id).execute()
+    return res.data[0]
+
+
+def delete_balance_check(check_id: str):
+    get_client().table("balance_checks").delete().eq("id", check_id).execute()
