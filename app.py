@@ -1050,7 +1050,29 @@ BALANZAS = [
     {"codigo": "GDA-E-012", "nombre": "Balanza Cap. 30 Kg", "marca": "TRUMAX", "serie": "FENIX", "resolucion": "1"},
     {"codigo": "GDA-E-013", "nombre": "Balanza Cap. 3000 g", "marca": "TS", "serie": "T200", "resolucion": "0,1"},
 ]
-BALANZAS_POR_CODIGO = {b["codigo"]: b for b in BALANZAS}
+BALANZAS_POR_CODIGO = {b["codigo"]: b for b in BALANZAS}   # respaldo si la tabla `balanzas` (migración 0032) aún no existe
+
+
+def _bal_lista():
+    """Catálogo de balanzas (tabla `balanzas`, se administra desde la pantalla). Si la migración 0032 todavía
+    no se corrió, se usan las 4 de siempre para que la pantalla siga funcionando."""
+    lista = st.session_state.get("balanzas")
+    if lista is None:
+        return [dict(b, id=None, activa=True) for b in BALANZAS]
+    return lista
+
+
+def _bal_por_codigo(codigo):
+    return next((b for b in _bal_lista() if b["codigo"] == codigo), None)
+
+
+def _bal_codigos_selector():
+    """Balanzas que se ofrecen en el selector: las activas y, para poder consultar su historial, las que están de baja
+    pero tienen registros. Activas primero."""
+    con_registros = {c["codigo_equipo"] for c in st.session_state.get("balance_checks", [])}
+    visibles = [b for b in _bal_lista() if b.get("activa", True) or b["codigo"] in con_registros]
+    visibles.sort(key=lambda b: (not b.get("activa", True), b["codigo"]))
+    return [b["codigo"] for b in visibles]
 BAL_CONDICIONES_PREVIAS = [
     ("cond_limpieza", "Limpieza del receptor y del entorno"),
     ("cond_nivelacion", "Nivelación verificada (burbuja centrada)"),
@@ -1298,6 +1320,12 @@ def _load_data(solo_balanzas=False):
             n["muestra_id"] = n.get("muestra_id_unico")
         st.session_state.notifications = notifications
         st.session_state.balance_checks = db.list_balance_checks() if st.session_state.role == "jefe" else []
+        try:
+            st.session_state.balanzas = db.list_balanzas() if st.session_state.role == "jefe" else None
+            st.session_state.pop("_bal_sin_tabla", None)
+        except Exception:   # la migración 0032 todavía no se corrió
+            st.session_state.balanzas = None
+            st.session_state["_bal_sin_tabla"] = True
         return
     projects = db.list_projects()
     proj_by_id = {p["id"]: p for p in projects}
@@ -2336,7 +2364,7 @@ def _bal_estado_inicial(balanza, hoy):
 def _bal_cargar_estado(check):
     """Estado que se le manda al mockup: los datos de la balanza + lo ya guardado del registro (los
     registros de la versión anterior de esta pantalla no traen estas claves y arrancan limpios)."""
-    b = BALANZAS_POR_CODIGO.get(check["codigo_equipo"])
+    b = _bal_por_codigo(check["codigo_equipo"])
     try:
         base = _bal_estado_inicial(b, date.fromisoformat(check.get("fecha_comprobacion") or check["semana_lunes"])) if b else {}
     except ValueError:
@@ -2348,8 +2376,10 @@ def _bal_cargar_estado(check):
 def _bal_state_a_data(state):
     """Estado del mockup -> formato plano que usan los cálculos y la bitácora en Excel."""
     exc, rep, exa = state.get("exc") or {}, state.get("rep") or {}, state.get("exa") or {}
-    cond, tec = state.get("cond") or {}, state.get("tec") or {}
-    d = {"exc_forma": {"circular": "Circular", "triangular": "Triangular"}.get(state.get("plate"), "Cuadrado"),
+    cond, tec, eq = state.get("cond") or {}, state.get("tec") or {}, state.get("eq") or {}
+    d = {"eq_nombre": eq.get("nombre", ""), "eq_marca": eq.get("marca", ""), "eq_serie": eq.get("serie", ""),
+         "eq_resolucion": eq.get("d", ""),
+         "exc_forma": {"circular": "Circular", "triangular": "Triangular"}.get(state.get("plate"), "Cuadrado"),
          "exc_carga_usada": exc.get("carga", ""), "rep_carga_usada": rep.get("carga", ""),
          "rep_limite_r": rep.get("limite", "")}
     for i, r in enumerate(exc.get("rows") or [], start=1):
@@ -2410,7 +2440,11 @@ def _bal_rotulo(check):
 
 def _bal_nuevo_registro(codigo):
     """Crea el registro de esta semana para la balanza (uno por equipo y semana — si ya existe, lo abre)."""
-    balanza, hoy = BALANZAS_POR_CODIGO[codigo], date.today()
+    balanza, hoy = _bal_por_codigo(codigo), date.today()
+    if not balanza or not balanza.get("activa", True):
+        st.session_state["_bal_aviso"] = "Esa balanza está dada de baja: no se le pueden crear registros nuevos (los anteriores se pueden consultar)."
+        st.rerun()
+        return
     semana = str(_bal_lunes(hoy))
     destino = next((c for c in st.session_state.balance_checks
                     if c["codigo_equipo"] == codigo and c["semana_lunes"] == semana), None)
@@ -2450,6 +2484,96 @@ def _bal_guardar(check, valor):
                  "modificando algo más.")
 
 
+def _bal_admin():
+    """Agregar, editar, dar de baja / reactivar y eliminar balanzas del catálogo."""
+    with st.expander("Administrar balanzas (agregar, editar, dar de baja)", icon=":material/tune:",
+                     expanded=bool(st.session_state.get("_bal_admin_open"))):
+        if st.session_state.get("_bal_sin_tabla"):
+            st.warning("Para administrar las balanzas falta correr la migración 0032_balanzas.sql en Supabase "
+                       "(mientras tanto se usan las 4 de siempre).")
+            return
+        lista = _bal_lista()
+        conteo = {}
+        for c in st.session_state.balance_checks:
+            conteo[c["codigo_equipo"]] = conteo.get(c["codigo_equipo"], 0) + 1
+        st.caption("Una balanza dada de baja deja de ofrecerse para registros nuevos, pero su historial se sigue "
+                   "pudiendo consultar y descargar. Los registros ya guardados conservan los datos del equipo que tenían.")
+        for b in lista:
+            n = conteo.get(b["codigo"], 0)
+            with st.container(border=True):
+                estado = "" if b["activa"] else " · **de baja**"
+                st.markdown(f"**{html.escape(b['codigo'])}** — {html.escape(b['nombre'])}{estado}  \n"
+                            f"{html.escape(b['marca'] or '—')} · Serie {html.escape(b['serie'] or '—')} · "
+                            f"d = {html.escape(b['resolucion'] or '—')} g · {n} registro(s)")
+                c1, c2, c3 = st.columns(3)
+                if c1.button("Editar", key=f"bal_ed_{b['id']}", use_container_width=True, icon=":material/edit:"):
+                    st.session_state["_bal_edit"] = b["id"]
+                    st.session_state["_bal_admin_open"] = True
+                    st.rerun()
+                if b["activa"]:
+                    if c2.button("Dar de baja", key=f"bal_baja_{b['id']}", use_container_width=True):
+                        db.update_balanza(b["id"], activa=False)
+                        st.session_state["_bal_admin_open"] = True
+                        st.rerun()
+                elif c2.button("Reactivar", key=f"bal_alta_{b['id']}", use_container_width=True):
+                    db.update_balanza(b["id"], activa=True)
+                    st.session_state["_bal_admin_open"] = True
+                    st.rerun()
+                with c3:
+                    if n:
+                        st.caption("Tiene registros: en vez de eliminarla, dala de baja.")
+                    elif confirm_delete(f"balanza_{b['id']}", f"la balanza {b['codigo']}"):
+                        db.delete_balanza(b["id"])
+                        st.session_state.pop("_bal_edit", None)
+                        st.session_state["_bal_admin_open"] = True
+                        st.rerun()
+
+        editando = st.session_state.get("_bal_edit")
+        base = next((b for b in lista if b["id"] == editando), None)
+        n_base = conteo.get(base["codigo"], 0) if base else 0
+        st.markdown("##### " + (f"Editar balanza {base['codigo']}" if base else "Agregar balanza"))
+        with st.form(f"bal_form_{editando or 'nuevo'}", clear_on_submit=not base):
+            codigo = st.text_input("Código interno", value=base["codigo"] if base else "", placeholder="GDA-E-014",
+                                   disabled=bool(base and n_base))
+            if base and n_base:
+                st.caption("El código no se puede cambiar porque la balanza ya tiene registros.")
+            nombre = st.text_input("Nombre del equipo", value=base["nombre"] if base else "", placeholder="Balanza Cap. 600g")
+            f1, f2 = st.columns(2)
+            marca = f1.text_input("Marca", value=base["marca"] if base else "", placeholder="TRUMAX")
+            serie = f2.text_input("Serie", value=base["serie"] if base else "", placeholder="MIX-H")
+            resolucion = st.text_input("Resolución d (g)", value=base["resolucion"] if base else "", placeholder="0,01")
+            b1, b2 = st.columns(2)
+            guardar = b1.form_submit_button("Guardar cambios" if base else "Agregar balanza", type="primary",
+                                            use_container_width=True)
+            cancelar = b2.form_submit_button("Cancelar", use_container_width=True) if base else False
+        if cancelar:
+            st.session_state.pop("_bal_edit", None)
+            st.session_state["_bal_admin_open"] = True
+            st.rerun()
+        if guardar:
+            codigo = (base["codigo"] if (base and n_base) else codigo).strip().upper()
+            nombre, marca, serie, resolucion = nombre.strip(), marca.strip(), serie.strip(), resolucion.strip()
+            if not codigo or not nombre:
+                st.error("El código interno y el nombre del equipo son obligatorios.")
+            elif not resolucion or (to_float(resolucion) or 0) <= 0:
+                st.error("La resolución d debe ser un número mayor que 0 (por ejemplo 0,01).")
+            elif any(o["codigo"].upper() == codigo and (not base or o["id"] != base["id"]) for o in lista):
+                st.error(f"Ya existe una balanza con el código {codigo}.")
+            else:
+                try:
+                    if base:
+                        db.update_balanza(base["id"], codigo=codigo, nombre=nombre, marca=marca, serie=serie, resolucion=resolucion)
+                        st.session_state.pop("_bal_edit", None)
+                    else:
+                        db.create_balanza(codigo, nombre, marca, serie, resolucion)
+                    st.session_state["_bal_pend_equipo"] = codigo
+                    st.session_state["_bal_aviso"] = f"Balanza {codigo} guardada."
+                    st.session_state["_bal_admin_open"] = True
+                    st.rerun()
+                except Exception:
+                    st.error("No se pudo guardar la balanza (revisa tu conexión).")
+
+
 def render_balanzas():
     require_role("jefe")
     # El mockup es un tablero de ~1440 px: se reduce el margen lateral de Streamlit solo en esta pantalla.
@@ -2462,17 +2586,22 @@ def render_balanzas():
     for destino, pendiente in (("bal_sel_equipo", "_bal_pend_equipo"), ("bal_sel_registro", "_bal_pend_registro")):
         if pendiente in st.session_state:
             st.session_state[destino] = st.session_state.pop(pendiente)
-    codigos = [b["codigo"] for b in BALANZAS]
-    if st.session_state.get("bal_sel_equipo") not in codigos:
-        st.session_state["bal_sel_equipo"] = codigos[0]
+    codigos = _bal_codigos_selector()
     if st.session_state.get("_bal_aviso"):
         st.info(st.session_state.pop("_bal_aviso"))
+    if not codigos:
+        st.info("No hay balanzas registradas: agrega la primera en «Administrar balanzas».")
+        _bal_admin()
+        return
+    if st.session_state.get("bal_sel_equipo") not in codigos:
+        st.session_state["bal_sel_equipo"] = codigos[0]
 
     # Dos filas de dos (en una tablet vertical cuatro columnas quedan demasiado apretadas).
     t1, t2 = st.columns(2)
     with t1:
         equipo = st.selectbox("Balanza", codigos, key="bal_sel_equipo",
-                               format_func=lambda c: f"{c} — {BALANZAS_POR_CODIGO[c]['nombre']}")
+                               format_func=lambda c: f"{c} — {_bal_por_codigo(c)['nombre']}"
+                               + ("" if _bal_por_codigo(c).get("activa", True) else " (de baja)"))
     registros = sorted([c for c in st.session_state.balance_checks if c["codigo_equipo"] == equipo],
                        key=lambda c: (c["semana_lunes"], c.get("created_at") or ""), reverse=True)
     ids = [c["id"] for c in registros]
@@ -2488,13 +2617,15 @@ def render_balanzas():
                         unsafe_allow_html=True)
     t3, t4 = st.columns(2)
     with t3:
-        if st.button("Nuevo registro", key="bal_nuevo", type="primary", use_container_width=True, icon=":material/add:"):
+        if st.button("Nuevo registro", key="bal_nuevo", type="primary", use_container_width=True, icon=":material/add:",
+                     disabled=not _bal_por_codigo(equipo).get("activa", True)):
             _bal_nuevo_registro(equipo)
     with t4:
         slot_descarga = st.empty()
 
     if st.session_state.get("_bal_control_error"):
         st.warning("El Control semanal no se pudo leer/guardar: falta correr la migración 0031_balance_control.sql en Supabase.")
+    _bal_admin()
     if not sel_id:
         st.info("Crea el primer registro de esta balanza con «Nuevo registro» (uno por equipo y semana).")
         return
@@ -2511,7 +2642,7 @@ def render_balanzas():
         else:
             _bal_guardar(check, valor)
 
-    balanza = BALANZAS_POR_CODIGO.get(check["codigo_equipo"], {})
+    balanza = _bal_por_codigo(check["codigo_equipo"]) or {}
     with slot_descarga:
         st.download_button(
             "Descargar Excel", icon=":material/download:", use_container_width=True, key="bal_dl",
@@ -2612,6 +2743,14 @@ def generar_excel_balanza(check, balanza, control=None):
     except (TypeError, ValueError):
         pass
     c["J8"] = check["codigo_equipo"]
+    # Nombre, marca, resolución y serie: la plantilla los busca por código en su propio catálogo (solo trae las 4
+    # balanzas originales), así que se escriben directo con los datos del equipo tal como quedaron en el registro.
+    balanza = balanza or {}
+    c["Z8"] = data.get("eq_nombre") or balanza.get("nombre")
+    c["J9"] = data.get("eq_marca") or balanza.get("marca")
+    resolucion = data.get("eq_resolucion") or balanza.get("resolucion")
+    c["Z9"] = num(resolucion) if num(resolucion) is not None else resolucion
+    c["AP9"] = data.get("eq_serie") or balanza.get("serie")
 
     # 1. Excentricidad / 2. Repetibilidad
     c["S12"] = num(data.get("exc_carga_usada"))

@@ -492,3 +492,27 @@ def get_balance_control() -> list:
 
 def save_balance_control(rows: list):
     get_client().table("balance_control").upsert({"id": 1, "rows": rows}).execute()
+
+
+# ════════════════════════════════════════════════════════════════════
+# CATÁLOGO DE BALANZAS (Comprobación de Balanzas)
+# ════════════════════════════════════════════════════════════════════
+def list_balanzas() -> list:
+    res = get_client().table("balanzas").select("*").order("codigo").execute()
+    return res.data or []
+
+
+def create_balanza(codigo: str, nombre: str, marca: str, serie: str, resolucion: str) -> dict:
+    res = get_client().table("balanzas").insert({
+        "codigo": codigo, "nombre": nombre, "marca": marca, "serie": serie, "resolucion": resolucion,
+    }).execute()
+    return res.data[0]
+
+
+def update_balanza(balanza_id: str, **fields) -> dict:
+    res = get_client().table("balanzas").update(fields).eq("id", balanza_id).execute()
+    return res.data[0]
+
+
+def delete_balanza(balanza_id: str):
+    get_client().table("balanzas").delete().eq("id", balanza_id).execute()
