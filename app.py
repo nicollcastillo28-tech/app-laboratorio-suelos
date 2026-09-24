@@ -526,7 +526,13 @@ components.html("""
         inputs.forEach(function(input) {
             var ph = (input.getAttribute('placeholder') || '').trim();
             var mode = null;
-            if (/^-?\\d+[.,]\\d+$/.test(ph)) {
+            // El número de recipiente admite letras y números (ej. "A-12"): teclado normal aunque el
+            // placeholder sea un número. Solo el número — las masas de recipiente siguen siendo numéricas.
+            var lbl = (input.getAttribute('aria-label') || '');
+            var esNumeroRecipiente = /recipiente/i.test(lbl) && !/masa|peso|\\(g\\)/i.test(lbl);
+            if (esNumeroRecipiente) {
+                mode = null;
+            } else if (/^-?\\d+[.,]\\d+$/.test(ph)) {
                 mode = 'decimal';
             } else if (/^\\d[\\d\\s]*$/.test(ph)) {
                 mode = 'numeric';
@@ -6273,7 +6279,7 @@ def render_humedad_form(data, assay_id):
             data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
                                            label_visibility="collapsed", placeholder=placeholder)
 
-        _campo("hum_recipiente", "Recipiente no.", placeholder="839")
+        _campo("hum_recipiente", "Recipiente no.", placeholder="A-12")
         _campo("hum_masa_recipiente", "Masa del recipiente (g)")
         _campo("hum_masa_humedo_mas_recipiente", "Masa suelo húmedo + recipiente (g)")
 
@@ -6620,7 +6626,7 @@ def render_cbr_form(data, assay_id, muestra_id):
                                                     label_visibility="collapsed", placeholder=placeholder)
 
         _campo_humedad("Recipiente", hum_data.get("hum_recipiente") if hay_antes else None,
-                       "cbr_desp_recipiente", placeholder="839")
+                       "cbr_desp_recipiente", placeholder="A-12")
         _campo_humedad("Peso recipiente + suelo húmedo (g)",
                        hum_data.get("hum_masa_humedo_mas_recipiente") if hay_antes else None, "cbr_desp_masa_humedo")
         _campo_humedad("Peso recipiente + suelo seco (g)",
