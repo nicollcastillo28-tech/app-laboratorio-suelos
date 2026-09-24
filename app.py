@@ -1966,6 +1966,66 @@ def resultados_cbr_compactado(data):
         st.altair_chart((ch.mark_line(color=PRIMARY) + ch.mark_point(filled=True, size=70, color=PRIMARY)).properties(height=240), use_container_width=True)
 
 
+def calcular_corte_directo(data):
+    """Cálculos de la hoja "1" de GDA-FLC-007 que se pueden hacer con lo que se digita en la app: área y volumen del
+    anillo; gravedad específica (Gs = ρw·Ms / (Ms + Mpic+agua − Mpic+muestra+agua)); y, por probeta, humedad inicial/final,
+    masa seca, densidades, relación de vacíos e0 y grado de saturación. El esfuerzo cortante, la cohesión y el ángulo de
+    fricción salen de las lecturas de la máquina (hojas 2 y CARGA1), que la app no captura."""
+    dia, alt = to_float(data.get("corte_m1_diametro_anillo")), to_float(data.get("corte_m1_altura_anillo"))
+    masa_anillo = to_float(data.get("corte_m1_masa_anillo"))
+    area = math.pi * (dia / 2) ** 2 if dia else None
+    vol = area * alt if area and alt else None
+    gs = None
+    temp, mpw, mpws, ms = (to_float(data.get(f"corte_ge_{k}")) for k in ("temperatura", "masa_pic", "masa_pic_muestra", "masa_suelo_seco"))
+    dens_agua = None
+    if temp is not None:
+        dk = _tabla_agua_temperatura().get(round(temp, 1))
+        dens_agua = dk[0] if dk else None
+    if None not in (dens_agua, mpw, mpws, ms) and (ms + mpw - mpws) != 0:
+        gs = dens_agua * ms / (ms + mpw - mpws)
+    probetas = []
+    for i in (1, 2, 3):
+        b = f"corte_m{i}_"
+        def hum(suf):
+            seco = next((to_float(data.get(f"{b}hum_seco_{h}h_{suf}")) for h in (19, 18, 17)
+                         if to_float(data.get(f"{b}hum_seco_{h}h_{suf}")) is not None), None)
+            return _humedad_pct_masas(data.get(f"{b}hum_masa_humedo_{suf}"), seco, data.get(f"{b}hum_masa_recipiente_{suf}"))
+        w_i, w_f = hum("inicial"), hum("final")
+        bruta = to_float(data.get(f"{b}masa_inicial_anillo"))
+        masa = bruta - masa_anillo if bruta is not None and masa_anillo is not None else None
+        seca = masa / (1 + w_i / 100) if masa is not None and w_i is not None else None
+        dh = masa / vol if masa is not None and vol else None
+        ds = seca / vol if seca is not None and vol else None
+        e0 = sr = None
+        if seca is not None and gs and area and alt:
+            vs = seca / (gs * area)          # altura de sólidos
+            if alt - vs != 0 and vs != 0:
+                e0 = (alt - vs) / vs
+                sr = (masa - seca) / (area * (alt - vs)) * 100
+        probetas.append({"i": i, "w_i": w_i, "w_f": w_f, "masa": masa, "seca": seca, "dh": dh, "ds": ds, "e0": e0, "sr": sr,
+                         "sigma": to_float(data.get(f"{b}esfuerzo_normal"))})
+    return {"area": area, "vol": vol, "gs": gs, "probetas": probetas}
+
+
+def resultados_corte_directo(data):
+    r = calcular_corte_directo(data)
+    f = lambda v, d=3: fmt_num(v, d) if v is not None else "—"
+    if not any(v is not None for p in r["probetas"] for v in (p["w_i"], p["w_f"], p["masa"])) and r["gs"] is None:
+        st.caption("Digita los datos de las muestras para ver los resultados.")
+        return
+    st.markdown(param_table_html([("Área del anillo (cm²)", f(r["area"], 2)), ("Volumen de la muestra (cm³)", f(r["vol"], 2)),
+                                  ("Gravedad específica, Gs", f(r["gs"], 3))], header_left="DATO", header_right="VALOR"), unsafe_allow_html=True)
+    ps = r["probetas"]
+    filas = [("Humedad inicial (%)", *[f(p["w_i"], 2) for p in ps]), ("Humedad final (%)", *[f(p["w_f"], 2) for p in ps]),
+             ("Masa de la muestra (g)", *[f(p["masa"], 2) for p in ps]), ("Masa de la muestra seca (g)", *[f(p["seca"], 2) for p in ps]),
+             ("Densidad húmeda (g/cm³)", *[f(p["dh"]) for p in ps]), ("Densidad seca (g/cm³)", *[f(p["ds"]) for p in ps]),
+             ("Relación de vacíos, e0", *[f(p["e0"]) for p in ps]), ("Grado de saturación (%)", *[f(p["sr"], 1) for p in ps]),
+             ("Esfuerzo normal (kg/cm²)", *[f(p["sigma"], 2) for p in ps])]
+    st.markdown(param_table_ncol_html(["RESULTADO", "MUESTRA 1", "MUESTRA 2", "MUESTRA 3"], filas), unsafe_allow_html=True)
+    st.caption("El esfuerzo cortante, la cohesión y el ángulo de fricción salen de las lecturas de carga y deformación de la "
+               "máquina, que la app todavía no captura: se completan en el Excel (hojas 2 y CARGA1).")
+
+
 def icon(name, size=18, fill=False, color=None):
     """Ícono de Material Symbols para insertar dentro de HTML propio (st.markdown con unsafe_allow_html)."""
     cls = "material-symbols-outlined msi-fill" if fill else "material-symbols-outlined"
@@ -6596,6 +6656,9 @@ def render_corte_directo_form(data, assay_id):
                     nuevos.append(equipo)
         data["corte_ge_equipos"] = nuevos
 
+    with resultados_desplegable("Resultados: humedades, densidades y saturación"):
+        resultados_corte_directo(data)
+
     render_equipo(data, "corte", EQUIPO_CORTE_DIRECTO)
     render_norma_selector("corte-directo", data, "corte")
 
@@ -9010,6 +9073,8 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             rows.append(("Picnómetro No.", data.get("corte_ge_picnometro")))
             st.markdown(param_table_html(rows), unsafe_allow_html=True)
             st.caption("Equipos (gravedad): " + (", ".join(data.get("corte_ge_equipos", [])) or "—"))
+        with resultados_desplegable("Resultados: humedades, densidades y saturación"):
+            resultados_corte_directo(data)
         equipos, norma = data.get("corte_equipos", []), data.get("corte_norma", "—")
 
     with st.container(border=True):
