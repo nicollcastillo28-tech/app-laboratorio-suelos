@@ -26,6 +26,32 @@ from openpyxl import load_workbook
 
 import db
 
+
+def _envolver_escrituras_db():
+    """Toda función de db que no sea de lectura (list_/get_) marca los datos en memoria como desactualizados: así _load_data
+    sabe cuándo NO puede saltarse la recarga que sigue a un cambio de pantalla. Se hace una sola vez por proceso."""
+    import functools
+    import inspect
+    for nombre, f in list(vars(db).items()):
+        if (nombre.startswith(("_", "list_", "get_")) or not inspect.isfunction(f) or f.__module__ != db.__name__
+                or getattr(f, "_gd_envuelta", False)):
+            continue
+
+        def _crear(f):
+            @functools.wraps(f)
+            def envuelta(*args, **kwargs):
+                try:
+                    st.session_state["_datos_sucios"] = True
+                except Exception:
+                    pass
+                return f(*args, **kwargs)
+            envuelta._gd_envuelta = True
+            return envuelta
+        setattr(db, nombre, _crear(f))
+
+
+_envolver_escrituras_db()
+
 # ════════════════════════════════════════════════════════════════════
 # CONFIGURACIÓN DE LA PÁGINA
 # ════════════════════════════════════════════════════════════════════
@@ -1377,11 +1403,25 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
 # Los sitios de ESCRITURA sí cambiaron: mutan vía db.py y luego hacen
 # st.rerun(), que dispara una nueva llamada a _load_data() con el dato fresco.
 # ════════════════════════════════════════════════════════════════════
+DATOS_TTL_S = 15
+
+
 def _load_data(solo_balanzas=False):
     """Carga desde Supabase lo que las pantallas necesitan. `solo_balanzas`: la pantalla de Calibración
     de Balanzas no usa proyectos/perforaciones/muestras/ensayos (la barra superior solo usa las
     notificaciones), así que no se piden — en cada navegación eso son 4 consultas menos y se acorta el
-    rato en que Streamlit deja el contenido de la pantalla anterior atenuado."""
+    rato en que Streamlit deja el contenido de la pantalla anterior atenuado.
+
+    Cada clic corre el script completo y antes pedía todo a la base otra vez (un cambio de pantalla son dos corridas
+    seguidas). Ahora se reutilizan los datos en memoria si tienen menos de DATOS_TTL_S segundos, son del mismo tipo de
+    carga y nadie escribió nada en la base desde entonces (ver _envolver_escrituras_db): lo que uno mismo guarda se ve
+    al instante; los cambios de otra persona pueden tardar hasta ese tiempo en aparecer."""
+    sucios = st.session_state.pop("_datos_sucios", False)
+    ahora = time.monotonic()
+    if (not sucios and st.session_state.get("_datos_modo") == solo_balanzas and "assays" in st.session_state
+            and ahora - st.session_state.get("_datos_ts", -1e9) < DATOS_TTL_S):
+        return
+    st.session_state["_datos_modo"] = None   # si la carga falla a la mitad, la siguiente corrida vuelve a pedir todo
     if solo_balanzas:
         notifications = db.list_notifications(st.session_state.role) if st.session_state.role else []
         for n in notifications:
@@ -1395,6 +1435,7 @@ def _load_data(solo_balanzas=False):
         except Exception:   # la migración 0032 todavía no se corrió
             st.session_state.balanzas = None
             st.session_state["_bal_sin_tabla"] = True
+        st.session_state["_datos_ts"], st.session_state["_datos_modo"] = time.monotonic(), solo_balanzas
         return
     projects = db.list_projects()
     proj_by_id = {p["id"]: p for p in projects}
@@ -1446,6 +1487,7 @@ def _load_data(solo_balanzas=False):
     # Solo el Jefe de Laboratorio usa Calibración de Balanzas (RLS también lo exige) — no pedirle
     # esto a Supabase para los otros roles, que igual no podrían leerlo.
     st.session_state.balance_checks = db.list_balance_checks() if st.session_state.role == "jefe" else []
+    st.session_state["_datos_ts"], st.session_state["_datos_modo"] = time.monotonic(), solo_balanzas
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -1718,7 +1760,10 @@ def calcular_limites(data):
     """Límite Líquido / Plástico / Índice de Plasticidad con las fórmulas de la plantilla oficial
     (CLASIFICACION_DE_SUELOS.xlsm): humedad = (húmedo−seco)/(seco−recipiente)·100; LL = ROUNDDOWN(promedio de
     w·(N/25)^0.121) — o la humedad de la columna 2 si tiene exactamente 25 golpes —; LP = ROUNDDOWN(promedio);
-    IP = LL − LP. Devuelve dict con los puntos de la curva y los resultados (None si faltan datos)."""
+    IP = LL − LP. Devuelve dict con los puntos de la curva y los resultados (None si faltan datos).
+    Si se marcó "No líquido" (lim_nl) el suelo se reporta N.L. – N.P. sin datos; si se marcó "No plástico" (lim_np) el LP y el
+    IP se reportan N.P. (el LL sí se calcula), como en la plantilla."""
+    nl, np_ = bool(data.get("lim_nl")), bool(data.get("lim_np"))
     puntos = []
     for i in range(1, LIMITE_LIQUIDO_N + 1):
         w = _humedad_pct_masas(data.get(f"lim_ll_humedo_{i}"), data.get(f"lim_ll_seco_{i}"), data.get(f"lim_ll_recip_masa_{i}"))
@@ -1736,30 +1781,37 @@ def calcular_limites(data):
     lps = [w for w in plasticos if w is not None]
     lp = math.floor(sum(lps) / len(lps)) if lps else None
     ip = ll - lp if ll is not None and lp is not None else None
-    return {"puntos": puntos, "plasticos": plasticos, "ll": ll, "lp": lp, "ip": ip}
+    if nl:
+        ll, lp, ip = "N.L.", "N.P.", "N.L. - N.P."
+    elif np_:
+        lp, ip = "N.P.", "N.P."
+    return {"puntos": puntos, "plasticos": plasticos, "ll": ll, "lp": lp, "ip": ip, "nl": nl, "np": np_ or nl}
 
 
 def resultados_limites(data, key_prefix="lim"):
-    """Muestra (dentro del desplegable de Resultados) las humedades por ensayo, LL, LP, IP y la curva de flujo."""
+    """Muestra (dentro del desplegable de Resultados) las humedades por ensayo, LL, LP, IP y la curva de flujo. Con "No líquido"
+    solo se reportan los resultados (N.L. – N.P.); con "No plástico" no hay tabla del Límite Plástico."""
     r = calcular_limites(data)
-    if not any(p["w"] is not None for p in r["puntos"]) and not any(w is not None for w in r["plasticos"]):
+    sin_datos = not any(p["w"] is not None for p in r["puntos"]) and not any(w is not None for w in r["plasticos"])
+    if sin_datos and not (r["nl"] or r["np"]):
         st.caption("Digita las masas de los ensayos para ver los resultados.")
         return
     fmt = lambda v: fmt_num(v, 2) if v is not None else "—"
-    filas_ll = [(f"Ensayo {p['ensayo']}", fmt_num(p["golpes"], 0) if p["golpes"] is not None else "—", fmt(p["w"])) for p in r["puntos"]]
-    st.markdown("**Límite Líquido — humedad por ensayo**")
-    st.markdown(param_table_ncol_html(("ENSAYO", "GOLPES", "HUMEDAD (%)"), filas_ll), unsafe_allow_html=True)
-    filas_lp = [(f"Ensayo {i}", fmt(w)) for i, w in enumerate(r["plasticos"], 1)]
-    st.markdown("**Límite Plástico — humedad por ensayo**")
-    st.markdown(param_table_html(filas_lp, header_left="ENSAYO", header_right="HUMEDAD (%)"), unsafe_allow_html=True)
+    if not r["nl"]:
+        filas_ll = [(f"Ensayo {p['ensayo']}", fmt_num(p["golpes"], 0) if p["golpes"] is not None else "—", fmt(p["w"])) for p in r["puntos"]]
+        st.markdown("**Límite Líquido — humedad por ensayo**")
+        st.markdown(param_table_ncol_html(("ENSAYO", "GOLPES", "HUMEDAD (%)"), filas_ll), unsafe_allow_html=True)
+    if not r["np"]:
+        filas_lp = [(f"Ensayo {i}", fmt(w)) for i, w in enumerate(r["plasticos"], 1)]
+        st.markdown("**Límite Plástico — humedad por ensayo**")
+        st.markdown(param_table_html(filas_lp, header_left="ENSAYO", header_right="HUMEDAD (%)"), unsafe_allow_html=True)
     st.markdown("**Resultados**")
-    ip_txt = "—"
-    if r["ip"] is not None:
-        ip_txt = str(r["ip"])
     st.markdown(param_table_html([("Límite Líquido — LL (%)", r["ll"] if r["ll"] is not None else "—"),
                                   ("Límite Plástico — LP (%)", r["lp"] if r["lp"] is not None else "—"),
-                                  ("Índice de Plasticidad — IP (%)", ip_txt)],
+                                  ("Índice de Plasticidad — IP (%)", r["ip"] if r["ip"] is not None else "—")],
                                  header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+    if r["nl"]:
+        return
     curva = [{"Golpes": p["golpes"], "Humedad (%)": round(p["w"], 2)} for p in r["puntos"] if p["w"] is not None and p["golpes"]]
     if len(curva) >= 2:
         import altair as alt
@@ -1769,7 +1821,7 @@ def resultados_limites(data, key_prefix="lim"):
             tooltip=["Golpes:Q", "Humedad (%):Q"])
         capas = [base.mark_line(color=PRIMARY) + base.mark_point(filled=True, size=70, color=PRIMARY),
                  alt.Chart(alt.Data(values=[{"Golpes": 25}])).mark_rule(strokeDash=[4, 4], color="#888").encode(x="Golpes:Q")]
-        if r["ll"] is not None:
+        if isinstance(r["ll"], (int, float)):
             capas.append(alt.Chart(alt.Data(values=[{"Golpes": 25, "Humedad (%)": r["ll"]}])).mark_point(shape="diamond", size=140, color="#c0392b", filled=True)
                          .encode(x="Golpes:Q", y="Humedad (%):Q", tooltip=["Golpes:Q", "Humedad (%):Q"]))
         st.markdown("**Curva de flujo**")
@@ -4531,6 +4583,9 @@ def _calcular_limites_atterberg(data):
     """LL, LP e IP (enteros) para la clasificación — mismos valores que ve la persona en los resultados de
     Límites de Atterberg (ver calcular_limites, con las fórmulas de la plantilla). (None, None, None) si faltan datos."""
     r = calcular_limites(data)
+    if r["nl"] or r["np"]:
+        # Suelo no líquido / no plástico: IP = 0 (y LL = 0 si no se calculó), que en USCS cae en limo (M) y en AASHTO en IP = 0.
+        return (r["ll"] if isinstance(r["ll"], (int, float)) else 0), 0, 0
     if r["ll"] is None or r["lp"] is None:
         return None, None, None
     return r["ll"], r["lp"], max(r["ip"], 0)
@@ -5285,7 +5340,17 @@ def _escribir_limites(ws, data):
                     num = to_float(valor)
                     if num is not None:
                         ws[cell] = num
+    if data.get("lim_nl"):
+        # La plantilla ya sabe reportar "N.L. - N.P." cuando el Límite Líquido dice "NO LÍQUIDO" (R42) y "NO PLÁSTICO" cuando
+        # el Límite Plástico está vacío (R41): no se escribe ningún dato.
+        ws["R40"] = "NO LÍQUIDO"
+        ws["R41"] = "NO PLÁSTICO"   # la fórmula original da #¡VALOR! sin datos (ROUNDDOWN de texto)
+        return
     _escribir(LIMITE_LIQUIDO_FILAS)
+    if data.get("lim_np"):
+        ws["R41"] = "NO PLÁSTICO"
+        ws["R42"] = "N.P."
+        return
     _escribir(LIMITE_PLASTICO_FILAS)
 
 
@@ -6064,6 +6129,22 @@ def equipos_selector(skey, lista, actuales):
     return [e for e in lista if e in set(st.session_state[skey])]
 
 
+def conmutador(skey, etiqueta, actual):
+    """Casilla de "sí/no" hecha con un botón que se prende y se apaga (ver equipos_selector: en la tableta las casillas
+    nativas no respondían bien al toque). `skey` único por ensayo. Devuelve el valor actual."""
+    if skey not in st.session_state:
+        st.session_state[skey] = bool(actual)
+    activo = st.session_state[skey]
+    if st.button(etiqueta, key=f"{skey}_btn", use_container_width=True, type="primary" if activo else "secondary",
+                 icon=":material/check_box:" if activo else ":material/check_box_outline_blank:"):
+        ahora = time.monotonic()
+        if ahora - st.session_state.get(f"{skey}_ts", 0) > 0.4:
+            st.session_state[skey] = not activo
+        st.session_state[f"{skey}_ts"] = ahora
+        st.rerun()
+    return st.session_state[skey]
+
+
 def render_equipo(data, prefix, equipo_list=None):
     lista = equipo_list or EQUIPO_LIST
     with st.container(border=True):
@@ -6233,8 +6314,14 @@ def campos_faltantes(tipo, data):
     # nuevos, todavía no tiene validación de campos obligatorios; los del Parafinado no aplican acá.
     if tipo == "masa-unitaria" and data.get("mu_metodo") == "Método B":
         return []
-    return [(key, label) for key, label in CAMPOS_REQUERIDOS_POR_TIPO.get(tipo, [])
-            if not str(data.get(key, "")).strip()]
+    campos = CAMPOS_REQUERIDOS_POR_TIPO.get(tipo, [])
+    if tipo == "limites":
+        # "No líquido" no pide nada; "No plástico" no pide el Límite Plástico.
+        if data.get("lim_nl"):
+            campos = []
+        elif data.get("lim_np"):
+            campos = [c for c in campos if not c[0].startswith("lim_lp_")]
+    return [(key, label) for key, label in campos if not str(data.get(key, "")).strip()]
 
 
 def render_pasa200_section(data, assay_id, requerido=True):
@@ -8815,6 +8902,16 @@ def render_limites_form(data, assay_id):
         metodo_actual = data.get("lim_metodo", METODO_HUMEDAD[0])
         midx = METODO_HUMEDAD.index(metodo_actual) if metodo_actual in METODO_HUMEDAD else 0
         data["lim_metodo"] = st.radio("Método de Ensayo", METODO_HUMEDAD, index=midx, horizontal=True, key=f"lim_metodo_{assay_id}")
+        st.markdown('<div class="cell-muted" style="font-weight:700;margin-top:6px;">Si el suelo no tiene límites</div>', unsafe_allow_html=True)
+        cnl, cnp = st.columns(2)
+        with cnl:
+            data["lim_nl"] = conmutador(f"lim_nl_{assay_id}", "No líquido (NL) — no llenar nada", data.get("lim_nl"))
+        with cnp:
+            data["lim_np"] = conmutador(f"lim_np_{assay_id}", "No plástico (NP) — sin Límite Plástico", data.get("lim_np"))
+        if data["lim_nl"]:
+            st.info("Suelo no líquido: se reporta N.L. – N.P. y no hay que digitar ningún dato de Límites.")
+        elif data["lim_np"]:
+            st.info("Suelo no plástico: solo se digita el Límite Líquido; el Límite Plástico y el IP se reportan N.P.")
 
     def _tabla_limite(icono, titulo, filas, n):
         with st.container(border=True):
@@ -8850,8 +8947,10 @@ def render_limites_form(data, assay_id):
                                 data[hkey] = current_val
                             data[lastsync_key] = current_val
 
-    _tabla_limite("water_drop", "Límite Líquido (INV. 125 - 13)", LIMITE_LIQUIDO_FILAS, LIMITE_LIQUIDO_N)
-    _tabla_limite("gesture", "Límite Plástico (INV. 126 - 13)", LIMITE_PLASTICO_FILAS, LIMITE_PLASTICO_N)
+    if not data["lim_nl"]:
+        _tabla_limite("water_drop", "Límite Líquido (INV. 125 - 13)", LIMITE_LIQUIDO_FILAS, LIMITE_LIQUIDO_N)
+        if not data["lim_np"]:
+            _tabla_limite("gesture", "Límite Plástico (INV. 126 - 13)", LIMITE_PLASTICO_FILAS, LIMITE_PLASTICO_N)
 
     render_equipo(data, "lim", EQUIPO_LIMITES)
 
@@ -8937,7 +9036,9 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             resultados_limites(data)
         with st.container(border=True):
             st.markdown(card_header_html("info", "Información de Ensayo"), unsafe_allow_html=True)
-            st.markdown(param_table_html([("Método de Ensayo", data.get("lim_metodo"))], header_left="DATO", header_right="VALOR"), unsafe_allow_html=True)
+            cond = "No líquido (N.L. – N.P.)" if data.get("lim_nl") else ("No plástico (N.P.)" if data.get("lim_np") else "Con límites")
+            st.markdown(param_table_html([("Método de Ensayo", data.get("lim_metodo")), ("Condición del suelo", cond)],
+                                         header_left="DATO", header_right="VALOR"), unsafe_allow_html=True)
         equipos, norma = data.get("lim_equipos", []), "INV. E-125-13 / INV. E-126-13"
     elif tipo == "masa-unitaria" and data.get("mu_metodo") == "Método B":
         with st.container(border=True):
