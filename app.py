@@ -1966,6 +1966,81 @@ def resultados_cbr_compactado(data):
         st.altair_chart((ch.mark_line(color=PRIMARY) + ch.mark_point(filled=True, size=70, color=PRIMARY)).properties(height=240), use_container_width=True)
 
 
+# Corte directo — lecturas de la máquina. El Excel que arroja la máquina trae la hoja "Data2" (una fila por lectura:
+# C desplazamiento horizontal mm, E deformación vertical mm, F fuerza N, G esfuerzo cortante kPa) y una hoja "Tablas" que
+# toma esos valores cada 0.05 mm de desplazamiento con VLOOKUP aproximado (la última lectura con desplazamiento <= al paso).
+# Aquí se hace lo mismo y se guarda esa tabla; es la que la plantilla GDA-FLC-007 espera en su hoja "Fuente".
+CORTE_PASO_MM = 0.05
+# Desplazamientos horizontales (mm) sobre los que la hoja "2" de GDA-FLC-007 toma el máximo (B20:B52).
+CORTE_PASOS_MAXIMO = [0, 0.05, 0.1, 0.2, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 2.75, 3, 3.25, 3.75, 4, 4.25, 4.5, 4.75, 5,
+                      5.25, 5.5, 5.75, 6, 6.25, 6.5, 6.75, 7, 7.25, 7.5, 7.75, 8]
+
+
+def parse_corte_maquina_xlsx(file_bytes):
+    """Lee el Excel de la máquina de corte directo (hoja "Data2") y devuelve ([[desplazamiento mm, deformación vertical mm,
+    fuerza N, esfuerzo kPa], ...] cada 0.05 mm, aviso)."""
+    import bisect
+    try:
+        wb = load_workbook(BytesIO(file_bytes), data_only=True, read_only=True)
+    except Exception:
+        return [], "No se pudo abrir el archivo como Excel."
+    nombre = next((n for n in wb.sheetnames if n.strip().lower() == "data2"), None)
+    if nombre is None:
+        return [], "No encontré la hoja \"Data2\" (la que arroja la máquina)."
+    lecturas = []
+    for row in wb[nombre].iter_rows(min_row=2, min_col=3, max_col=7, values_only=True):
+        h, _dn, vert, fuerza, esf = row
+        if all(isinstance(v, (int, float)) for v in (h, vert, fuerza, esf)):
+            lecturas.append((float(h), float(vert), float(fuerza), float(esf)))
+    if len(lecturas) < 2:
+        return [], "La hoja \"Data2\" no tiene lecturas de desplazamiento, fuerza y esfuerzo."
+    lecturas.sort(key=lambda t: t[0])
+    horiz = [t[0] for t in lecturas]
+    filas = []
+    k = 1
+    while True:
+        x = round(k * CORTE_PASO_MM, 2)
+        if x > horiz[-1] + 1e-9:
+            break
+        j = bisect.bisect_right(horiz, x + 1e-9) - 1
+        if j >= 0:
+            _h, vert, fuerza, esf = lecturas[j]
+            filas.append([x, round(vert, 3), round(fuerza, 1), round(esf, 3)])
+        k += 1
+    if not filas:
+        return [], "No se pudieron armar las lecturas cada 0.05 mm."
+    return filas, ""
+
+
+def calcular_corte_esfuerzo(data):
+    """Esfuerzo cortante máximo por probeta (kg/cm² = kPa/100, redondeado a 2 decimales como la hoja "1": máximo de los valores
+    en CORTE_PASOS_MAXIMO), cohesión y ángulo de fricción por regresión lineal contra el esfuerzo normal, igual que
+    GDA-FLC-007: si el intercepto sale negativo, cohesión 0 y regresión por el origen."""
+    probetas = []
+    for i in (1, 2, 3):
+        filas = data.get(f"corte_m{i}_maq") or []
+        por_x = {round(f[0], 2): f for f in filas}
+        vals = [por_x[round(x, 2)][3] for x in CORTE_PASOS_MAXIMO if round(x, 2) in por_x]
+        tau = round(max(vals) / 100, 2) if vals else None
+        probetas.append({"i": i, "tau": tau, "tau_kpa": max(vals) if vals else None,
+                         "sigma": to_float(data.get(f"corte_m{i}_esfuerzo_normal")), "n": len(filas)})
+    pts = [(p["sigma"], p["tau"]) for p in probetas if p["sigma"] is not None and p["tau"] is not None]
+    res = {"probetas": probetas, "cohesion": None, "phi": None}
+    if len(pts) >= 2:
+        n = len(pts)
+        mx, my = sum(x for x, _ in pts) / n, sum(y for _, y in pts) / n
+        sxx = sum((x - mx) ** 2 for x, _ in pts)
+        if sxx > 0:
+            pend = sum((x - mx) * (y - my) for x, y in pts) / sxx
+            inter = my - pend * mx
+            if inter < 0:
+                sxx0 = sum(x * x for x, _ in pts)
+                pend, inter = (sum(x * y for x, y in pts) / sxx0 if sxx0 else None), 0.0
+            if pend is not None:
+                res["cohesion"], res["phi"] = inter, math.degrees(math.atan(pend))
+    return res
+
+
 def calcular_corte_directo(data):
     """Cálculos de la hoja "1" de GDA-FLC-007 que se pueden hacer con lo que se digita en la app: área y volumen del
     anillo; gravedad específica (Gs = ρw·Ms / (Ms + Mpic+agua − Mpic+muestra+agua)); y, por probeta, humedad inicial/final,
@@ -2022,8 +2097,39 @@ def resultados_corte_directo(data):
              ("Relación de vacíos, e0", *[f(p["e0"]) for p in ps]), ("Grado de saturación (%)", *[f(p["sr"], 1) for p in ps]),
              ("Esfuerzo normal (kg/cm²)", *[f(p["sigma"], 2) for p in ps])]
     st.markdown(param_table_ncol_html(["RESULTADO", "MUESTRA 1", "MUESTRA 2", "MUESTRA 3"], filas), unsafe_allow_html=True)
-    st.caption("El esfuerzo cortante, la cohesión y el ángulo de fricción salen de las lecturas de carga y deformación de la "
-               "máquina, que la app todavía no captura: se completan en el Excel (hojas 2 y CARGA1).")
+    e = calcular_corte_esfuerzo(data)
+    if any(p["tau"] is not None for p in e["probetas"]):
+        st.markdown("**Esfuerzo cortante y parámetros de resistencia**")
+        filas_e = [("Esfuerzo normal (kg/cm²)", *[f(p["sigma"], 2) for p in e["probetas"]]),
+                   ("Esfuerzo cortante máximo (kg/cm²)", *[f(p["tau"], 2) for p in e["probetas"]]),
+                   ("Esfuerzo cortante máximo (kPa)", *[f(p["tau_kpa"], 1) for p in e["probetas"]])]
+        st.markdown(param_table_ncol_html(["RESULTADO", "MUESTRA 1", "MUESTRA 2", "MUESTRA 3"], filas_e), unsafe_allow_html=True)
+        st.markdown(param_table_html([("Cohesión (kg/cm²)", f(e["cohesion"], 2)),
+                                      ("Cohesión (kPa)", f(e["cohesion"] * 98.0665, 1) if e["cohesion"] is not None else "—"),
+                                      ("Ángulo de fricción (°)", f(e["phi"], 1))],
+                                     header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        if e["cohesion"] is None:
+            st.caption("Para la cohesión y el ángulo de fricción se necesitan al menos 2 muestras con lectura de la máquina y esfuerzo normal.")
+        import altair as alt
+        curva = [{"Desplazamiento (mm)": fila[0], "Esfuerzo (kPa)": fila[3], "Muestra": f"Muestra {i}"}
+                 for i in (1, 2, 3) for fila in (data.get(f"corte_m{i}_maq") or [])]
+        if curva:
+            st.markdown("**Esfuerzo cortante – desplazamiento horizontal**")
+            st.altair_chart(alt.Chart(alt.Data(values=curva)).mark_line().encode(
+                x="Desplazamiento (mm):Q", y="Esfuerzo (kPa):Q", color=alt.Color("Muestra:N", legend=alt.Legend(orient="bottom")),
+                tooltip=["Muestra:N", "Desplazamiento (mm):Q", "Esfuerzo (kPa):Q"]).properties(height=260), use_container_width=True)
+        env = [{"Esfuerzo normal (kg/cm²)": p["sigma"], "Esfuerzo cortante (kg/cm²)": p["tau"]} for p in e["probetas"]
+               if p["sigma"] is not None and p["tau"] is not None]
+        if len(env) >= 2 and e["cohesion"] is not None:
+            tg = math.tan(math.radians(e["phi"]))
+            xmax = max(p["Esfuerzo normal (kg/cm²)"] for p in env) * 1.1
+            recta = [{"Esfuerzo normal (kg/cm²)": x, "Esfuerzo cortante (kg/cm²)": e["cohesion"] + tg * x} for x in (0, xmax)]
+            st.markdown("**Envolvente de falla**")
+            st.altair_chart((alt.Chart(alt.Data(values=recta)).mark_line(color=PRIMARY).encode(x="Esfuerzo normal (kg/cm²):Q", y="Esfuerzo cortante (kg/cm²):Q")
+                             + alt.Chart(alt.Data(values=env)).mark_point(filled=True, size=90, color="#c0392b").encode(
+                                 x="Esfuerzo normal (kg/cm²):Q", y="Esfuerzo cortante (kg/cm²):Q")).properties(height=240), use_container_width=True)
+    else:
+        st.caption("Sube las lecturas de la máquina (arriba) para ver el esfuerzo cortante, la cohesión y el ángulo de fricción.")
 
 
 def icon(name, size=18, fill=False, color=None):
@@ -5851,6 +5957,26 @@ def generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, obs
             ws[f"{col}51"] = seco
             ws[f"{col}52"] = to_float(data.get(f"{base}hum_masa_recipiente_{sufijo}"))
 
+    # Lecturas de la máquina -> hoja "Fuente": muestra 1 en A:D, muestra 2 en H:K, muestra 3 en O:R (E, L y S ya traen su
+    # fórmula kPa/100). La fila 3 es el punto cero y de ahí en adelante las lecturas cada 0.05 mm.
+    if any(data.get(f"corte_m{i}_maq") for i in (1, 2, 3)) and "Fuente" in wb.sheetnames:
+        wf = wb["Fuente"]
+        for i, cols in ((1, "ABCD"), (2, "HIJK"), (3, "OPQR")):
+            filas_maq = data.get(f"corte_m{i}_maq")
+            if not filas_maq:
+                continue
+            for c in cols:
+                wf[f"{c}3"] = 0
+            for r, fila in enumerate(filas_maq, start=4):
+                for c, v in zip(cols, fila):
+                    wf[f"{c}{r}"] = v
+                if cols[0] == "A":
+                    wf[f"E{r}"] = f"=+D{r}/100"
+                elif cols[0] == "H":
+                    wf[f"L{r}"] = f"=+K{r}/100"
+                else:
+                    wf[f"S{r}"] = f"=+R{r}/100"
+
     ws["C57"] = CORTE_TIPO_EXCEL.get(data.get("corte_tipo"), ws["C57"].value)
     ws["C58"] = CORTE_CONDICION_EXCEL.get(data.get("corte_condicion"), ws["C58"].value)
 
@@ -6639,6 +6765,36 @@ def render_corte_directo_form(data, assay_id):
                     if st.checkbox(equipo, value=equipo in sel, key=f"corte_m{i}_hum_equipo_{j}_{assay_id}"):
                         nuevos.append(equipo)
             data[f"corte_m{i}_hum_equipos"] = nuevos
+
+    with st.container(border=True):
+        st.markdown(card_header_html("show_chart", "Lecturas de la Máquina"), unsafe_allow_html=True)
+        st.caption("Sube el Excel que arroja la máquina de corte (hoja \"Data2\"), uno por muestra: se guardan las lecturas cada "
+                   "0.05 mm de desplazamiento y van a la hoja \"Fuente\" del Excel que descargas.")
+        cols_m = st.columns(3)
+        for i, col in zip((1, 2, 3), cols_m):
+            with col:
+                st.markdown(f'<div style="font-weight:700;padding-top:6px;">Muestra {i}</div>', unsafe_allow_html=True)
+                archivo = st.file_uploader(f"Excel de la máquina — muestra {i}", type=["xlsx"], key=f"corte_maq_upload_{i}_{assay_id}",
+                                            label_visibility="collapsed")
+                if archivo and st.button(f"Cargar muestra {i}", key=f"corte_maq_cargar_{i}_{assay_id}", icon=":material/publish:",
+                                          use_container_width=True):
+                    filas_maq, aviso = parse_corte_maquina_xlsx(archivo.getvalue())
+                    if not filas_maq:
+                        st.error(aviso)
+                    else:
+                        data[f"corte_m{i}_maq"] = filas_maq
+                        if _guardar_inmediato(assay_id, data):
+                            st.success(f"Se cargaron y guardaron {len(filas_maq)} lecturas.")
+                        else:
+                            data.pop(f"corte_m{i}_maq", None)
+                filas_cargadas = data.get(f"corte_m{i}_maq")
+                if filas_cargadas:
+                    st.markdown(f'<div class="cell-muted">Cargado: {len(filas_cargadas)} lecturas, hasta {filas_cargadas[-1][0]:g} mm</div>',
+                                unsafe_allow_html=True)
+                    if st.button("Quitar", key=f"corte_maq_quitar_{i}_{assay_id}", use_container_width=True):
+                        data.pop(f"corte_m{i}_maq", None)
+                        if _guardar_inmediato(assay_id, data):
+                            st.rerun()
 
     with st.container(border=True):
         st.markdown(card_header_html("science", "Gravedad Específica (INV E-128-13)"), unsafe_allow_html=True)
