@@ -1622,6 +1622,92 @@ def calcular_humedad_pct(data):
     return (masa_humedo - masa_seco) / masa_suelo_seco * 100
 
 
+def _humedad_pct_masas(humedo, seco, recip):
+    """(húmedo − seco) / (seco − recipiente) × 100, o None si falta algún dato o la masa seca es 0."""
+    humedo, seco, recip = to_float(humedo), to_float(seco), to_float(recip)
+    if humedo is None or seco is None or recip is None or seco - recip == 0:
+        return None
+    return (humedo - seco) / (seco - recip) * 100
+
+
+def resultados_humedad(data):
+    """Filas de resultados del ensayo de Humedad (GDA-FLC-014)."""
+    humedo = to_float(data.get("hum_masa_humedo_mas_recipiente"))
+    seco = to_float(data.get("hum_seco_mas_recipiente"))
+    recip = to_float(data.get("hum_masa_recipiente"))
+    agua = humedo - seco if humedo is not None and seco is not None else None
+    suelo = seco - recip if seco is not None and recip is not None else None
+    pct = calcular_humedad_pct(data)
+    if agua is None and suelo is None:
+        return []
+    return [("Masa del agua (g)", fmt_num(agua, 2) if agua is not None else "—"),
+            ("Masa suelo seco (g)", fmt_num(suelo, 2) if suelo is not None else "—"),
+            ("Humedad (%)", fmt_num(pct, 2) if pct is not None else "—")]
+
+
+def calcular_limites(data):
+    """Límite Líquido / Plástico / Índice de Plasticidad con las fórmulas de la plantilla oficial
+    (CLASIFICACION_DE_SUELOS.xlsm): humedad = (húmedo−seco)/(seco−recipiente)·100; LL = ROUNDDOWN(promedio de
+    w·(N/25)^0.121) — o la humedad de la columna 2 si tiene exactamente 25 golpes —; LP = ROUNDDOWN(promedio);
+    IP = LL − LP. Devuelve dict con los puntos de la curva y los resultados (None si faltan datos)."""
+    puntos = []
+    for i in range(1, LIMITE_LIQUIDO_N + 1):
+        w = _humedad_pct_masas(data.get(f"lim_ll_humedo_{i}"), data.get(f"lim_ll_seco_{i}"), data.get(f"lim_ll_recip_masa_{i}"))
+        n = to_float(data.get(f"lim_ll_golpes_{i}"))
+        puntos.append({"ensayo": i, "golpes": n, "w": w})
+    plasticos = [_humedad_pct_masas(data.get(f"lim_lp_humedo_{i}"), data.get(f"lim_lp_seco_{i}"), data.get(f"lim_lp_recip_masa_{i}"))
+                 for i in range(1, LIMITE_PLASTICO_N + 1)]
+    completos = [p for p in puntos if p["w"] is not None and p["golpes"]]
+    ll = None
+    if completos:
+        if puntos[1]["golpes"] == 25 and puntos[1]["w"] is not None:
+            ll = math.floor(puntos[1]["w"])
+        else:
+            ll = math.floor(sum(p["w"] * (p["golpes"] / 25) ** 0.121 for p in completos) / len(completos))
+    lps = [w for w in plasticos if w is not None]
+    lp = math.floor(sum(lps) / len(lps)) if lps else None
+    ip = ll - lp if ll is not None and lp is not None else None
+    return {"puntos": puntos, "plasticos": plasticos, "ll": ll, "lp": lp, "ip": ip}
+
+
+def resultados_limites(data, key_prefix="lim"):
+    """Muestra (dentro del desplegable de Resultados) las humedades por ensayo, LL, LP, IP y la curva de flujo."""
+    r = calcular_limites(data)
+    if not any(p["w"] is not None for p in r["puntos"]) and not any(w is not None for w in r["plasticos"]):
+        st.caption("Digita las masas de los ensayos para ver los resultados.")
+        return
+    fmt = lambda v: fmt_num(v, 2) if v is not None else "—"
+    filas_ll = [(f"Ensayo {p['ensayo']}", fmt_num(p["golpes"], 0) if p["golpes"] is not None else "—", fmt(p["w"])) for p in r["puntos"]]
+    st.markdown("**Límite Líquido — humedad por ensayo**")
+    st.markdown(param_table_ncol_html(("ENSAYO", "GOLPES", "HUMEDAD (%)"), filas_ll), unsafe_allow_html=True)
+    filas_lp = [(f"Ensayo {i}", fmt(w)) for i, w in enumerate(r["plasticos"], 1)]
+    st.markdown("**Límite Plástico — humedad por ensayo**")
+    st.markdown(param_table_html(filas_lp, header_left="ENSAYO", header_right="HUMEDAD (%)"), unsafe_allow_html=True)
+    st.markdown("**Resultados**")
+    ip_txt = "—"
+    if r["ip"] is not None:
+        ip_txt = str(r["ip"])
+    st.markdown(param_table_html([("Límite Líquido — LL (%)", r["ll"] if r["ll"] is not None else "—"),
+                                  ("Límite Plástico — LP (%)", r["lp"] if r["lp"] is not None else "—"),
+                                  ("Índice de Plasticidad — IP (%)", ip_txt)],
+                                 header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+    curva = [{"Golpes": p["golpes"], "Humedad (%)": round(p["w"], 2)} for p in r["puntos"] if p["w"] is not None and p["golpes"]]
+    if len(curva) >= 2:
+        import altair as alt
+        base = alt.Chart(alt.Data(values=curva)).encode(
+            x=alt.X("Golpes:Q", scale=alt.Scale(type="log", domain=[10, 100]), axis=alt.Axis(values=[10, 15, 20, 25, 30, 40, 60, 100], title="Número de golpes (escala log)")),
+            y=alt.Y("Humedad (%):Q", scale=alt.Scale(zero=False)),
+            tooltip=["Golpes:Q", "Humedad (%):Q"])
+        capas = [base.mark_line(color=PRIMARY) + base.mark_point(filled=True, size=70, color=PRIMARY),
+                 alt.Chart(alt.Data(values=[{"Golpes": 25}])).mark_rule(strokeDash=[4, 4], color="#888").encode(x="Golpes:Q")]
+        if r["ll"] is not None:
+            capas.append(alt.Chart(alt.Data(values=[{"Golpes": 25, "Humedad (%)": r["ll"]}])).mark_point(shape="diamond", size=140, color="#c0392b", filled=True)
+                         .encode(x="Golpes:Q", y="Humedad (%):Q", tooltip=["Golpes:Q", "Humedad (%):Q"]))
+        st.markdown("**Curva de flujo**")
+        st.altair_chart(alt.layer(*capas).properties(height=260), use_container_width=True)
+        st.caption("La línea punteada marca los 25 golpes; el rombo rojo es el Límite Líquido.")
+
+
 def icon(name, size=18, fill=False, color=None):
     """Ícono de Material Symbols para insertar dentro de HTML propio (st.markdown con unsafe_allow_html)."""
     cls = "material-symbols-outlined msi-fill" if fill else "material-symbols-outlined"
@@ -1663,6 +1749,12 @@ def card_header_html(icon_name, title, extra_html=""):
     return (f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">'
             f'<div style="display:flex;align-items:center;gap:9px;font-weight:800;color:{PRIMARY};font-size:19px;">'
             f'{icon(icon_name, size=22)} {title}</div>{extra_html}</div>')
+
+
+def resultados_desplegable(titulo="Resultados"):
+    """Los resultados de cada ensayo se ven dentro de un desplegable (cerrado al abrir la pantalla) para que el
+    formulario no se alargue y quien digita los abra solo cuando quiere revisar el cálculo."""
+    return st.expander(titulo, icon=":material/calculate:")
 
 
 def param_table_html(rows, header_left="PARÁMETRO", header_right="VALOR REGISTRADO"):
@@ -5762,7 +5854,6 @@ def render_granulometria_form(data, assay_id):
 
 
 def render_humedad_form(data, assay_id):
-    st.info("Estos datos se guardan tal cual y se llevan a la plantilla oficial de Excel — el % de humedad lo calcula el Excel, no la app.")
 
     render_norma_selector("humedad", data, "hum")
     render_equipo(data, "hum", EQUIPO_HUMEDAD)
@@ -5822,6 +5913,13 @@ def render_humedad_form(data, assay_id):
             metodo_actual = data.get("hum_metodo", METODO_HUMEDAD[0])
             midx = METODO_HUMEDAD.index(metodo_actual) if metodo_actual in METODO_HUMEDAD else 0
             data["hum_metodo"] = st.selectbox("Método del Ensayo", METODO_HUMEDAD, index=midx, key=f"hum_metodo_{assay_id}")
+
+    filas = resultados_humedad(data)
+    with resultados_desplegable():
+        if filas:
+            st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        else:
+            st.caption("Digita las masas para ver el resultado.")
 
 
 def _mub_humedad(data):
@@ -5997,8 +6095,7 @@ def render_masa_unitaria_form(data, assay_id, muestra_id=None):
                 if humedad_calc is not None:
                     st.markdown(param_table_html([("Humedad calculada (%)", fmt_num(humedad_calc, 2))]),
                                 unsafe_allow_html=True)
-        with st.container(border=True):
-            st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+        with resultados_desplegable():
             filas, humedad_pct, _fuente = resultados_masa_unitaria_parafinado(data, muestra_id)
             if filas:
                 st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
@@ -6032,8 +6129,7 @@ def render_masa_unitaria_form(data, assay_id, muestra_id=None):
                         if not data.get(siguiente):
                             st.session_state[f"{siguiente}_{assay_id}"] = data["mub_hum_seco_17"]
                             data[siguiente] = data["mub_hum_seco_17"]
-        with st.container(border=True):
-            st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+        with resultados_desplegable():
             filas = resultados_masa_unitaria_b(data)
             if filas:
                 st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
@@ -6576,8 +6672,7 @@ def render_consolidacion_form(data, assay_id):
                             data.pop(f"cons_maq_{i}", None)
                             if _guardar_inmediato(assay_id, data):
                                 st.rerun()
-    with st.container(border=True):
-        st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+    with resultados_desplegable():
         filas = resultados_consolidacion(data)
         if filas:
             st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
@@ -6957,8 +7052,7 @@ def render_compresion_inconfinada_form(data, assay_id):
                         st.rerun()
                     else:
                         data.pop("ci_foto_falla", None)
-    with st.container(border=True):
-        st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+    with resultados_desplegable():
         filas = resultados_compresion_inconfinada(data)
         if filas:
             st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
@@ -7386,8 +7480,7 @@ def render_compresion_roca_form(data, assay_id):
                         st.rerun()
                     else:
                         data.pop("roca_foto_falla", None)
-    with st.container(border=True):
-        st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+    with resultados_desplegable():
         filas = resultados_compresion_roca(data)
         if filas:
             st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
@@ -7563,8 +7656,7 @@ def render_carga_puntual_form(data, assay_id):
                         st.rerun()
                     else:
                         data.pop("cp_foto_falla", None)
-    with st.container(border=True):
-        st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+    with resultados_desplegable():
         filas = resultados_carga_puntual(data)
         if filas:
             st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
@@ -7792,8 +7884,7 @@ def render_solidez_sulfatos_form(data, assay_id):
                                           index=SULF_SOLUCIONES.index(actual) if actual in SULF_SOLUCIONES else 0,
                                           key=f"sulf_solucion_{assay_id}")
         _campo("sulf_ciclos", "Número de ciclos", placeholder="5")
-    with st.container(border=True):
-        st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+    with resultados_desplegable():
         filas = resultados_solidez_sulfatos(data)
         if filas:
             st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
@@ -7957,8 +8048,7 @@ def render_terrones_arcilla_form(data, assay_id):
                                                    label_visibility="collapsed", placeholder="0.00")
             row[3].markdown(f'<div class="cell-muted" style="text-align:center;padding-top:8px;">'
                              f'{fmt_num(masa_min, 0)} g / {tamiz_perdida}</div>', unsafe_allow_html=True)
-    with st.container(border=True):
-        st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+    with resultados_desplegable():
         filas = resultados_terrones_arcilla(data)
         if filas:
             st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
@@ -8036,8 +8126,7 @@ def render_limite_contraccion_form(data, assay_id):
                 key = f"lc_{tipo}_{campo}"
                 data[key] = row[col_i].text_input(f"{label} — {tipo}", value=data.get(key, ""), key=f"{key}_{assay_id}",
                                                    label_visibility="collapsed", placeholder="0.00")
-    with st.container(border=True):
-        st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+    with resultados_desplegable():
         filas = resultados_limite_contraccion(data)
         if filas:
             st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
@@ -8059,8 +8148,7 @@ def render_materia_organica_form(data, assay_id):
             row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
             data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
                                            label_visibility="collapsed", placeholder="0.00")
-    with st.container(border=True):
-        st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+    with resultados_desplegable():
         filas = resultados_materia_organica(data)
         if filas:
             st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
@@ -8183,8 +8271,7 @@ def render_gravedad_especifica_form(data, assay_id):
 
     def _resultados(modo):
         filas = resultados_gravedad(data, modo)
-        with st.container(border=True):
-            st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+        with resultados_desplegable():
             if filas:
                 st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
             else:
@@ -8223,8 +8310,6 @@ def render_gravedad_especifica_form(data, assay_id):
 
 
 def render_limites_form(data, assay_id):
-    st.info("Estos datos se guardan tal cual y se llevan a la plantilla oficial de Excel — el Límite Líquido, el Límite Plástico y el Índice de Plasticidad los calcula el Excel, no la app.")
-
     with st.container(border=True):
         st.markdown(card_header_html("info", "Información de Ensayo"), unsafe_allow_html=True)
         metodo_actual = data.get("lim_metodo", METODO_HUMEDAD[0])
@@ -8269,6 +8354,9 @@ def render_limites_form(data, assay_id):
     _tabla_limite("gesture", "Límite Plástico (INV. 126 - 13)", LIMITE_PLASTICO_FILAS, LIMITE_PLASTICO_N)
 
     render_equipo(data, "lim", EQUIPO_LIMITES)
+
+    with resultados_desplegable("Resultados: Límite Líquido, Límite Plástico y curva"):
+        resultados_limites(data)
 
 
 def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
@@ -8318,6 +8406,8 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
         with st.container(border=True):
             st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
             st.markdown(param_table_html(rows), unsafe_allow_html=True)
+        with resultados_desplegable():
+            st.markdown(param_table_html(resultados_humedad(data) or [("Humedad (%)", "—")], header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
         with st.container(border=True):
             st.markdown(card_header_html("local_fire_department", "Datos del Laboratorio"), unsafe_allow_html=True)
             lab_rows = [
@@ -8338,6 +8428,8 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             headers = ["PARÁMETRO"] + [f"ENSAYO {i}" for i in range(1, LIMITE_PLASTICO_N + 1)]
             lp_rows = [(label, *[data.get(f"{key}_{i}") for i in range(1, LIMITE_PLASTICO_N + 1)]) for key, label, _c in LIMITE_PLASTICO_FILAS]
             st.markdown(param_table_ncol_html(headers, lp_rows), unsafe_allow_html=True)
+        with resultados_desplegable("Resultados: Límite Líquido, Límite Plástico y curva"):
+            resultados_limites(data)
         with st.container(border=True):
             st.markdown(card_header_html("info", "Información de Ensayo"), unsafe_allow_html=True)
             st.markdown(param_table_html([("Método de Ensayo", data.get("lim_metodo"))], header_left="DATO", header_right="VALOR"), unsafe_allow_html=True)
@@ -8353,8 +8445,7 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             st.markdown(param_table_html([(l, data.get(k)) for k, l in MUB_HUMEDAD_FILAS]), unsafe_allow_html=True)
         resultados = resultados_masa_unitaria_b(data)
         if resultados:
-            with st.container(border=True):
-                st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+            with resultados_desplegable():
                 st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
         equipos, norma = data.get("mub_equipos", []), data.get("mu_norma", "—")
     elif tipo == "masa-unitaria":
@@ -8369,8 +8460,7 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                 st.markdown(param_table_html([(l, data.get(k)) for k, l in MU_HUMEDAD_FILAS]), unsafe_allow_html=True)
         filas, _humedad_pct, _fuente = resultados_masa_unitaria_parafinado(data, muestra_id)
         if filas:
-            with st.container(border=True):
-                st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+            with resultados_desplegable():
                 st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
         equipos, norma = data.get("mu_equipos", []), data.get("mu_norma", "—")
     elif tipo == "cbr":
@@ -8452,8 +8542,7 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                 st.markdown(param_table_ncol_html(["DEFORMACIÓN (0.001 in)", "CARGA (kN)"], lecturas), unsafe_allow_html=True)
         resultados = resultados_compresion_inconfinada(data)
         if resultados:
-            with st.container(border=True):
-                st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+            with resultados_desplegable():
                 st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
         if data.get("ci_foto_falla"):
             with st.container(border=True):
@@ -8482,8 +8571,7 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                 st.markdown(param_table_ncol_html(["DEFORMACIÓN (0.001 in)", "CARGA (kN)"], lecturas), unsafe_allow_html=True)
         resultados = resultados_compresion_roca(data)
         if resultados:
-            with st.container(border=True):
-                st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+            with resultados_desplegable():
                 st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
         if data.get("roca_foto_falla"):
             with st.container(border=True):
@@ -8506,8 +8594,7 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             st.markdown(param_table_html([(l, data.get(k)) for k, l in CP_HUMEDAD_FILAS]), unsafe_allow_html=True)
         resultados = resultados_carga_puntual(data)
         if resultados:
-            with st.container(border=True):
-                st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+            with resultados_desplegable():
                 st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
         if data.get("cp_foto_falla"):
             with st.container(border=True):
@@ -8534,8 +8621,7 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                                           ("Número de ciclos", data.get("sulf_ciclos"))]), unsafe_allow_html=True)
         resultados = resultados_solidez_sulfatos(data)
         if resultados:
-            with st.container(border=True):
-                st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+            with resultados_desplegable():
                 st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
         equipos, norma = data.get("sulf_equipos", []), data.get("sulf_norma", "—")
     elif tipo == "terrones-arcilla":
@@ -8552,8 +8638,7 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                                                for label, fila, *_ in TER_FRACCIONES]), unsafe_allow_html=True)
         resultados = resultados_terrones_arcilla(data)
         if resultados:
-            with st.container(border=True):
-                st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+            with resultados_desplegable():
                 st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
         equipos, norma = data.get("ter_equipos", []), data.get("ter_norma", "—")
     elif tipo == "consolidacion":
@@ -8582,8 +8667,7 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                                                for i, c in enumerate(CONS_CARGAS, start=1)]), unsafe_allow_html=True)
         resultados = resultados_consolidacion(data)
         if resultados:
-            with st.container(border=True):
-                st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+            with resultados_desplegable():
                 st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
         equipos, norma = data.get("cons_equipos", []), data.get("cons_norma", "—")
     elif tipo == "limite-contraccion":
@@ -8598,8 +8682,7 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                         unsafe_allow_html=True)
         resultados = resultados_limite_contraccion(data)
         if resultados:
-            with st.container(border=True):
-                st.markdown(card_header_html("calculate", "Resultados"), unsafe_allow_html=True)
+            with resultados_desplegable():
                 st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
         equipos, norma = [], data.get("lc_norma", "—")
     elif tipo == "materia-organica":
