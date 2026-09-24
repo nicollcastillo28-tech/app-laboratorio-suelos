@@ -232,7 +232,7 @@ st.markdown(f"""
        borde tapando el grupo entero en vez de resaltar una sola tarjeta. bell-alert/bell-quiet
        (el botón-contenedor de la campana en el topbar) tampoco: es un ícono, no una tarjeta —
        se veía como una rayita verde suelta pegada a la campana. */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not(.st-key-bell-alert):not(.st-key-bell-quiet):not([class*="st-key-notif-card-"]) {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not([class*="st-key-notif-card-"]) {{
         border-left: 4px solid {PRIMARY} !important;
     }}
     /* Tarjetas de "Ensayos asignados" (una por ensayo): más separación entre sí y sombra
@@ -398,6 +398,69 @@ st.markdown(f"""
     }}
     .st-key-home-actions .bento-primary, .st-key-home-actions .bento-light {{ height: 100%; }}
     .bento-light p {{ color: {MUTED}; font-size: 13px; margin: 0; }}
+
+    /* ---- ACCESOS RÁPIDOS (menú de Inicio, según el diseño "Menú del laboratorio") ----
+       Cuadrícula de 4 columnas en pantalla ancha, 2 en tablet (vertical y horizontal) y 1 en teléfono.
+       Cada tarjeta es un bloque con clave propia: la tarjeta visual (HTML) y, encima, el botón de
+       Streamlit transparente que ocupa toda la tarjeta y hace la navegación. */
+    .home-quick-head {{ display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 4px 0; }}
+    .home-quick-head h2 {{ margin: 0; font-size: 18px; font-weight: 700; color: #16231A; }}
+    .home-quick-head span {{ font-size: 13px; color: #5B6B5F; }}
+    [class*="st-key-home-tiles"] {{
+        display: grid !important; gap: 14px !important; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: stretch;
+    }}
+    .st-key-home-tiles-3 {{ grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }}
+    .st-key-home-tiles-2 {{ grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }}
+    @media (max-width: 1100px) {{
+        [class*="st-key-home-tiles"] {{ grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }}
+        .st-key-home-tiles-3 > :first-child {{ grid-column: span 2; }}
+    }}
+    @media (max-width: 560px) {{
+        [class*="st-key-home-tiles"] {{ grid-template-columns: minmax(0, 1fr) !important; }}
+        .st-key-home-tiles-3 > :first-child {{ grid-column: auto; }}
+    }}
+    [data-testid="stLayoutWrapper"]:has(> [class*="st-key-tile-"]) {{ display: flex; flex-direction: column; width: 100%; }}
+    /* El propio bloque con clave es la tarjeta (así todas quedan del mismo alto en la fila): el HTML de dentro solo
+       acomoda ícono, texto y flecha, y el botón transparente cubre la tarjeta entera. */
+    div[data-testid="stVerticalBlock"][class*="st-key-home-tiles"] {{ border: none !important; box-shadow: none !important; background: transparent !important; border-radius: 0 !important; }}
+    div[data-testid="stVerticalBlock"][class*="st-key-tile-"] {{
+        position: relative; flex: 1 0 auto; gap: 0 !important; justify-content: center; box-sizing: border-box;
+        padding: 16px 18px; min-height: 88px; border-radius: 14px !important; border: 1px solid #DCE5DD !important; background: #FFFFFF !important;
+        box-shadow: none !important; color: #16231A;
+        transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease, background .15s ease;
+    }}
+    div[data-testid="stVerticalBlock"][class*="st-key-tile-p-"] {{ background: #0B4A26 !important; border-color: #0B4A26 !important; color: #FFFFFF; }}
+    [class*="st-key-tile-"] [data-testid="stMarkdownContainer"] {{ margin-bottom: 0 !important; }}
+    [class*="st-key-tile-"] > [data-testid="stElementContainer"] {{ width: 100%; }}
+    [class*="st-key-tile-"] > [class*="st-key-btn-"] {{
+        position: absolute; inset: 0; z-index: 2; width: 100% !important; height: 100% !important; margin: 0;
+    }}
+    [class*="st-key-tile-"] > [class*="st-key-btn-"] [data-testid="stButton"],
+    [class*="st-key-tile-"] > [class*="st-key-btn-"] button {{
+        width: 100% !important; height: 100% !important; min-height: 0; opacity: 0; cursor: pointer; padding: 0;
+    }}
+    .gd-tile {{ display: flex; align-items: center; gap: 14px; width: 100%; }}
+    .gd-tile .gd-ico {{ width: 44px; height: 44px; border-radius: 12px; background: #E3F1E6; display: flex; align-items: center;
+        justify-content: center; flex-shrink: 0; }}
+    .gd-tile .gd-txt {{ display: flex; flex-direction: column; gap: 3px; flex-grow: 1; min-width: 0; }}
+    .gd-tile .gd-title {{ display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700; line-height: 1.25; }}
+    .gd-tile .gd-sub {{ font-size: 13px; color: #5B6B5F; line-height: 1.3; }}
+    .gd-tile .gd-badge {{ min-width: 22px; height: 22px; padding: 0 7px; box-sizing: border-box; border-radius: 999px; background: #0F7A3A;
+        color: #FFFFFF; font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }}
+    .gd-tile .gd-go {{ width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+        flex-shrink: 0; background: #EAF3EC; color: #0F7A3A; transition: background .15s ease, color .15s ease; }}
+    .gd-tile.primary .gd-ico {{ background: rgba(255,255,255,0.14); }}
+    .gd-tile.primary .gd-sub {{ color: #CFE6D6; }}
+    .gd-tile.primary .gd-badge {{ background: #FFFFFF; color: #0B4A26; }}
+    .gd-tile.primary .gd-go {{ background: rgba(255,255,255,0.16); color: #FFFFFF; }}
+    div[data-testid="stVerticalBlock"][class*="st-key-tile-"]:hover {{ transform: translateY(-2px); border-color: #0F7A3A !important; box-shadow: 0 8px 20px rgba(11,61,30,0.10) !important; }}
+    [class*="st-key-tile-"]:hover .gd-go {{ background: #0F7A3A; color: #FFFFFF; }}
+    div[data-testid="stVerticalBlock"][class*="st-key-tile-p-"]:hover {{ background: #0A5B2D !important; box-shadow: 0 10px 24px rgba(11,74,38,0.28) !important; }}
+    [class*="st-key-tile-p-"]:hover .gd-go {{ background: #FFFFFF; color: #0B4A26; }}
+    [class*="st-key-tile-"]:has(button:focus-visible) {{ outline: 3px solid #0F7A3A; outline-offset: 2px; }}
+    @media (hover: none) {{
+        [class*="st-key-tile-"]:hover {{ transform: none; }}
+    }}
 
     .stat-chip {{
         background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 12px; padding: 14px 16px;
@@ -2582,6 +2645,34 @@ def _ensayos_pendientes_dt():
     return pendientes
 
 
+_TILE_ICONOS = {
+    "nuevo": '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>',
+    "ejecucion": '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3"></path><path d="M7.5 15h9"></path></svg>',
+    "ejecutados": '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1.5"></rect><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"></path><path d="M9.5 13.5l2 2 3.5-3.5"></path></svg>',
+    "balanzas": '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18M7 21h10M4 7h16"></path><path d="M4 7l-3 7a3.5 3.5 0 0 0 6 0z"></path><path d="M20 7l-3 7a3.5 3.5 0 0 0 6 0z"></path></svg>',
+    "aprobar": '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>',
+}
+_TILE_FLECHA = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>'
+
+
+def render_accesos_rapidos(tiles):
+    """Menú de Inicio: 'Accesos rápidos'. tiles = [(clave, icono, titulo, subtitulo, badge|None, primaria, pantalla|None)];
+    sin pantalla la tarjeta es solo informativa (sin botón)."""
+    st.markdown('<div class="home-quick-head"><h2>Accesos rápidos</h2><span>Laboratorio Geodelta</span></div>', unsafe_allow_html=True)
+    with st.container(key=f"home-tiles-{len(tiles)}"):
+        for clave, ico, titulo, sub, badge, primaria, pantalla in tiles:
+            color = "#FFFFFF" if primaria else "#0F7A3A"
+            badge_html = f'<span class="gd-badge">{badge}</span>' if badge is not None else ""
+            with st.container(key=f"tile-p-{clave}" if primaria else f"tile-{clave}"):
+                st.markdown(
+                    f'<div class="gd-tile{" primary" if primaria else ""}"><span class="gd-ico">{_TILE_ICONOS[ico].format(c=color)}</span>'
+                    f'<span class="gd-txt"><span class="gd-title">{html.escape(titulo)}{badge_html}</span>'
+                    f'<span class="gd-sub">{html.escape(sub)}</span></span>{f"<span class=gd-go>{_TILE_FLECHA}</span>" if pantalla else ""}</div>',
+                    unsafe_allow_html=True)
+                if pantalla and st.button(titulo, key=f"btn-{clave}", use_container_width=True):
+                    navigate(pantalla)
+
+
 def render_home():
     es_jefe = st.session_state.role == "jefe"
     es_ingeniero = st.session_state.role == "ingeniero"
@@ -2598,88 +2689,43 @@ def render_home():
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    with st.container(key="home-actions"):
-        if es_jefe:
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.markdown(f'<div class="bento-primary"><div class="bento-icon">{icon("add")}</div>'
-                             '<div><h3>Crear nuevo proyecto</h3><p>Registrar nuevo cliente y parámetros de sitio.</p></div></div>',
-                             unsafe_allow_html=True)
-                if st.button("Crear proyecto →", key="cta_new_project", use_container_width=True):
-                    navigate("new-project")
-            with c2:
-                st.markdown(f'<div class="bento-light"><div class="bento-icon">{icon("sync")}</div>'
-                             f'<div><h3>Proyectos en ejecución</h3><p>{sum(1 for p in st.session_state.projects if project_status(p["codigo_interno"])=="ejecucion")} proyecto(s) activos en laboratorio.</p></div></div>',
-                             unsafe_allow_html=True)
-                if st.button("Ver proyectos →", key="cta_active", use_container_width=True):
-                    navigate("projects-active")
-            with c3:
-                st.markdown(f'<div class="bento-light"><div class="bento-icon">{icon("archive")}</div>'
-                             '<div><h3>Proyectos ejecutados</h3><p>Revisar reportes finales y resultados certificados.</p></div></div>',
-                             unsafe_allow_html=True)
-                if st.button("Explorar archivo →", key="cta_done", use_container_width=True):
-                    navigate("projects-done")
+    en_ejecucion = sum(1 for p in st.session_state.projects if project_status(p["codigo_interno"]) == "ejecucion")
+    if es_jefe:
+        render_accesos_rapidos([
+            ("nuevo", "nuevo", "Nuevo proyecto", "Cliente y parámetros de sitio", None, True, "new-project"),
+            ("ejecucion", "ejecucion", "En ejecución", "Proyectos activos en laboratorio", en_ejecucion, False, "projects-active"),
+            ("ejecutados", "ejecutados", "Ejecutados", "Reportes finales y certificados", None, False, "projects-done"),
+            # La calibración de balanzas es solo del Jefe de Laboratorio (auxiliares y Director Técnico no la tienen).
+            ("balanzas", "balanzas", "Calibración de balanzas", "Comprobación semanal · GDA-FLC-029", None, False, "balanzas"),
+        ])
+    elif es_ingeniero:
+        pendientes_ing = _ensayos_pendientes_dt()
+        render_accesos_rapidos([
+            ("aprobar", "aprobar", "Pendientes de aprobación", "Confirmados por el Jefe, esperan tu visto bueno", len(pendientes_ing), True, None),
+            ("ejecucion", "ejecucion", "En ejecución", "Proyectos activos en laboratorio", en_ejecucion, False, "projects-active"),
+            ("ejecutados", "ejecutados", "Ejecutados", "Historial certificado · consulta", None, False, "projects-done"),
+        ])
+        if pendientes_ing:
             st.markdown("<br>", unsafe_allow_html=True)
-            c4, _c5 = st.columns([1, 2])
-            with c4:
-                st.markdown(f'<div class="bento-light"><div class="bento-icon">{icon("balance")}</div>'
-                             '<div><h3>Calibración de balanzas</h3><p>Comprobación intermedia semanal — GDA-FLC-029.</p></div></div>',
-                             unsafe_allow_html=True)
-                if st.button("Abrir →", key="cta_balanzas", use_container_width=True):
-                    navigate("balanzas")
-        elif es_ingeniero:
-            pendientes_ing = _ensayos_pendientes_dt()
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.markdown(f'<div class="bento-primary"><div class="bento-icon">{icon("fact_check")}</div>'
-                             f'<div><span class="bento-eyebrow">Tareas prioritarias</span>'
-                             f'<h3>Ensayos pendientes de tu aprobación</h3><p>{len(pendientes_ing)} ensayo(s) '
-                             f'confirmados por el Jefe de Laboratorio, esperando tu visto bueno final.</p></div></div>',
-                             unsafe_allow_html=True)
-            with c2:
-                st.markdown(f'<div class="bento-light"><div class="bento-icon">{icon("sync")}</div>'
-                             f'<div><h3>Proyectos en ejecución</h3><p>{sum(1 for p in st.session_state.projects if project_status(p["codigo_interno"])=="ejecucion")} proyecto(s) activos en laboratorio.</p></div></div>',
-                             unsafe_allow_html=True)
-                if st.button("Ver proyectos →", key="cta_active_ing", use_container_width=True):
-                    navigate("projects-active")
-            with c3:
-                st.markdown(f'<div class="bento-light"><div class="bento-icon">{icon("archive")}</div>'
-                             '<div><h3>Proyectos ejecutados</h3><p>Consulta el historial certificado.</p></div></div>',
-                             unsafe_allow_html=True)
-                if st.button("Explorar archivo →", key="cta_done_ing", use_container_width=True):
-                    navigate("projects-done")
-            if pendientes_ing:
-                st.markdown("<br>", unsafe_allow_html=True)
-                for codigo, perf_codigo, m, ensayo_label in pendientes_ing[:5]:
-                    proyecto = get_project(codigo)
-                    with st.container(border=True):
-                        cols = st.columns([3, 1])
-                        cols[0].markdown(
-                            f'<div class="cell-title">{html.escape(proyecto["nombre"] if proyecto else codigo)} · {html.escape(ensayo_label)}</div>'
-                            f'<div class="cell-sub">{html.escape(codigo)} · {html.escape(perf_codigo)} · Muestra {m["numero"]}</div>',
-                            unsafe_allow_html=True)
-                        with cols[1]:
-                            if st.button("Revisar →", key=f"revisar_ing_{m['id_unico']}_{ensayo_label}", use_container_width=True):
-                                st.session_state.selected_codigo = codigo
-                                st.session_state.selected_perforacion = perf_codigo
-                                st.session_state.selected_muestra_id = m["id_unico"]
-                                navigate("muestra-detail")
-        else:
-            c1, c2 = st.columns([2, 1])
-            with c1:
-                activos = sum(1 for p in st.session_state.projects if project_status(p["codigo_interno"]) == "ejecucion")
-                st.markdown(f'<div class="bento-primary"><div class="bento-icon">{icon("assignment")}</div>'
-                             f'<div><span class="bento-eyebrow">Tareas prioritarias</span>'
-                             f'<h3>Proyectos en ejecución</h3><p>Accede a los proyectos activos para registrar granulometría, humedad y peso unitario.</p></div></div>',
-                             unsafe_allow_html=True)
-                if st.button(f"Ver proyectos → ({activos} activos)", key="cta_active_aux", use_container_width=True):
-                    navigate("projects-active")
-            with c2:
-                st.markdown(f'<div class="bento-light"><div class="bento-icon">{icon("archive")}</div>'
-                             '<div><h3>Proyectos ejecutados</h3><p>Consulta el historial. Solo lectura.</p></div></div>',
-                             unsafe_allow_html=True)
-                if st.button("Explorar archivo →", key="cta_done_aux", use_container_width=True):
-                    navigate("projects-done")
+            for codigo, perf_codigo, m, ensayo_label in pendientes_ing[:5]:
+                proyecto = get_project(codigo)
+                with st.container(border=True):
+                    cols = st.columns([3, 1])
+                    cols[0].markdown(
+                        f'<div class="cell-title">{html.escape(proyecto["nombre"] if proyecto else codigo)} · {html.escape(ensayo_label)}</div>'
+                        f'<div class="cell-sub">{html.escape(codigo)} · {html.escape(perf_codigo)} · Muestra {m["numero"]}</div>',
+                        unsafe_allow_html=True)
+                    with cols[1]:
+                        if st.button("Revisar →", key=f"revisar_ing_{m['id_unico']}_{ensayo_label}", use_container_width=True):
+                            st.session_state.selected_codigo = codigo
+                            st.session_state.selected_perforacion = perf_codigo
+                            st.session_state.selected_muestra_id = m["id_unico"]
+                            navigate("muestra-detail")
+    else:
+        render_accesos_rapidos([
+            ("ejecucion", "ejecucion", "En ejecución", "Registra los ensayos de tus proyectos asignados", en_ejecucion, True, "projects-active"),
+            ("ejecutados", "ejecutados", "Ejecutados", "Historial · solo lectura", None, False, "projects-done"),
+        ])
 
     if es_jefe and st.session_state.projects:
         st.markdown("<br>", unsafe_allow_html=True)
