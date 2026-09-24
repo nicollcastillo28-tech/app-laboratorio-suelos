@@ -52,6 +52,7 @@ TEMPLATE_COMPRESION_ROCA = os.path.join(BASE_DIR, "templates", "GDA-FLC-043_comp
 TEMPLATE_CARGA_PUNTUAL = os.path.join(BASE_DIR, "templates", "GDA-FLC-018_carga_puntual.xlsx")
 TEMPLATE_SOLIDEZ_SULFATOS = os.path.join(BASE_DIR, "templates", "GDA-FLC-033_solidez_sulfatos.xlsx")
 TEMPLATE_TERRONES_ARCILLA = os.path.join(BASE_DIR, "templates", "GDA-FLC-034_terrones_arcilla.xlsx")
+TEMPLATE_VERIFICACION_BALANZAS = os.path.join(BASE_DIR, "templates", "GDA-FL-029_verificacion_balanzas.xlsx")
 
 ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "laboratorista": "Laboratorista", "ingeniero": "Director Técnico"}
 ROLE_INICIALES = {"jefe": "JL", "laboratorista": "LB", "ingeniero": "DT"}
@@ -1056,10 +1057,6 @@ BAL_CONDICIONES_PREVIAS = [
     ("cond_cero_tara", "Cero / tara estable antes de cargar"),
     ("cond_estabilizacion", "Tiempo de estabilización cumplido"),
     ("cond_masas_limpias", "Masas patrón limpias y en buen estado"),
-]
-BAL_DATOS_TECNICOS = [
-    ("dt_capacidad_maxima", "Capacidad máxima (g)"), ("dt_division_e", "División e (si aplica)"),
-    ("dt_clase", "Clase (si aplica)"), ("dt_certificado_balanza", "Certificado de la balanza"),
 ]
 
 
@@ -2518,8 +2515,9 @@ def render_balanzas():
     with slot_descarga:
         st.download_button(
             "Descargar Excel", icon=":material/download:", use_container_width=True, key="bal_dl",
-            data=generar_excel_balanza({**check, "data": _bal_state_a_data(_bal_cargar_estado(check))}, balanza),
-            file_name=f"Comprobacion_balanza_{check['codigo_equipo']}_{check['semana_lunes']}.xlsx",
+            data=generar_excel_balanza({**check, "data": _bal_state_a_data(_bal_cargar_estado(check))}, balanza,
+                                       control=_bal_control()),
+            file_name=f"Verificacion_balanza_{check['codigo_equipo']}_{check['semana_lunes']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     with st.expander("Opciones del registro", icon=":material/settings:"):
         if confirm_delete(f"bal_{check['id']}", "este registro de comprobación"):
@@ -2529,202 +2527,178 @@ def render_balanzas():
             st.rerun()
 
 
-def generar_excel_balanza(check, balanza):
-    """Bitácora descargable de un registro de Comprobación de Balanzas (GDA-FLC-029). Se arma
-    desde cero con openpyxl (no hay una plantilla oficial terminada para reutilizar — la única
-    disponible es un borrador sin fórmulas en las secciones de patrones/condiciones/decisión,
-    según su propia hoja "Control semanal": "Aprobación y vigencia: pendientes"), replicando la
-    misma estructura y reglas del formulario en pantalla."""
-    from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+def _bal_dmy(iso):
+    """"2026-09-23" -> "23/09/2026" ("" si no es una fecha)."""
+    try:
+        return date.fromisoformat(str(iso)).strftime("%d/%m/%Y")
+    except ValueError:
+        return ""
 
+
+def _bal_serial_excel(iso):
+    """Fecha ISO -> número de serie de Excel (así la celda conserva su formato de fecha), o None."""
+    try:
+        return (date.fromisoformat(str(iso)) - date(1899, 12, 30)).days
+    except ValueError:
+        return None
+
+
+def _bal_estado_control(fila):
+    """Misma regla del tablero del mockup: realizada <= programada -> "A tiempo"; después -> "Retraso · TNC"."""
+    programada, realizada = fila.get("programada"), fila.get("realizada")
+    if realizada and programada:
+        estado = "A tiempo" if realizada <= programada else "Retraso · TNC"
+    elif realizada:
+        estado = "Realizada"
+    else:
+        estado = "Pendiente"
+    return f"{estado} — {fila['just']}" if fila.get("just") else estado
+
+
+def _xlsx_combinar_con_ajuste(xlsx_bytes, hoja_xml, ref_celda, rango):
+    """Combina `rango` (ej. "E38:AV39") y deja la celda `ref_celda` con el texto alineado arriba a la izquierda y con
+    ajuste de línea: en la plantilla, Observaciones son dos filas de celdas sueltas centradas, donde un texto largo
+    se sale de la hoja. Se clona el estilo que ya tenía la celda (bordes, fuente) y solo se cambia la alineación."""
+    with zipfile.ZipFile(BytesIO(xlsx_bytes)) as zin:
+        sheet = zin.read(hoja_xml).decode("utf-8")
+        styles = zin.read("xl/styles.xml").decode("utf-8")
+        m_cell = re.search(r'<c r="' + ref_celda + r'"([^>]*?)(/>|>)', sheet)
+        estilo = int(re.search(r'\bs="(\d+)"', m_cell.group(1)).group(1))
+        m_xfs = re.search(r'(<cellXfs count=")(\d+)(">)(.*?)(</cellXfs>)', styles, re.S)
+        xfs = re.findall(r'<xf [^>]*?(?:/>|>.*?</xf>)', m_xfs.group(4), re.S)
+        xf, alineacion = xfs[estilo], '<alignment horizontal="left" vertical="top" wrapText="1"/>'
+        if "<alignment" in xf:
+            xf = re.sub(r'<alignment[^>]*/>', alineacion, xf)
+        elif xf.endswith("/>"):
+            xf = xf[:-2] + ">" + alineacion + "</xf>"
+        else:
+            xf = xf.replace("</xf>", alineacion + "</xf>")
+        if "applyAlignment" not in xf:
+            xf = xf.replace("<xf ", '<xf applyAlignment="1" ', 1)
+        nuevo_idx = len(xfs)
+        styles = (styles[:m_xfs.start()] + m_xfs.group(1) + str(len(xfs) + 1) + m_xfs.group(3) + m_xfs.group(4) + xf
+                  + m_xfs.group(5) + styles[m_xfs.end():])
+        sheet = sheet[:m_cell.start()] + re.sub(r'\bs="\d+"', f's="{nuevo_idx}"', m_cell.group(0), count=1) + sheet[m_cell.end():]
+        m_mc = re.search(r'<mergeCells count="(\d+)">', sheet)
+        sheet = sheet.replace(m_mc.group(0), f'<mergeCells count="{int(m_mc.group(1)) + 1}"><mergeCell ref="{rango}"/>', 1)
+        bio = BytesIO()
+        with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                contenido = zin.read(item.filename)
+                if item.filename == hoja_xml:
+                    contenido = sheet.encode("utf-8")
+                elif item.filename == "xl/styles.xml":
+                    contenido = styles.encode("utf-8")
+                zout.writestr(item, contenido)
+        return bio.getvalue()
+
+
+def generar_excel_balanza(check, balanza, control=None):
+    """Bitácora GDA-FL-029 "Verificación de equipos — Balanzas" (la plantilla oficial de VERIFICACION DE BALANZAS.xlsx)
+    llena con un registro de Comprobación de Balanzas. Se escribe directo en el XML de la hoja "Balanzas" solo en las
+    celdas de datos (amarillas/azules y los textos de la parte de abajo) — el código interno trae solo nombre, marca,
+    serie y resolución (BUSCARV contra el catálogo de equipos de la propia hoja) y los errores, "Cumple/No cumple", el
+    rango R y la fecha próxima los calcula el propio Excel con sus fórmulas. `check["data"]` viene en el formato plano
+    de _bal_state_a_data; `control` son las filas del tablero de Control semanal (hoja "Control semanal")."""
     data = check.get("data", {})
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Comprobación"
-    ws.sheet_view.showGridLines = False
+    num = to_float
+    c = {}
+    fecha = check.get("fecha_comprobacion")
+    c["J6"] = _bal_serial_excel(fecha)
+    proxima = check.get("fecha_proxima")
+    try:
+        if proxima and date.fromisoformat(proxima) != date.fromisoformat(fecha) + timedelta(days=8):
+            c["AG6"] = _bal_serial_excel(proxima)   # la plantilla calcula fecha + 8 días; solo se pisa si se cambió a mano
+    except (TypeError, ValueError):
+        pass
+    c["J8"] = check["codigo_equipo"]
 
-    bold = Font(bold=True)
-    titulo_f = Font(bold=True, size=14)
-    header_fill = PatternFill("solid", fgColor="2F7A3E")
-    header_font = Font(bold=True, color="FFFFFF")
-    thin = Side(style="thin", color="D9D5CA")
-    borde = Border(left=thin, right=thin, top=thin, bottom=thin)
-    fill_cumple = PatternFill("solid", fgColor="E8F1E6")
-    fill_no_cumple = PatternFill("solid", fgColor="FBE3DF")
-    fill_pendiente = PatternFill("solid", fgColor="FFF6D9")
-    fill_resultado = {"Cumple": fill_cumple, "No cumple": fill_no_cumple, "Pendiente": fill_pendiente,
-                       "No aplica": PatternFill("solid", fgColor="F3F2EE"),
-                       "apto": fill_cumple, "no-apto": fill_no_cumple}
+    # 1. Excentricidad / 2. Repetibilidad
+    c["S12"] = num(data.get("exc_carga_usada"))
+    c["AM12"] = num(data.get("rep_carga_usada"))
+    for p in range(1, 6):
+        fila = 14 + p
+        c[f"K{fila}"], c[f"Q{fila}"] = num(data.get(f"exc_p{p}_indicacion")), num(data.get(f"exc_p{p}_emp"))
+        c[f"AE{fila}"], c[f"AK{fila}"] = num(data.get(f"rep_r{p}_indicacion")), num(data.get(f"rep_r{p}_emp"))
+    # La plantilla trae la fórmula del error en los puntos 2 a 5 pero no en el 1 (queda siempre "Pendiente"): se completa.
+    c["N15"] = _FormulaXlsx('IF(COUNT(K15,$S$12)<2,"",K15-$S$12)')
+    c["O51"] = num(data.get("rep_limite_r"))
 
-    r = 1
-    ws.cell(r, 1, "BITÁCORA PARA VERIFICACIÓN DE EQUIPOS — Balanzas").font = titulo_f
-    ws.cell(r, 8, "GDA-FLC-029")
-    r += 1
-    ws.cell(r, 1, "Comprobación intermedia de balanzas · INV E-vigente / OIML R 76-1").font = Font(italic=True, size=10)
-    r += 2
+    # 3. Exactitud — un punto "No aplica" queda en blanco (sale "Pendiente" en la plantilla) y se justifica en Observaciones
+    excluidos = []
+    for p in range(1, 9):
+        fila = 23 + p
+        if data.get(f"exact_p{p}_aplica", True):
+            c[f"K{fila}"], c[f"N{fila}"] = num(data.get(f"exact_p{p}_carga")), num(data.get(f"exact_p{p}_asc"))
+            c[f"Q{fila}"], c[f"Z{fila}"] = num(data.get(f"exact_p{p}_desc")), num(data.get(f"exact_p{p}_emp"))
+        else:
+            excluidos.append(f"Exactitud punto {p}: No aplica — {data.get(f'exact_p{p}_just') or 'sin justificación'}.")
 
-    def _fila_dato(fila, etiqueta, valor):
-        ws.cell(fila, 1, etiqueta).font = bold
-        ws.cell(fila, 3, valor if valor not in (None, "") else "—")
+    # Instrumentos patrón (la plantilla trae 3 filas)
+    patrones = data.get("patrones") or []
+    for i, pat in enumerate(patrones[:3]):
+        fila = 34 + i
+        c[f"A{fila}"], c[f"F{fila}"] = pat.get("codigo"), pat.get("instrumento")
+        c[f"T{fila}"], c[f"AC{fila}"] = _bal_dmy(pat.get("fecha_calibracion")) or pat.get("fecha_calibracion"), \
+            _bal_dmy(pat.get("proxima_calibracion")) or pat.get("proxima_calibracion")
+        c[f"AL{fila}"] = pat.get("no_certificado")
+    extras = [f"{p.get('codigo') or '—'} ({p.get('instrumento') or '—'}, cert. {p.get('no_certificado') or '—'})" for p in patrones[3:]]
 
-    for etiqueta, valor in (("Código interno", check["codigo_equipo"]), ("Nombre del equipo", balanza.get("nombre", "—")),
-                             ("Marca", balanza.get("marca", "—")), ("Serie", balanza.get("serie", "—")),
-                             ("Resolución d (g)", balanza.get("resolucion", "—")),
-                             ("Fecha de comprobación", check.get("fecha_comprobacion") or "—"),
-                             ("Fecha próxima comprobación", check.get("fecha_proxima") or "—"),
-                             ("Semana del lunes", check.get("semana_lunes") or "—")):
-        _fila_dato(r, etiqueta, valor)
-        r += 1
-    r += 1
+    # Observaciones (texto libre + lo que la plantilla no tiene dónde poner)
+    partes = [str(data.get("observaciones") or "").strip(),
+              f"Excentricidad: receptor {str(data.get('exc_forma') or 'Cuadrado').lower()}."] + excluidos
+    if extras:
+        partes.append("Patrones adicionales: " + "; ".join(extras) + ".")
+    observaciones = " ".join(t for t in partes if t)
+    c["E38"] = observaciones if len(observaciones) <= 700 else observaciones[:697] + "…"
 
-    def _tabla_header(fila, columnas):
-        for i, t in enumerate(columnas):
-            c = ws.cell(fila, 1 + i, t)
-            c.fill, c.font, c.border = header_fill, header_font, borde
-            c.alignment = Alignment(horizontal="center", wrap_text=True)
+    # Firmas (la etiqueta de la plantilla — NOMBRE / FIRMA / CARGO — se conserva y se le agrega el dato)
+    for prefijo, col in (("elaboro", "A"), ("reviso", "Y")):
+        if data.get(f"{prefijo}_nombre"):
+            c[f"{col}42"] = f"NOMBRE: {data[f'{prefijo}_nombre']}"
+        if data.get(f"{prefijo}_firmo"):
+            c[f"{col}43"] = "FIRMA: Firmado (registro digital)"
+        if data.get(f"{prefijo}_cargo"):
+            c[f"{col}44"] = f"CARGO: {data[f'{prefijo}_cargo']}"
 
-    def _celda(fila, col, valor, resultado=None):
-        c = ws.cell(fila, col, valor if valor not in (None, "") else "—")
-        c.border = borde
-        c.alignment = Alignment(horizontal="center")
-        if resultado:
-            c.fill = fill_resultado.get(resultado, fill_pendiente)
-        return c
+    # Criterios y decisión (filas 49 a 56, columna O)
+    if str(data.get("fuente_criterios") or "").strip():
+        c["O49"] = data["fuente_criterios"].strip()
+    condiciones = [f"{label.split(' (')[0]}: {'Sí' if data.get(key) else 'No'}" for key, label in BAL_CONDICIONES_PREVIAS]
+    if data.get("cond_temperatura"):
+        condiciones.append(f"Temperatura: {data['cond_temperatura']} °C")
+    if data.get("cond_humedad"):
+        condiciones.append(f"Humedad relativa: {data['cond_humedad']} %")
+    c["O53"] = "Condiciones previas — " + "; ".join(condiciones) + "."
+    tec = [("Capacidad máxima (g)", "dt_capacidad_maxima"), ("División e (si aplica)", "dt_division_e"),
+           ("Clase (si aplica)", "dt_clase"), ("Certificado de balanza", "dt_certificado_balanza")]
+    if any(data.get(k) for _l, k in tec):
+        c["O54"] = "  ".join(f"{label}: {data.get(key) or '____'}" for label, key in tec)
+    if data.get("decision"):
+        quien = data.get("reviso_nombre") or data.get("elaboro_nombre") or "Jefe de Laboratorio"
+        cuando = _bal_dmy(data.get("decision_fecha"))
+        c["O55"] = (f"{'APTO' if data['decision'] == 'apto' else 'NO APTO'}. Decisión de {quien}"
+                    + (f" el {cuando}." if cuando else "."))
+    if str(data.get("tnc_numero") or "").strip():
+        c["O56"] = ("Si falla o se omite la verificación: detener uso, identificar fuera de servicio, evaluar impacto y "
+                    f"relacionar GDA-FC-023 No.: {data['tnc_numero'].strip()}")
 
-    # ── Excentricidad ──
-    ws.cell(r, 1, "1. EXCENTRICIDAD").font = bold
-    r += 1
-    _fila_dato(r, "Forma del receptor", data.get("exc_forma") or "—")
-    r += 1
-    _fila_dato(r, "Carga usada (g)", data.get("exc_carga_usada"))
-    r += 1
-    _tabla_header(r, ["Punto", "Indicación (g)", "Error (g)", "± EMP (g)", "Resultado"])
-    r += 1
-    exc_filas, error_maximo, diferencia_max = resultados_bal_excentricidad(data)
-    for f in exc_filas:
-        _celda(r, 1, f["punto"])
-        _celda(r, 2, fmt_num(f["indicacion"], 3) if f["indicacion"] is not None else None)
-        _celda(r, 3, fmt_num(f["error"], 3) if f["error"] is not None else None)
-        _celda(r, 4, fmt_num(f["emp"], 3) if f["emp"] is not None else None)
-        _celda(r, 5, f["resultado"], resultado=f["resultado"])
-        r += 1
-    _fila_dato(r, "Error máximo (g)", fmt_num(error_maximo, 3) if error_maximo is not None else "—")
-    r += 1
-    _fila_dato(r, "Diferencia máx. entre posiciones (g)", fmt_num(diferencia_max, 3) if diferencia_max is not None else "—")
-    r += 2
+    with open(TEMPLATE_VERIFICACION_BALANZAS, "rb") as f:
+        libro = f.read()
+    libro = _xlsx_escribir_celdas(libro, "xl/worksheets/sheet1.xml", c)
+    libro = _xlsx_combinar_con_ajuste(libro, "xl/worksheets/sheet1.xml", "E38", "E38:AV39")
 
-    # ── Repetibilidad ──
-    ws.cell(r, 1, "2. REPETIBILIDAD").font = bold
-    r += 1
-    _fila_dato(r, "Carga usada (g)", data.get("rep_carga_usada"))
-    r += 1
-    _fila_dato(r, "Límite aprobado de R (g)", data.get("rep_limite_r"))
-    r += 1
-    _tabla_header(r, ["Repetición", "Indicación (g)", "Error (g)", "± EMP (g)", "Resultado"])
-    r += 1
-    rep_filas, rango_r, resultado_r = resultados_bal_repetibilidad(data)
-    for f in rep_filas:
-        _celda(r, 1, f["punto"])
-        _celda(r, 2, fmt_num(f["indicacion"], 3) if f["indicacion"] is not None else None)
-        _celda(r, 3, fmt_num(f["error"], 3) if f["error"] is not None else None)
-        _celda(r, 4, fmt_num(f["emp"], 3) if f["emp"] is not None else None)
-        _celda(r, 5, f["resultado"], resultado=f["resultado"])
-        r += 1
-    _fila_dato(r, "Rango R = máx − mín (g)", fmt_num(rango_r, 3) if rango_r is not None else "—")
-    r += 1
-    ws.cell(r, 1, "Resultado de repetibilidad").font = bold
-    _celda(r, 3, resultado_r, resultado=resultado_r)
-    r += 2
-
-    # ── Exactitud ──
-    ws.cell(r, 1, "3. EXACTITUD").font = bold
-    r += 1
-    _tabla_header(r, ["Punto", "Aplica", "Carga (g)", "Ascendente", "Descendente", "± EMP (g)", "Resultado asc.", "Resultado desc.", "Justificación (si no aplica)"])
-    r += 1
-    for f in resultados_bal_exactitud(data):
-        _celda(r, 1, f["punto"])
-        _celda(r, 2, "Sí" if f["aplica"] else "No")
-        _celda(r, 3, fmt_num(f["carga"], 3) if f["carga"] is not None else None)
-        _celda(r, 4, fmt_num(f["asc"], 3) if f["asc"] is not None else None)
-        _celda(r, 5, fmt_num(f["desc"], 3) if f["desc"] is not None else None)
-        _celda(r, 6, fmt_num(f["emp"], 3) if f["emp"] is not None else None)
-        _celda(r, 7, f["resultado_asc"], resultado=f["resultado_asc"])
-        _celda(r, 8, f["resultado_desc"], resultado=f["resultado_desc"])
-        _celda(r, 9, data.get(f"exact_p{f['punto']}_just") if not f["aplica"] else None)
-        r += 1
-    r += 1
-
-    # ── Patrones ──
-    ws.cell(r, 1, "4. INSTRUMENTOS PATRÓN PARA LA MEDICIÓN").font = bold
-    r += 1
-    _tabla_header(r, ["Código", "Instrumento patrón", "Fecha calibración", "Próxima calibración", "No. certificado"])
-    r += 1
-    for p in (data.get("patrones") or []):
-        _celda(r, 1, p.get("codigo"))
-        _celda(r, 2, p.get("instrumento"))
-        _celda(r, 3, p.get("fecha_calibracion"))
-        _celda(r, 4, p.get("proxima_calibracion"))
-        _celda(r, 5, p.get("no_certificado"))
-        r += 1
-    if not (data.get("patrones") or []):
-        _celda(r, 1, "—")
-        r += 1
-    r += 1
-
-    ws.cell(r, 1, "Condiciones previas").font = bold
-    r += 1
-    for key, label in BAL_CONDICIONES_PREVIAS:
-        _fila_dato(r, label, "Sí" if data.get(key) else "No")
-        r += 1
-    _fila_dato(r, "Temperatura (°C)", data.get("cond_temperatura") or "—")
-    r += 1
-    _fila_dato(r, "Humedad relativa (%)", data.get("cond_humedad") or "—")
-    r += 2
-
-    ws.cell(r, 1, "Datos técnicos del equipo").font = bold
-    r += 1
-    for key, label in BAL_DATOS_TECNICOS:
-        _fila_dato(r, label, data.get(key) or "—")
-        r += 1
-    r += 1
-
-    # ── Decisión y firmas ──
-    ws.cell(r, 1, "5. DECISIÓN Y FIRMAS").font = bold
-    r += 1
-    decision_final = data.get("decision") or decision_sugerida_balanza(data)
-    ws.cell(r, 1, "Resultado").font = bold
-    _celda(r, 3, {"apto": "APTO", "no-apto": "NO APTO"}.get(decision_final, "PENDIENTE"), resultado=decision_final or "Pendiente")
-    r += 1
-    _fila_dato(r, "Fecha de la decisión", data.get("decision_fecha") or "—")
-    r += 1
-    _fila_dato(r, "Fuente y aprobación de criterios", data.get("fuente_criterios") or "—")
-    r += 1
-    _fila_dato(r, "Observaciones", data.get("observaciones") or "—")
-    r += 1
-    _fila_dato(r, "TNC relacionado (GDA-FC-023 No.)", data.get("tnc_numero") or "—")
-    r += 2
-    for prefix, titulo in (("elaboro", "Elaboró"), ("reviso", "Revisó")):
-        ws.cell(r, 1, titulo).font = bold
-        r += 1
-        _fila_dato(r, "Nombre", data.get(f"{prefix}_nombre") or "—")
-        r += 1
-        _fila_dato(r, "Cargo", data.get(f"{prefix}_cargo") or "—")
-        r += 1
-        _fila_dato(r, "Firmó", "Sí" if data.get(f"{prefix}_firmo") else "No")
-        r += 2
-
-    ws.cell(r, 1, "Regla de decisión: Error = indicación − masa de referencia. Aceptación simple: "
-                  "|error| ≤ EMP y R ≤ límite, solo con regla aprobada e incertidumbre evaluada."
-            ).font = Font(italic=True, size=9, color="6B6860")
-
-    for col, width in zip("ABCDEFGHI", (26, 22, 16, 16, 16, 14, 16, 16, 30)):
-        ws.column_dimensions[col].width = width
-
-    bio = BytesIO()
-    wb.save(bio)
-    bio.seek(0)
-    return bio.getvalue()
+    # Hoja "Control semanal": una fila por registro del tablero (la plantilla trae las filas 6 a 57)
+    filas = {}
+    for i, r in enumerate((control or [])[:52]):
+        n = 6 + i
+        filas.update({f"A{n}": _bal_dmy(r.get("semana")) or r.get("semana"), f"B{n}": r.get("codigo"),
+                      f"C{n}": _bal_dmy(r.get("programada")) or r.get("programada"),
+                      f"D{n}": _bal_dmy(r.get("realizada")) or r.get("realizada"), f"E{n}": r.get("operador"),
+                      f"F{n}": r.get("revision"), f"G{n}": r.get("registro"), f"H{n}": _bal_estado_control(r)})
+    if filas:
+        libro = _xlsx_escribir_celdas(libro, "xl/worksheets/sheet2.xml", filas)
+    return libro
 
 
 def render_projects_active():
@@ -6862,6 +6836,10 @@ def _col_a_numero(col):
     return n
 
 
+class _FormulaXlsx(str):
+    """Texto de una fórmula de Excel (sin el "=" inicial) para _xlsx_escribir_celdas: se escribe como <f>, no como texto."""
+
+
 def _xlsx_escribir_celdas(xlsx_bytes, hoja_xml, celdas):
     """Escribe valores en una hoja editando su XML directamente (sin pasar por openpyxl), así se conserva TODO lo demás del
     archivo tal cual: formas, grupos, casillas de verificación, imágenes, gráficos, macros. `celdas` = {"C6": valor}; un
@@ -6873,6 +6851,8 @@ def _xlsx_escribir_celdas(xlsx_bytes, hoja_xml, celdas):
             attr_s = f' s="{estilo}"' if estilo else ""
             if valor is None or valor == "":
                 return f'<c r="{ref}"{attr_s}/>'
+            if isinstance(valor, _FormulaXlsx):
+                return f'<c r="{ref}"{attr_s}><f>{html.escape(str(valor), quote=False)}</f></c>'
             if isinstance(valor, bool) or not isinstance(valor, (int, float)):
                 texto = html.escape(str(valor), quote=False)
                 return f'<c r="{ref}"{attr_s} t="inlineStr"><is><t xml:space="preserve">{texto}</t></is></c>'
