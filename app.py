@@ -1854,6 +1854,118 @@ def resultados_proctor(data):
         pass
 
 
+def _cbr_valores(fuerza_01, fuerza_02, usar_mayor):
+    """Esfuerzo (MPa = kN/19.32·10) y CBR a 0.1" y 0.2" (esfuerzo/6.9 y /10.3 ·100). El CBR del ensayo es el mayor de
+    los dos en la plantilla GDA-FLC-013 (inalterado) y el menor en la de Proctor GDA-FLC-002 (CBR compactado)."""
+    f1, f2 = to_float(fuerza_01), to_float(fuerza_02)
+    e1 = f1 / 19.32 * 10 if f1 is not None else None
+    e2 = f2 / 19.32 * 10 if f2 is not None else None
+    c1 = e1 / 6.9 * 100 if e1 is not None else None
+    c2 = e2 / 10.3 * 100 if e2 is not None else None
+    if c1 is not None and c2 is not None:
+        cbr = max(c1, c2) if usar_mayor else min(c1, c2)
+    else:
+        cbr = None
+    return {"c1": c1, "c2": c2, "cbr": cbr}
+
+
+def _densidades_molde(masa_con_molde, masa_molde, altura, diametro, humedad):
+    """(masa muestra, volumen, densidad húmeda, densidad seca) con las fórmulas de la plantilla: volumen = π·d²/4·h."""
+    a, b, h, d = to_float(masa_con_molde), to_float(masa_molde), to_float(altura), to_float(diametro)
+    masa = a - b if a is not None and b is not None else None
+    vol = math.pi * d * d / 4 * h if h and d else None
+    dh = masa / vol if masa is not None and vol else None
+    ds = dh / (1 + humedad / 100) if dh is not None and humedad is not None else None
+    return masa, vol, dh, ds
+
+
+def _expansion_pct(inicial, final, altura):
+    i, f, h = to_float(inicial), to_float(final), to_float(altura)
+    if i is None or f is None:
+        return None, None
+    cm = (f - i) * 2.54
+    return cm, (cm / h * 100 if h else None)
+
+
+def resultados_cbr(data, hum_data=None):
+    """Resultados del CBR inalterado (GDA-FLC-013), antes y después de inmersión."""
+    hum_antes = calcular_humedad_pct(hum_data) if hum_data else None
+    hum_desp = _humedad_pct_masas(data.get("cbr_desp_masa_humedo"), data.get("cbr_desp_masa_seco"), data.get("cbr_desp_masa_recipiente"))
+    f = lambda v, d=2: fmt_num(v, d) if v is not None else "—"
+    dens = {}
+    for suf, hum in (("antes", hum_antes), ("despues", hum_desp)):
+        dens[suf] = _densidades_molde(data.get(f"cbr_masa_muestra_molde_{suf}"), data.get("cbr_masa_molde"),
+                                      data.get("cbr_altura"), data.get("cbr_diametro"), hum)
+    filas = [("Masa de la muestra (g)", f(dens["antes"][0], 1), f(dens["despues"][0], 1)),
+             ("Volumen de la muestra (cm³)", f(dens["antes"][1], 1), f(dens["despues"][1], 1)),
+             ("Densidad húmeda (g/cm³)", f(dens["antes"][2], 3), f(dens["despues"][2], 3)),
+             ("Humedad (%)", f(hum_antes), f(hum_desp)),
+             ("Densidad seca (g/cm³)", f(dens["antes"][3], 3), f(dens["despues"][3], 3))]
+    cbr = {suf: _cbr_valores(data.get(f"cbr_pen_{suf}_5"), data.get(f"cbr_pen_{suf}_9"), True) for suf in ("antes", "despues")}
+    filas += [('CBR a 0.1" (%)', f(cbr["antes"]["c1"]), f(cbr["despues"]["c1"])),
+              ('CBR a 0.2" (%)', f(cbr["antes"]["c2"]), f(cbr["despues"]["c2"])),
+              ("CBR (%)", f(cbr["antes"]["cbr"]), f(cbr["despues"]["cbr"]))]
+    cm, pct = _expansion_pct(data.get("cbr_exp_lectura_inicial"), data.get("cbr_exp_lectura_final"), data.get("cbr_altura"))
+    if not any(v != "—" for fila in filas for v in fila[1:]) and cm is None:
+        st.caption("Digita los datos para ver los resultados.")
+        return
+    st.markdown(param_table_ncol_html(("RESULTADO", "ANTES DE INMERSIÓN", "DESPUÉS DE INMERSIÓN"), filas), unsafe_allow_html=True)
+    if cm is not None:
+        st.markdown(param_table_html([("Expansión total (cm)", f(cm, 3)), ("Expansión total (%)", f(pct, 2))],
+                                     header_left="EXPANSIÓN", header_right="VALOR"), unsafe_allow_html=True)
+    if hum_data is not None and hum_antes is None:
+        st.caption("Falta el ensayo de Contenido de Humedad de esta muestra (humedad antes de inmersión).")
+    pts = [{"Penetración (in)": float(p), "Fuerza (kN)": to_float(data.get(f"cbr_pen_{suf}_{j}")), "Curva": nom}
+           for suf, nom in (("antes", "Antes de inmersión"), ("despues", "Después de inmersión"))
+           for j, (p, _mm) in enumerate(CBR_PENETRACION_FILAS, start=1) if to_float(data.get(f"cbr_pen_{suf}_{j}")) is not None]
+    if len(pts) >= 2:
+        import altair as alt
+        ch = alt.Chart(alt.Data(values=pts)).mark_line(point=True).encode(
+            x="Penetración (in):Q", y="Fuerza (kN):Q", color=alt.Color("Curva:N", legend=alt.Legend(orient="bottom")),
+            tooltip=["Curva:N", "Penetración (in):Q", "Fuerza (kN):Q"])
+        st.markdown("**Curva fuerza – penetración**")
+        st.altair_chart(ch.properties(height=260), use_container_width=True)
+
+
+def resultados_cbr_compactado(data):
+    """Resultados del CBR de suelos compactados (3 moldes, lado derecho de GDA-FLC-002)."""
+    f = lambda v, d=2: fmt_num(v, d) if v is not None else "—"
+    moldes = []
+    for i in range(1, CBRC_MOLDES + 1):
+        c = lambda k: data.get(f"cbrc_{i}_{k}")
+        seco = lambda p: next((to_float(c(f"{p}_seco_{h}h")) for h in (19, 18, 17, 16) if to_float(c(f"{p}_seco_{h}h")) is not None), None)
+        w_c = _humedad_pct_masas(c("hc_masa_humedo"), seco("hc"), c("hc_masa_recipiente"))
+        w_d = _humedad_pct_masas(c("hd_masa_humedo"), seco("hd"), c("hd_masa_recipiente"))
+        masa, vol, dh, ds = _densidades_molde(c("masa_muestra_molde"), c("masa_molde"), c("altura"), c("diametro"), w_c)
+        cm, pct = _expansion_pct(c("exp_inicial"), c("exp_final"), c("altura"))
+        cbr = _cbr_valores(c("pen_5"), c("pen_9"), False)
+        moldes.append({"i": i, "golpes": c("golpes") or CBRC_GOLPES[i - 1], "masa": masa, "vol": vol, "dh": dh, "wc": w_c, "ds": ds,
+                       "wd": w_d, "exp": pct, "cbr": cbr})
+    if not any(m["masa"] is not None or m["wc"] is not None or m["cbr"]["cbr"] is not None or m["exp"] is not None for m in moldes):
+        st.caption("Digita los datos de los moldes para ver los resultados.")
+        return
+    filas = [("Masa de la muestra (g)", *[f(m["masa"], 1) for m in moldes]),
+             ("Volumen (cm³)", *[f(m["vol"], 1) for m in moldes]),
+             ("Densidad húmeda (g/cm³)", *[f(m["dh"], 3) for m in moldes]),
+             ("Humedad de compactación (%)", *[f(m["wc"]) for m in moldes]),
+             ("Densidad seca (g/cm³)", *[f(m["ds"], 3) for m in moldes]),
+             ("Humedad después de inmersión (%)", *[f(m["wd"]) for m in moldes]),
+             ("Expansión (%)", *[f(m["exp"]) for m in moldes]),
+             ('CBR a 0.1" (%)', *[f(m["cbr"]["c1"]) for m in moldes]),
+             ('CBR a 0.2" (%)', *[f(m["cbr"]["c2"]) for m in moldes]),
+             ("CBR (%)", *[f(m["cbr"]["cbr"]) for m in moldes])]
+    st.markdown(param_table_ncol_html(["RESULTADO"] + [f"MOLDE {m['i']} ({m['golpes']} golpes)" for m in moldes], filas), unsafe_allow_html=True)
+    st.caption('En esta plantilla el CBR de cada molde es el menor entre el de 0.1" y el de 0.2", tal como lo calcula el Excel de Proctor.')
+    pts = [{"Densidad seca (g/cm³)": round(m["ds"], 3), "CBR (%)": round(m["cbr"]["cbr"], 2), "Molde": f"Molde {m['i']}"}
+           for m in moldes if m["ds"] is not None and m["cbr"]["cbr"] is not None]
+    if len(pts) >= 2:
+        import altair as alt
+        ch = alt.Chart(alt.Data(values=pts)).encode(x=alt.X("Densidad seca (g/cm³):Q", scale=alt.Scale(zero=False)), y="CBR (%):Q",
+                                                    tooltip=["Molde:N", "Densidad seca (g/cm³):Q", "CBR (%):Q"])
+        st.markdown("**CBR vs. densidad seca**")
+        st.altair_chart((ch.mark_line(color=PRIMARY) + ch.mark_point(filled=True, size=70, color=PRIMARY)).properties(height=240), use_container_width=True)
+
+
 def icon(name, size=18, fill=False, color=None):
     """Ícono de Material Symbols para insertar dentro de HTML propio (st.markdown con unsafe_allow_html)."""
     cls = "material-symbols-outlined msi-fill" if fill else "material-symbols-outlined"
@@ -6248,9 +6360,6 @@ def render_masa_unitaria_form(data, assay_id, muestra_id=None):
 
 
 def render_cbr_form(data, assay_id, muestra_id):
-    st.info("Estos datos se guardan tal cual y se llevan a la plantilla oficial de Excel — el CBR a 0.1\" y 0.2\" "
-            "de penetración, igual que el resto de valores calculados, los saca el Excel, no la app.")
-
     def _campo(key, label, placeholder="0.00"):
         row = st.columns([2.2, 1])
         row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
@@ -6365,7 +6474,7 @@ def render_cbr_form(data, assay_id, muestra_id):
 
     with st.container(border=True):
         st.markdown(card_header_html("show_chart", "Penetración"), unsafe_allow_html=True)
-        st.caption("Fuerza (kN) leída en cada profundidad — el esfuerzo (MPa) y el CBR a 0.1\"/0.2\" los calcula el Excel.")
+        st.caption("Fuerza (kN) leída en cada profundidad — el esfuerzo (MPa) y el CBR a 0.1\"/0.2\" se ven en Resultados, al final.")
         with st.expander("Importar resultados desde el Excel de la prensa", icon=":material/upload_file:"):
             st.caption("Sube el Excel que genera la prensa (hoja \"Informe\") — se llenan solas las fuerzas en kN "
                        "de esa columna. Puedes corregir cualquier valor después.")
@@ -6402,6 +6511,9 @@ def render_cbr_form(data, assay_id, muestra_id):
             data[f"cbr_pen_despues_{i}"] = row[2].text_input(f"Fuerza después {pulg}in", value=data.get(f"cbr_pen_despues_{i}", ""),
                                                                key=f"cbr_pen_despues_{i}_{assay_id}", label_visibility="collapsed",
                                                                placeholder="kN")
+
+    with resultados_desplegable("Resultados: CBR, densidades y expansión"):
+        resultados_cbr(data, hum_data)
 
     render_equipo(data, "cbr", EQUIPO_CBR)
     render_norma_selector("cbr", data, "cbr")
@@ -8371,6 +8483,8 @@ def render_proctor_form(data, assay_id):
 
     with resultados_desplegable("Resultados: humedad óptima, densidad máxima y curva"):
         resultados_proctor(data)
+    with resultados_desplegable("Resultados: CBR compactado"):
+        resultados_cbr_compactado(data)
 
     render_equipo(data, "proc", EQUIPO_PROCTOR)
     render_norma_selector("proctor", data, "proc")
@@ -8630,6 +8744,8 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             pen_rows = [(pulg, data.get(f"cbr_pen_antes_{i}"), data.get(f"cbr_pen_despues_{i}"))
                         for i, (pulg, _mm) in enumerate(CBR_PENETRACION_FILAS, start=1)]
             st.markdown(param_table_ncol_html(headers, pen_rows), unsafe_allow_html=True)
+        with resultados_desplegable("Resultados: CBR, densidades y expansión"):
+            resultados_cbr(data, hum_data)
         equipos, norma = data.get("cbr_equipos", []), data.get("cbr_norma", "—")
     elif tipo == "compresion-inconfinada":
         with st.container(border=True):
@@ -8842,6 +8958,8 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                                               [(pulg, *[data.get(f"cbrc_{i}_pen_{j}") for i in range(1, CBRC_MOLDES + 1)])
                                                for j, (pulg, _mm) in enumerate(CBR_PENETRACION_FILAS, start=1)]),
                         unsafe_allow_html=True)
+        with resultados_desplegable("Resultados: CBR compactado"):
+            resultados_cbr_compactado(data)
         equipos, norma = data.get("proc_equipos", []), data.get("proc_norma", "—")
     elif tipo == "gravedad-especifica":
         sel = data.get("gesp_sel", GESP_OPCIONES[0])
