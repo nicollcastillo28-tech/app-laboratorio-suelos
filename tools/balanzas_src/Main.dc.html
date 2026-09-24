@@ -195,7 +195,6 @@ a{color:#2F7A3E}a:hover{color:#25612F}
 </div>
 <label style="display: flex; flex-direction: column; gap: 6px;"><span class="lbl">Límite aprobado de R (g)</span><input class="cap" inputmode="decimal" placeholder="Jefe de Lab." value="{{rep.limite}}" onChange="{{setRepLimite}}"></label>
 </div>
-<p style="margin: 0; font-size: 13px; line-height: 1.45; color: #5E6167;"><strong>R</strong> es el rango de repetibilidad: la lectura mayor menos la menor de las 5 repeticiones. El <strong>límite aprobado de R</strong> es el máximo R permitido para esta balanza; lo define y aprueba el Jefe de Laboratorio antes de medir. Si R es menor o igual que el límite, la repetibilidad es Conforme.</p>
 <div style="display: flex; flex-direction: column; gap: 6px;">
 <div style="display: grid; grid-template-columns: 48px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) 124px; gap: 10px; padding: 0 8px 2px;">
 <span class="th">Rep.</span><span class="th" style="text-align: right;">Indicación (g)</span><span class="th" style="text-align: right;">Error (g)</span><span class="th" style="text-align: right;">± EMP (g)</span><span class="th">Resultado</span>
@@ -246,19 +245,21 @@ a{color:#2F7A3E}a:hover{color:#25612F}
 <button type="button" class="btn" onClick="{{applyExaEmp}}">Aplicar a los que aplican</button>
 </div>
 <div style="display: flex; flex-direction: column; gap: 4px;">
+<div style="display: grid; grid-template-columns: 22px 52px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) 86px 76px 100px; gap: 6px; padding: 0 6px 2px; align-items: end;">
+<span class="th">#</span><span class="th">Aplica</span><span class="th" style="text-align: right;">Carga</span><span class="th" style="text-align: right;">Asc.</span><span class="th" style="text-align: right;">Desc.</span><span class="th" style="text-align: right;">Error a/d</span><span class="th" style="text-align: right;">± EMP</span><span class="th">Resultado</span>
+</div>
 <sc-for list="{{exaRows}}" as="r" hint-placeholder-count="8">
-<div style="display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid #E2DED4; background: {{r.bg}}; opacity: {{r.op}};">
-<div style="display: grid; grid-template-columns: 26px 64px minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: end;">
-<span class="mono" style="font-weight: 700; font-size: 16px; color: #5E6167; line-height: 44px;">{{r.n}}</span>
-<button type="button" onClick="{{r.toggle}}" aria-pressed="{{r.aplica}}" aria-label="Punto {{r.n}} aplica" style="height: 44px; border-radius: 999px; border: 1px solid {{r.tbd}}; background: {{r.tbg}}; color: {{r.tfg}}; font-size: 13px; font-weight: 600; cursor: pointer;">{{r.apLabel}}</button>
-<label style="display: flex; flex-direction: column; gap: 4px;"><span class="th" style="text-align: right;">Carga (g)</span><input class="cap" style="padding: 0 10px; font-size: 16px;" inputmode="decimal" placeholder="0" value="{{r.carga}}" onChange="{{r.setCarga}}" aria-label="Carga punto {{r.n}}"></label>
-<label style="display: flex; flex-direction: column; gap: 4px;"><span class="th" style="text-align: right;">± EMP (g)</span><input class="cap" style="padding: 0 10px; font-size: 16px;" inputmode="decimal" placeholder="0,00" value="{{r.emp}}" onChange="{{r.setEmp}}" aria-label="EMP punto {{r.n}}"></label>
+<div style="display: grid; grid-template-columns: 22px 52px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) 86px 76px 100px; gap: 6px; align-items: center; padding: 5px 6px; border-radius: 12px; background: {{r.bg}}; opacity: {{r.op}};">
+<span class="mono" style="font-weight: 600; font-size: 14px; color: #5E6167;">{{r.n}}</span>
+<button type="button" onClick="{{r.toggle}}" aria-pressed="{{r.aplica}}" aria-label="Punto {{r.n}} aplica" style="height: 36px; border-radius: 999px; border: 1px solid {{r.tbd}}; background: {{r.tbg}}; color: {{r.tfg}}; font-size: 13px; font-weight: 600; cursor: pointer;">{{r.apLabel}}</button>
+<input class="cap" style="padding: 0 8px;" inputmode="decimal" placeholder="0" value="{{r.carga}}" onChange="{{r.setCarga}}" aria-label="Carga punto {{r.n}}">
+<input class="cap" style="padding: 0 8px;" inputmode="decimal" placeholder="{{placeholderNum}}" value="{{r.asc}}" onChange="{{r.setAsc}}" aria-label="Indicación ascendente punto {{r.n}}">
+<input class="cap" style="padding: 0 8px;" inputmode="decimal" placeholder="{{placeholderNum}}" value="{{r.desc}}" onChange="{{r.setDesc}}" aria-label="Indicación descendente punto {{r.n}}">
+<div class="calc" style="line-height: 16px; padding: 4px 8px; display: flex; flex-direction: column; justify-content: center; font-size: 12px;"><span style="color: {{r.errAc}};">{{r.errA}}</span><span style="color: {{r.errDc}};">{{r.errD}}</span></div>
+<input class="cap" style="padding: 0 8px;" inputmode="decimal" placeholder="0,00" value="{{r.emp}}" onChange="{{r.setEmp}}" aria-label="EMP punto {{r.n}}">
+<span style="display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 600; justify-self: start; white-space: nowrap; background: {{r.chip.bg}}; color: {{r.chip.fg}};"><span style="width: 6px; height: 6px; border-radius: 50%; background: {{r.chip.fg}};"></span>{{r.chip.label}}</span>
 </div>
-<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px;">
-<div style="display: flex; flex-direction: column; gap: 4px; min-width: 0;"><div style="display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 24px;"><span class="th">Ascendente</span><span style="display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; background: {{r.chipA.bg}}; color: {{r.chipA.fg}};"><span style="width: 6px; height: 6px; border-radius: 50%; background: {{r.chipA.fg}};"></span>{{r.chipA.label}}</span></div><div style="display: grid; grid-template-columns: minmax(0, 1fr) 84px; gap: 6px;"><input class="cap" style="padding: 0 10px; font-size: 16px;" inputmode="decimal" placeholder="{{placeholderNum}}" value="{{r.asc}}" onChange="{{r.setAsc}}" aria-label="Indicación ascendente punto {{r.n}}"><div class="calc" style="padding: 0 8px; font-size: 14px; color: {{r.errAc}};">{{r.errA}}</div></div></div>
-<div style="display: flex; flex-direction: column; gap: 4px; min-width: 0;"><div style="display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 24px;"><span class="th">Descendente</span><span style="display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; background: {{r.chipD.bg}}; color: {{r.chipD.fg}};"><span style="width: 6px; height: 6px; border-radius: 50%; background: {{r.chipD.fg}};"></span>{{r.chipD.label}}</span></div><div style="display: grid; grid-template-columns: minmax(0, 1fr) 84px; gap: 6px;"><input class="cap" style="padding: 0 10px; font-size: 16px;" inputmode="decimal" placeholder="{{placeholderNum}}" value="{{r.desc}}" onChange="{{r.setDesc}}" aria-label="Indicación descendente punto {{r.n}}"><div class="calc" style="padding: 0 8px; font-size: 14px; color: {{r.errDc}};">{{r.errD}}</div></div></div>
-</div>
-</div>
+</sc-for>
 </div>
 <sc-if value="{{hasExcluded}}" hint-placeholder-val="{{ false }}">
 <div style="display: flex; flex-direction: column; gap: 8px; padding: 14px; border-radius: 14px; background: #FAF9F6; border: 1px solid #E2DED4;">
@@ -328,7 +329,6 @@ a{color:#2F7A3E}a:hover{color:#25612F}
 </div>
 <div style="display: flex; flex-direction: column; gap: 10px;">
 <div style="display: flex; align-items: center; justify-content: space-between;"><span class="lbl">Instrumentos patrón</span><button type="button" class="btn" onClick="{{addPat}}">+ Agregar patrón</button></div>
-<p style="margin: 0; font-size: 13px; line-height: 1.45; color: #5E6167;">El <strong>instrumento patrón</strong> es el juego de masas (pesas) de referencia con el que se hace la comprobación. Registre su código interno, una descripción (por ejemplo, juego de masas clase F1), la fecha de su última calibración, cuándo vence y el número del certificado. Si está vencido, la comprobación no es válida.</p>
 <sc-for list="{{patRows}}" as="p" hint-placeholder-count="2">
 <div style="border: 1px solid #E2DED4; border-radius: 14px; padding: 14px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: end;">
 <label style="display: flex; flex-direction: column; gap: 4px;"><span class="lbl">Código</span><input class="in mono" value="{{p.codigo}}" onChange="{{p.setCodigo}}"></label>
@@ -475,9 +475,6 @@ class Component extends DCLogic {
     this.state = Object.assign({}, this.state || {}, Component.init());
   }
 
-  componentDidMount() { Component.__bridgeStart(this); }
-  componentDidUpdate() { Component.__bridgeChanged(this); }
-
   static init() {
     const r5 = () => [0, 1, 2, 3, 4].map(() => ({ ind: '', emp: '' }));
     return {
@@ -620,8 +617,6 @@ class Component extends DCLogic {
         apLabel: on ? 'Sí' : 'No', tbg: on ? '#E8F1E6' : '#FFFFFF', tfg: on ? '#2F7A3E' : '#6B6860', tbd: on ? '#BFD8BF' : '#D9D5CA',
         errA: on ? this.fs(x.a.err, k) : '—', errD: on ? this.fs(x.d.err, k) : '—', errAc: this.errColor(x.a.st), errDc: this.errColor(x.d.st),
         chip: on ? this.chip(x.st) : this.chip(r.just ? 'na' : 'pend', r.just ? 'No aplica' : 'Justificar'),
-        chipA: on ? this.chip(x.a.st) : this.chip(r.just ? 'na' : 'pend', r.just ? 'No aplica' : 'Justificar'),
-        chipD: on ? this.chip(x.d.st) : this.chip(r.just ? 'na' : 'pend', r.just ? 'No aplica' : 'Justificar'),
         bg: on ? this.rowBg(x.st) : '#FAF9F6', op: on ? 1 : 0.7,
         toggle: () => this.setState((st) => { const o = Object.assign({}, st.exa); o.rows = o.rows.map((rr, j) => (j === i ? Object.assign({}, rr, { aplica: rr.aplica === false }) : rr)); return { exa: o }; }),
         setCarga: this.setSecRow('exa', i, 'carga'), setAsc: this.setSecRow('exa', i, 'asc'), setDesc: this.setSecRow('exa', i, 'desc'), setEmp: this.setSecRow('exa', i, 'emp')
@@ -782,7 +777,7 @@ class Component extends DCLogic {
       showNav: !is6, isFirst: s.step === 1, nextLabel: s.step === 5 ? 'Control semanal →' : 'Siguiente →',
       prev: () => { this.setState((ss) => ({ step: Math.max(1, ss.step - 1) })); scrollTop(); },
       next: () => { this.setState((ss) => ({ step: Math.min(6, ss.step + 1) })); scrollTop(); },
-      resetAll: () => Component.__requestNew(),
+      resetAll: () => this.setState(Object.assign(Component.init(), { eq: s.eq, fecha: s.fecha, proxima: s.proxima, control: s.control, pat: s.pat })),
       eqOpen: !!s.eqOpen, eqBtn: s.eqOpen ? 'Listo' : 'Editar equipo', toggleEq: () => this.setState((ss) => ({ eqOpen: !ss.eqOpen })),
       showIssues: !!s.showIssues, issuesBtn: (s.showIssues ? 'Ocultar' : 'Pendientes') + ' (' + issues.length + ')', toggleIssues: () => this.setState((ss) => ({ showIssues: !ss.showIssues })),
       eq: s.eq, setEq: this.fields('eq', ['codigo', 'nombre', 'marca', 'serie', 'd']),
@@ -815,78 +810,6 @@ class Component extends DCLogic {
     };
   }
 }
-
-(function () {
-  var inst = null, token = null, seq = 0, timer = null, lastJson = null, lastH = 0;
-  var nonce = Math.random().toString(36).slice(2, 8);   // distingue cargas del marco (el contador reinicia al recargar)
-  function send(m) { window.parent.postMessage(Object.assign({ isStreamlitMessage: true }, m), '*'); }
-  function payload() {
-    var st = Object.assign({}, inst.state);
-    var control = st.control || [];
-    // lo que solo es de pantalla (paso abierto, paneles desplegados) no se guarda
-    delete st.control; delete st.step; delete st.focusPt; delete st.eqOpen; delete st.showIssues;
-    return { state: st, control: control };
-  }
-  // El diseño crece hacia abajo: el marco toma la altura del contenido y la página hace el scroll.
-  function height() {
-    var host = document.querySelector('#dc-root .sc-host') || document.getElementById('dc-root');
-    if (!host) return;
-    var bottom = 0;
-    Array.prototype.forEach.call(host.children, function (el) {
-      var b = el.getBoundingClientRect().bottom + (window.pageYOffset || 0);
-      if (b > bottom) bottom = b;
-    });
-    var root = document.getElementById('dc-root');
-    var h = Math.ceil(bottom) + 4 + (root && root.scrollWidth > root.clientWidth + 1 ? 17 : 0);   // 17 = barra horizontal
-    if (h > 200 && Math.abs(h - lastH) > 2) { lastH = h; send({ type: 'streamlit:setFrameHeight', height: h }); }
-  }
-  Component.__bridgeStart = function (i) {
-    if (inst) return;
-    inst = i;
-    // El marco de Streamlit no permite scroll (scrolling="no"): si la pantalla es más angosta que el
-    // diseño (celular), el propio contenido se desplaza horizontalmente en vez de quedar cortado.
-    var css = document.createElement('style');
-    css.textContent = '#dc-root{overflow-x:auto;overflow-y:hidden}';
-    document.head.appendChild(css);
-    window.addEventListener('message', function (ev) {
-      var d = ev.data;
-      if (!d || d.type !== 'streamlit:render') return;
-      var a = d.args || {};
-      if (a.load_token && a.load_token !== token) {
-        token = a.load_token;
-        var ini = Component.init();
-        var s = Object.assign(ini, a.state || {}, { control: a.control || [], step: 1, focusPt: 1 });
-        inst.setState(s);
-        setTimeout(function () { lastJson = JSON.stringify(payload()); }, 50);
-      }
-      height();
-    });
-    send({ type: 'streamlit:componentReady', apiVersion: 1 });
-    height();
-    setInterval(height, 700);
-    if (window.ResizeObserver) {
-      var host = document.querySelector('#dc-root .sc-host');
-      if (host) new ResizeObserver(height).observe(host.firstElementChild || host);
-    }
-  };
-  Component.__bridgeChanged = function () {
-    height();
-    if (!token) return;
-    clearTimeout(timer);
-    timer = setTimeout(function () {
-      var p = payload(), j = JSON.stringify(p);
-      if (j === lastJson) return;
-      lastJson = j; seq += 1;
-      send({ type: 'streamlit:setComponentValue', dataType: 'json',
-             value: { token: token, seq: nonce + '-' + seq, state: p.state, control: p.control } });
-    }, 900);
-  };
-  Component.__requestNew = function () {
-    if (!token) return;
-    seq += 1;
-    send({ type: 'streamlit:setComponentValue', dataType: 'json', value: { token: token, seq: nonce + '-' + seq, action: 'new' } });
-  };
-})();
 </script>
 </body>
 </html>
