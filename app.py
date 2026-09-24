@@ -1765,6 +1765,95 @@ def resultados_granulometria(data, lim_data=None):
     st.altair_chart((ch.mark_line(color=PRIMARY) + ch.mark_point(filled=True, size=50, color=PRIMARY)).properties(height=260), use_container_width=True)
 
 
+def calcular_proctor(data):
+    """Puntos del Proctor con las fórmulas de la plantilla GDA-FLC-002: masa húmeda = muestra + molde − molde;
+    humedad = (húmedo − seco)/(seco − recipiente)·100 (con la última lectura de masa seca digitada);
+    γ húmedo = masa húmeda / volumen; γ seco = γ húmedo / (1 + w/100). La curva es la parábola de mínimos cuadrados
+    γ seco = a·w² + b·w + c (la línea de tendencia polinómica del gráfico); humedad óptima = −b/(2a) y densidad
+    máxima = valor de la parábola en ese punto. Devuelve dict con las pruebas y (opt_w, max_d, coef) si hay ≥3 puntos."""
+    pruebas = []
+    for i in range(1, PROCTOR_PRUEBAS + 1):
+        v = lambda c: data.get(f"proc_{i}_{c}")
+        mh = None
+        a, b, vol = to_float(v("masa_humedo_molde")), to_float(v("masa_molde")), to_float(v("volumen_molde"))
+        if a is not None and b is not None:
+            mh = a - b
+        seco = next((to_float(v(f"hum_seco_{h}h")) for h in (19, 18, 17, 16) if to_float(v(f"hum_seco_{h}h")) is not None), None)
+        w = _humedad_pct_masas(v("hum_masa_humedo"), seco, v("hum_masa_recipiente"))
+        dh = mh / vol if mh is not None and vol else None
+        ds = dh / (1 + w / 100) if dh is not None and w is not None else None
+        pruebas.append({"n": i, "golpes": v("golpes"), "masa_humeda": mh, "w": w, "dh": dh, "ds": ds})
+    pts = [(p["w"], p["ds"]) for p in pruebas if p["w"] is not None and p["ds"] is not None]
+    res = {"pruebas": pruebas, "puntos": pts, "opt_w": None, "max_d": None, "coef": None}
+    if len(pts) >= 3:
+        # mínimos cuadrados de grado 2 (ecuaciones normales, resueltas por Cramer)
+        n = len(pts)
+        sx = sum(x for x, _ in pts); sx2 = sum(x ** 2 for x, _ in pts); sx3 = sum(x ** 3 for x, _ in pts); sx4 = sum(x ** 4 for x, _ in pts)
+        sy = sum(y for _, y in pts); sxy = sum(x * y for x, y in pts); sx2y = sum(x ** 2 * y for x, y in pts)
+        def det(m):
+            return (m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+                    + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]))
+        A = [[sx4, sx3, sx2], [sx3, sx2, sx], [sx2, sx, n]]
+        D = det(A)
+        if abs(D) > 1e-12:
+            cols = [sx2y, sxy, sy]
+            coef = []
+            for k in range(3):
+                M = [row[:] for row in A]
+                for r in range(3):
+                    M[r][k] = cols[r]
+                coef.append(det(M) / D)
+            a, b, c = coef
+            res["coef"] = coef
+            if a < 0:
+                w0 = -b / (2 * a)
+                res["opt_w"], res["max_d"] = w0, a * w0 ** 2 + b * w0 + c
+    return res
+
+
+def resultados_proctor(data):
+    """Tabla por prueba, humedad óptima, densidad máxima y curva de compactación (dentro del desplegable)."""
+    r = calcular_proctor(data)
+    if not r["puntos"] and not any(p["masa_humeda"] is not None for p in r["pruebas"]):
+        st.caption("Digita las masas de las pruebas para ver los resultados.")
+        return
+    f = lambda v, d=3: fmt_num(v, d) if v is not None else "—"
+    filas = [(f"Prueba {p['n']}", f(p["masa_humeda"], 1), f(p["w"], 2), f(p["dh"]), f(p["ds"])) for p in r["pruebas"]]
+    st.markdown(param_table_ncol_html(("PRUEBA", "MASA HÚMEDA (g)", "HUMEDAD (%)", "DENSIDAD HÚMEDA (g/cm³)", "DENSIDAD SECA (g/cm³)"), filas), unsafe_allow_html=True)
+    if r["opt_w"] is not None:
+        st.markdown("**Resultados**")
+        st.markdown(param_table_html([("Humedad óptima (%)", f(r["opt_w"], 1)), ("Densidad máxima (g/cm³)", f(r["max_d"], 3)),
+                                      ("Densidad máxima (kN/m³)", f(r["max_d"] * 9.81, 2))],
+                                     header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+    elif len(r["puntos"]) >= 3:
+        st.caption("Con estos puntos la curva no tiene máximo (la parábola no abre hacia abajo).")
+    else:
+        st.caption("Se necesitan al menos 3 pruebas completas para calcular la humedad óptima y la densidad máxima.")
+    if len(r["puntos"]) >= 2:
+        import altair as alt
+        pts = [{"Humedad (%)": round(x, 2), "Densidad seca (g/cm³)": round(y, 3)} for x, y in r["puntos"]]
+        capas = [alt.Chart(alt.Data(values=pts)).mark_point(filled=True, size=70, color=PRIMARY).encode(
+            x=alt.X("Humedad (%):Q", scale=alt.Scale(zero=False)), y=alt.Y("Densidad seca (g/cm³):Q", scale=alt.Scale(zero=False)),
+            tooltip=["Humedad (%):Q", "Densidad seca (g/cm³):Q"])]
+        if r["coef"]:
+            a, b, c = r["coef"]
+            xs = [p[0] for p in r["puntos"]]
+            lo, hi = min(xs) - 1, max(xs) + 1
+            curva = [{"Humedad (%)": round(lo + (hi - lo) * k / 40, 3), "Densidad seca (g/cm³)": round(a * (lo + (hi - lo) * k / 40) ** 2 + b * (lo + (hi - lo) * k / 40) + c, 4)} for k in range(41)]
+            capas.append(alt.Chart(alt.Data(values=curva)).mark_line(color=PRIMARY).encode(x="Humedad (%):Q", y="Densidad seca (g/cm³):Q"))
+            if r["opt_w"] is not None:
+                capas.append(alt.Chart(alt.Data(values=[{"Humedad (%)": r["opt_w"], "Densidad seca (g/cm³)": r["max_d"]}])).mark_point(
+                    shape="diamond", size=150, filled=True, color="#c0392b").encode(x="Humedad (%):Q", y="Densidad seca (g/cm³):Q"))
+        st.markdown("**Curva de compactación**")
+        st.altair_chart(alt.layer(*capas).properties(height=260), use_container_width=True)
+        st.caption("El rombo rojo marca la humedad óptima y la densidad máxima (ajuste parabólico de las pruebas).")
+    try:
+        if (to_float(data.get("proc_sobretamano_pct")) or 0) > 5:
+            st.caption("La muestra tiene más de 5% de sobretamaños: la corrección de densidad y humedad (INV E-143) se hace en el Excel.")
+    except Exception:
+        pass
+
+
 def icon(name, size=18, fill=False, color=None):
     """Ícono de Material Symbols para insertar dentro de HTML propio (st.markdown con unsafe_allow_html)."""
     cls = "material-symbols-outlined msi-fill" if fill else "material-symbols-outlined"
@@ -4103,7 +4192,7 @@ USCS_NOMBRES = {
     "SW-SM": "Arena bien gradada con limo", "SW-SC": "Arena bien gradada con arcilla",
     "SP-SM": "Arena mal gradada con limo", "SP-SC": "Arena mal gradada con arcilla",
     "CL": "Arcilla de baja plasticidad", "ML": "Limo de baja plasticidad",
-    "CL-ML": "Arcilla limosa de baja plasticidad",
+    "CL-ML": "Arcilla limosa de baja plasticidad", "GC-GM": "Grava arcillo-limosa", "SC-SM": "Arena arcillo-limosa",
     "CH": "Arcilla de alta plasticidad", "MH": "Limo de alta plasticidad",
 }
 
@@ -4174,25 +4263,26 @@ def clasificar_uscs(gran_data, lim_data):
     if lim_data:
         ll, lp, ip = _calcular_limites_atterberg(lim_data)
 
-    def _simbolo_fino(ll, ip):
-        a_line = 0.73 * (ll - 20)
-        if ip < 4 or ip < a_line:
-            return "M"
-        if ip > 7 and ip >= a_line:
-            return "C"
-        return "C-M"  # zona rayada CL-ML
-
     resultado = {"faltantes": [], "pct_grava": pct_grava, "pct_arena": pct_arena, "pct_finos": pct_finos,
                  "ll": ll, "lp": lp, "ip": ip, "cu": None, "cc": None}
 
-    if pct_finos >= 50:
+    # Réplica de la función USC() de la plantilla oficial (CLASIFICACION_DE_SUELOS.xlsm, Módulo1): mismos umbrales
+    # (>5, >50, >12, Cu>4/6 y 1<Cc<3 estrictos) y siempre suelo inorgánico (ORG="N"). ubic: 1 = IP<=4;
+    # 2 = zona CL-ML; 3 = 4<IP<=7 bajo la línea A; 4 = IP>7 sobre la línea A; 5 = IP>7 bajo la línea A.
+    ubic = 0
+    if pct_finos > 5:
         if ll is None:
-            resultado["faltantes"].append("Falta digitar Límites de Atterberg — la muestra tiene 50% o más "
-                                           "de finos y la clasificación depende de ellos.")
+            resultado["faltantes"].append("Falta digitar Límites de Atterberg — la clasificación depende de ellos "
+                                           "cuando la muestra tiene más de 5% de finos.")
             return resultado
-        base = _simbolo_fino(ll, ip)
-        resultado["simbolo"] = "CL-ML" if base == "C-M" else f"{base}{'H' if ll >= 50 else 'L'}"
-        return resultado
+        ipa = ip / (ll - 20) if ll > 20 else 0
+        sobre_a = ipa > 0.73 or ll <= 25.54
+        if ip <= 4:
+            ubic = 1
+        elif ip <= 7:
+            ubic = 2 if sobre_a else 3
+        else:
+            ubic = 4 if sobre_a else 5
 
     d10 = _interpolar_diametro(curva["puntos"], 10)
     d30 = _interpolar_diametro(curva["puntos"], 30)
@@ -4201,28 +4291,26 @@ def clasificar_uscs(gran_data, lim_data):
     cc = ((d30 ** 2) / (d10 * d60)) if (d10 and d30 and d60) else None
     resultado["cu"], resultado["cc"] = cu, cc
 
-    prefijo = "G" if pct_grava >= pct_arena else "S"
-    umbral_cu = 4 if prefijo == "G" else 6
-    bien_gradada = cu is not None and cc is not None and cu >= umbral_cu and 1 <= cc <= 3
-    simbolo_gradacion = f"{prefijo}{'W' if bien_gradada else 'P'}"
-
-    if pct_finos < 5:
-        resultado["simbolo"] = simbolo_gradacion
+    if pct_finos > 50:
+        if ubic == 2:
+            simbolo = "CL-ML"
+        elif ubic == 4:
+            simbolo = "CH" if ll > 50 else "CL"
+        else:
+            simbolo = "MH" if ll > 50 else "ML"
     elif pct_finos > 12:
-        if ll is None:
-            resultado["faltantes"].append("Falta digitar Límites de Atterberg — la fracción fina de esta "
-                                           "muestra supera el 12% y la clasificación depende de ellos.")
-            return resultado
-        base = _simbolo_fino(ll, ip)
-        resultado["simbolo"] = f"{prefijo}{'C' if base == 'C-M' else base}"
+        pref = "G" if pct_grava > pct_arena else "S"
+        simbolo = {2: f"{'GC-GM' if pref == 'G' else 'SC-SM'}", 4: f"{pref}C"}.get(ubic, f"{pref}M")
     else:
-        if ll is None:
-            resultado["faltantes"].append("Falta digitar Límites de Atterberg — la fracción fina de esta "
-                                           "muestra está entre 5% y 12% y la clasificación depende de ellos.")
-            return resultado
-        base = _simbolo_fino(ll, ip)
-        resultado["simbolo"] = f"{simbolo_gradacion}-{prefijo}{'C' if base == 'C-M' else base}"
-
+        pref = "G" if pct_grava > pct_arena else "S"
+        umbral = 4 if pref == "G" else 6
+        bien = cu is not None and cc is not None and cu > umbral and 1 < cc < 3
+        grad = f"{pref}{'W' if bien else 'P'}"
+        if pct_finos >= 5:
+            simbolo = f"{grad}-{pref}{'M' if ubic in (1, 3, 5) else 'C'}"
+        else:
+            simbolo = grad
+    resultado["simbolo"] = simbolo
     return resultado
 
 
@@ -8281,6 +8369,9 @@ def render_proctor_form(data, assay_id):
                 data[key] = row[i].text_input(f"Fuerza molde {i} {pulg}in", value=data.get(key, ""),
                                                key=f"{key}_{assay_id}", label_visibility="collapsed", placeholder="kN")
 
+    with resultados_desplegable("Resultados: humedad óptima, densidad máxima y curva"):
+        resultados_proctor(data)
+
     render_equipo(data, "proc", EQUIPO_PROCTOR)
     render_norma_selector("proctor", data, "proc")
 
@@ -8732,6 +8823,8 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             st.markdown(param_table_html([
                 ("Método", data.get("proc_metodo")), ("Sobretamaños — tamiz No.", data.get("proc_sobretamano_tamiz")),
                 ("% retenido de sobretamaños", data.get("proc_sobretamano_pct"))]), unsafe_allow_html=True)
+        with resultados_desplegable("Resultados: humedad óptima, densidad máxima y curva"):
+            resultados_proctor(data)
         for titulo, icono, filas, key_fn in (
                 ("CBR compactado — datos iniciales", "science", CBRC_FILAS, lambda i, c: f"cbrc_{i}_{c}"),
                 ("CBR compactado — humedad de compactación", "water_drop", CBRC_HUM_FILAS, lambda i, c: f"cbrc_{i}_hc_{c}"),
