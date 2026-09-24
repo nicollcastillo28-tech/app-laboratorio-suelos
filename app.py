@@ -1708,6 +1708,63 @@ def resultados_limites(data, key_prefix="lim"):
         st.caption("La línea punteada marca los 25 golpes; el rombo rojo es el Límite Líquido.")
 
 
+def resultados_pasa200(data):
+    """Filas de resultados del Pasa No. 200: masa seca antes/después del lavado y % que pasa el tamiz 200
+    (material perdido en el lavado / masa seca antes × 100)."""
+    def masa(suf):
+        sr, rc = to_float(data.get(f"p200_seco_mas_recipiente_{suf}")), to_float(data.get(f"p200_masa_recipiente_{suf}"))
+        return sr - rc if sr is not None and rc is not None else None
+    antes, despues = masa("antes"), masa("despues")
+    if antes is None and despues is None:
+        return []
+    pasa = (antes - despues) / antes * 100 if antes and despues is not None else None
+    f = lambda v, d=2: fmt_num(v, d) if v is not None else "—"
+    return [("Masa seca antes del lavado (g)", f(antes)), ("Masa seca después del lavado (g)", f(despues)),
+            ("Pasa No. 200 (%)", f(pasa))]
+
+
+def resultados_granulometria(data, lim_data=None):
+    """Tabla granulométrica (W ret., % ret., % que pasa), fracciones, D10/D30/D60, Cu, Cc, USCS y AASHTO, más la
+    curva granulométrica. Mismas fórmulas que la plantilla (F = W/masa inicial·100; G = G anterior − F)."""
+    curva = _calcular_curva_granulometrica(data)
+    if curva is None:
+        st.caption("Digita el Pasa No. 200 (masa inicial) y los retenidos para ver los resultados.")
+        return
+    masa_ini = to_float(data.get("p200_seco_mas_recipiente_antes")) - to_float(data.get("p200_masa_recipiente_antes"))
+    filas = []
+    for (key, label, apert, _c), (_d, pasa) in zip(SIEVES, curva["puntos"]):
+        ret = to_float(data.get(key)) or 0.0
+        filas.append((label, apert, fmt_num(ret, 2), fmt_num(ret / masa_ini * 100, 2), fmt_num(pasa, 2)))
+    st.markdown("**Granulometría**")
+    st.markdown(param_table_ncol_html(("TAMIZ", "ABERTURA (mm)", "W RET. (g)", "% RET.", "% PASA"), filas), unsafe_allow_html=True)
+    total = sum(to_float(data.get(k)) or 0.0 for k, *_ in SIEVES)
+    st.caption(f"Masa inicial seca: {fmt_num(masa_ini, 2)} g · suma de retenidos: {fmt_num(total, 2)} g · pasa el No. 200 en el fondo: {fmt_num(masa_ini - total, 2)} g")
+    uscs = clasificar_uscs(data, lim_data)
+    aashto = clasificar_aashto(data, lim_data)
+    f1 = lambda v: fmt_num(v, 1) if v is not None else "—"
+    filas_r = [("Grava (%)", f1(curva["pct_grava"])), ("Arena (%)", f1(curva["pct_arena"])), ("Finos (%)", f1(curva["pct_finos"]))]
+    d = {p: _interpolar_diametro(curva["puntos"], p) for p in (10, 30, 60)}
+    filas_r += [("D10 (mm)", fmt_num(d[10], 3) if d[10] else "—"), ("D30 (mm)", fmt_num(d[30], 3) if d[30] else "—"),
+                ("D60 (mm)", fmt_num(d[60], 3) if d[60] else "—"),
+                ("Cu", f1(d[60] / d[10]) if d[10] and d[60] else "—"),
+                ("Cc", fmt_num(d[30] ** 2 / (d[10] * d[60]), 2) if d[10] and d[30] and d[60] else "—")]
+    if uscs.get("ll") is not None:
+        filas_r += [("LL / LP / IP", f'{uscs["ll"]} / {uscs["lp"]} / {uscs["ip"]}')]
+    filas_r.append(("Clasificación USCS", f'{uscs["simbolo"]} — {USCS_NOMBRES.get(uscs["simbolo"], "")}' if uscs.get("simbolo") else "—"))
+    filas_r.append(("Clasificación AASHTO", f'{aashto["simbolo"]} — {AASHTO_NOMBRES.get(aashto["simbolo"], "")}' if aashto.get("simbolo") else "—"))
+    st.markdown("**Resultados**")
+    st.markdown(param_table_html(filas_r, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+    for msg in (uscs.get("faltantes") or []) + (aashto.get("faltantes") or []):
+        st.caption(msg)
+    import altair as alt
+    pts = [{"Abertura (mm)": float(a), "% que pasa": round(p, 2)} for (_k, _l, a, _c), (_d2, p) in zip(SIEVES, curva["puntos"]) if float(a) > 0]
+    ch = alt.Chart(alt.Data(values=pts)).encode(
+        x=alt.X("Abertura (mm):Q", scale=alt.Scale(type="log", reverse=True, domain=[0.05, 100]), axis=alt.Axis(values=[0.075, 0.42, 2, 4.76, 9.52, 19.05, 38.1, 76.2])),
+        y=alt.Y("% que pasa:Q", scale=alt.Scale(domain=[0, 100])), tooltip=["Abertura (mm):Q", "% que pasa:Q"])
+    st.markdown("**Curva granulométrica**")
+    st.altair_chart((ch.mark_line(color=PRIMARY) + ch.mark_point(filled=True, size=50, color=PRIMARY)).properties(height=260), use_container_width=True)
+
+
 def icon(name, size=18, fill=False, color=None):
     """Ícono de Material Symbols para insertar dentro de HTML propio (st.markdown con unsafe_allow_html)."""
     cls = "material-symbols-outlined msi-fill" if fill else "material-symbols-outlined"
@@ -4052,56 +4109,12 @@ USCS_NOMBRES = {
 
 
 def _calcular_limites_atterberg(data):
-    """LL, LP e IP a partir de las lecturas digitadas (INV E-125/E-126, equivalente a ASTM D4318):
-    humedad = (masa húmeda - masa seca) / (masa seca - masa recipiente) x 100 por cada ensayo. El
-    Límite Líquido es la humedad interpolada a 25 golpes sobre la curva de fluidez (humedad vs.
-    log de golpes) — si algún ensayo se hizo exactamente a 25 golpes se usa esa lectura directa en
-    vez de la regresión, igual que la fórmula de la plantilla de Excel. Devuelve (None, None, None)
-    si no hay lecturas suficientes."""
-    puntos = []
-    for i in range(1, LIMITE_LIQUIDO_N + 1):
-        golpes = to_float(data.get(f"lim_ll_golpes_{i}"))
-        humedo = to_float(data.get(f"lim_ll_humedo_{i}"))
-        seco = to_float(data.get(f"lim_ll_seco_{i}"))
-        recip = to_float(data.get(f"lim_ll_recip_masa_{i}"))
-        if None in (golpes, humedo, seco, recip) or golpes <= 0 or (seco - recip) <= 0:
-            continue
-        puntos.append((golpes, (humedo - seco) / (seco - recip) * 100))
-
-    ll = None
-    if puntos:
-        exacto25 = [w for g, w in puntos if abs(g - 25) < 0.5]
-        if exacto25:
-            ll = exacto25[0]
-        elif len(puntos) >= 2:
-            xs = [math.log10(g) for g, _ in puntos]
-            ys = [w for _, w in puntos]
-            n = len(xs)
-            mean_x, mean_y = sum(xs) / n, sum(ys) / n
-            sxx = sum((x - mean_x) ** 2 for x in xs)
-            if sxx == 0:
-                ll = ys[0]
-            else:
-                pendiente = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / sxx
-                intercepto = mean_y - pendiente * mean_x
-                ll = intercepto + pendiente * math.log10(25)
-        else:
-            ll = puntos[0][1]
-
-    humedades_lp = []
-    for i in range(1, LIMITE_PLASTICO_N + 1):
-        humedo = to_float(data.get(f"lim_lp_humedo_{i}"))
-        seco = to_float(data.get(f"lim_lp_seco_{i}"))
-        recip = to_float(data.get(f"lim_lp_recip_masa_{i}"))
-        if None in (humedo, seco, recip) or (seco - recip) <= 0:
-            continue
-        humedades_lp.append((humedo - seco) / (seco - recip) * 100)
-    lp = sum(humedades_lp) / len(humedades_lp) if humedades_lp else None
-
-    if ll is None or lp is None:
+    """LL, LP e IP (enteros) para la clasificación — mismos valores que ve la persona en los resultados de
+    Límites de Atterberg (ver calcular_limites, con las fórmulas de la plantilla). (None, None, None) si faltan datos."""
+    r = calcular_limites(data)
+    if r["ll"] is None or r["lp"] is None:
         return None, None, None
-    ll_i, lp_i = int(ll), int(lp)
-    return ll_i, lp_i, max(ll_i - lp_i, 0)
+    return r["ll"], r["lp"], max(r["ip"], 0)
 
 
 def _calcular_curva_granulometrica(gran_data):
@@ -5820,11 +5833,15 @@ def render_pasa200_form(data, assay_id):
     render_norma_selector("granulometria", data, "gran")
     render_equipo(data, "gran", EQUIPO_GRANULOMETRIA)
     render_pasa200_section(data, assay_id, requerido=False)
+    with resultados_desplegable():
+        filas = resultados_pasa200(data)
+        if filas:
+            st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        else:
+            st.caption("Digita las masas para ver el resultado.")
 
 
 def render_granulometria_form(data, assay_id):
-    st.info("Estos datos se guardan tal cual y se llevan a la plantilla oficial de Excel — los cálculos y la clasificación USCS los hace el Excel, no la app.")
-
     render_norma_selector("granulometria", data, "gran")
     render_equipo(data, "gran", EQUIPO_GRANULOMETRIA)
 
@@ -5850,7 +5867,10 @@ def render_granulometria_form(data, assay_id):
                 raw = data.get(key, "")
                 st.session_state[widget_key] = "" if raw in (None, "") else str(raw)
             data[key] = row[2].text_input(f"Retenido {label}", key=widget_key, label_visibility="collapsed", placeholder="0.00")
-        st.caption("El % retenido y la clasificación USCS se calculan en la plantilla de Excel, no aquí.")
+
+    _lim = get_assay(st.session_state.get("selected_muestra_id"), "limites")
+    with resultados_desplegable("Resultados: granulometría y clasificación"):
+        resultados_granulometria(data, _lim.get("data") if _lim else None)
 
 
 def render_humedad_form(data, assay_id):
@@ -8378,12 +8398,17 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             # Tamiz sin digitar = no se pesó nada retenido ahí, no un dato faltante -> se muestra 0.
             sieve_rows = [(label, data.get(key) if data.get(key) not in (None, "") else 0) for key, label, _apert, _cell in SIEVES]
             st.markdown(param_table_html(sieve_rows, header_left="TAMIZ", header_right="RETENIDO (g)"), unsafe_allow_html=True)
+        _lim = get_assay(muestra_id, "limites") if muestra_id else None
+        with resultados_desplegable("Resultados: granulometría y clasificación"):
+            resultados_granulometria(data, _lim.get("data") if _lim else None)
         equipos, norma = data.get("gran_equipos", []), data.get("gran_norma", "—")
     elif tipo == "pasa200":
         with st.container(border=True):
             st.markdown(card_header_html("water_drop", "Determinación Pasa No. 200"), unsafe_allow_html=True)
             pasa200_rows = [(label, data.get(f"{key}_antes"), data.get(f"{key}_despues")) for key, label in PASA_200_FILAS]
             st.markdown(param_table_3col_html(pasa200_rows), unsafe_allow_html=True)
+        with resultados_desplegable():
+            st.markdown(param_table_html(resultados_pasa200(data) or [("Pasa No. 200 (%)", "—")], header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
         equipos, norma = data.get("gran_equipos", []), data.get("gran_norma", "—")
     elif tipo == "humedad":
         masa_humedo = to_float(data.get("hum_masa_humedo_mas_recipiente"))
