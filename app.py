@@ -6041,18 +6041,35 @@ def generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, obs
 # ════════════════════════════════════════════════════════════════════
 # FORMULARIOS DE ENSAYO (solo captura de datos, sin cálculos)
 # ════════════════════════════════════════════════════════════════════
+def equipos_selector(skey, lista, actuales):
+    """Selección múltiple de equipos con botones que se prenden y se apagan (en vez de casillas de verificación, que en la
+    tableta no respondían bien al toque). Los botones son el mismo widget que usa el resto de la app en la tableta, y un
+    segundo disparo del mismo toque (visto en pantallas táctiles) se ignora con la misma salvaguarda de 400 ms que la
+    navegación. `skey` debe ser único por ensayo y lista (así no se arrastra la selección de otro ensayo).
+    Devuelve la lista seleccionada, en el orden de `lista`."""
+    if skey not in st.session_state:
+        st.session_state[skey] = [e for e in lista if e in set(actuales or [])]
+    elegidos = set(st.session_state[skey])
+    cols = st.columns(2)
+    for i, equipo in enumerate(lista):
+        activo = equipo in elegidos
+        with cols[i % 2]:
+            if st.button(equipo, key=f"{skey}_{i}", use_container_width=True, type="primary" if activo else "secondary",
+                         icon=":material/check_box:" if activo else ":material/check_box_outline_blank:"):
+                ahora = time.monotonic()
+                if ahora - st.session_state.get(f"{skey}_ts", 0) > 0.4:
+                    st.session_state[skey] = [e for e in lista if (e in elegidos) != (e == equipo)]
+                st.session_state[f"{skey}_ts"] = ahora
+                st.rerun()
+    return [e for e in lista if e in set(st.session_state[skey])]
+
+
 def render_equipo(data, prefix, equipo_list=None):
     lista = equipo_list or EQUIPO_LIST
     with st.container(border=True):
         st.markdown(card_header_html("construction", "Equipos Utilizados"), unsafe_allow_html=True)
-        seleccionados = set(data.get(f"{prefix}_equipos", []))
-        cols = st.columns(2)
-        nuevos = []
-        for i, equipo in enumerate(lista):
-            with cols[i % 2]:
-                if st.checkbox(equipo, value=equipo in seleccionados, key=f"{prefix}_equipo_{i}"):
-                    nuevos.append(equipo)
-        data[f"{prefix}_equipos"] = nuevos
+        ctx = st.session_state.get("selected_assay_id", "")
+        data[f"{prefix}_equipos"] = equipos_selector(f"eqsel_{prefix}_{ctx}", lista, data.get(f"{prefix}_equipos", []))
 
 
 def render_norma_selector(assay_type, data, key_prefix):
@@ -6809,14 +6826,8 @@ def render_corte_directo_form(data, assay_id):
             _radio(f"corte_m{i}_temp_secado", "Temperatura de secado", CORTE_TEMP_SECADO_OPTIONS)
             st.markdown('<div class="cell-muted" style="font-weight:700;margin-top:8px;">Equipos utilizados (humedad)</div>',
                         unsafe_allow_html=True)
-            sel = set(data.get(f"corte_m{i}_hum_equipos", []))
-            nuevos = []
-            cols_eq = st.columns(2)
-            for j, equipo in enumerate(EQUIPO_CORTE_HUMEDAD):
-                with cols_eq[j % 2]:
-                    if st.checkbox(equipo, value=equipo in sel, key=f"corte_m{i}_hum_equipo_{j}_{assay_id}"):
-                        nuevos.append(equipo)
-            data[f"corte_m{i}_hum_equipos"] = nuevos
+            data[f"corte_m{i}_hum_equipos"] = equipos_selector(f"eqsel_corte_m{i}_hum_{assay_id}", EQUIPO_CORTE_HUMEDAD,
+                                                                data.get(f"corte_m{i}_hum_equipos", []))
 
     with st.container(border=True):
         st.markdown(card_header_html("show_chart", "Lecturas de la Máquina"), unsafe_allow_html=True)
@@ -6855,14 +6866,7 @@ def render_corte_directo_form(data, assay_id):
         st.markdown('<div class="cell-muted" style="font-weight:700;margin-top:8px;">Equipos utilizados (gravedad)</div>',
                     unsafe_allow_html=True)
         _campo("corte_ge_picnometro", "Picnómetro No.", placeholder="1")
-        sel = set(data.get("corte_ge_equipos", []))
-        nuevos = []
-        cols_eq = st.columns(2)
-        for j, equipo in enumerate(EQUIPO_CORTE_GRAVEDAD):
-            with cols_eq[j % 2]:
-                if st.checkbox(equipo, value=equipo in sel, key=f"corte_ge_equipo_{j}_{assay_id}"):
-                    nuevos.append(equipo)
-        data["corte_ge_equipos"] = nuevos
+        data["corte_ge_equipos"] = equipos_selector(f"eqsel_corte_ge_{assay_id}", EQUIPO_CORTE_GRAVEDAD, data.get("corte_ge_equipos", []))
 
     with resultados_desplegable("Resultados: humedades, densidades y saturación"):
         resultados_corte_directo(data)
