@@ -650,8 +650,47 @@ components.html("""
         }, 0);
     }
 
+    // A veces (sobre todo en tableta, al cambiar de pantalla o al reconectarse el WebSocket) el navegador deja dos copias de
+    // la página una tras otra: barra superior, encabezados, contenido y barra inferior repetidos. Cada corrida arranca con
+    // la barra superior, así que si hay más de una, todo lo que va desde la primera hasta la última es una copia vieja:
+    // se OCULTA (no se borra, para no romper el árbol que maneja Streamlit) y queda visible solo la más reciente. Las
+    // barras inferiores repetidas se tratan igual. En cada pasada se restaura lo ocultado antes y se recalcula.
+    function ocultarCopiasRepetidas() {
+        var doc = window.parent.document;
+        doc.querySelectorAll('[data-gd-copia]').forEach(function(e) {
+            e.style.setProperty('display', '');
+            e.removeAttribute('data-gd-copia');
+        });
+        function ocultar(e) {
+            e.style.setProperty('display', 'none', 'important');
+            e.setAttribute('data-gd-copia', '1');
+        }
+        var main = doc.querySelector('[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"]');
+        if (main) {
+            var hijos = Array.prototype.slice.call(main.children);
+            var idx = [];
+            hijos.forEach(function(h, i) {
+                if (h.classList.contains('st-key-topbar') || h.querySelector('.st-key-topbar')) idx.push(i);
+            });
+            if (idx.length > 1) {
+                for (var i = idx[0]; i < idx[idx.length - 1]; i++) ocultar(hijos[i]);
+            }
+        }
+        ['topbar', 'bottomnav'].forEach(function(clave) {
+            var copias = Array.prototype.slice.call(doc.querySelectorAll('.st-key-' + clave))
+                .filter(function(e) { return !e.closest('[data-gd-copia]'); });
+            for (var j = 0; j < copias.length - 1; j++) ocultar(copias[j]);
+        });
+    }
+    var _pasadaCopias = null;
+    function programarCopias() {
+        if (_pasadaCopias) return;
+        _pasadaCopias = setTimeout(function() { _pasadaCopias = null; ocultarCopiasRepetidas(); }, 60);
+    }
+
     applyInputMode();
-    new MutationObserver(applyInputMode).observe(window.parent.document.body, {childList: true, subtree: true});
+    ocultarCopiasRepetidas();
+    new MutationObserver(function() { applyInputMode(); programarCopias(); }).observe(window.parent.document.body, {childList: true, subtree: true});
     window.parent.document.addEventListener('keydown', focusNextOnEnter, true);
     window.parent.addEventListener('popstate', function() {
         window.parent.location.reload();
