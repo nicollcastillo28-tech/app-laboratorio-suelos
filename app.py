@@ -7758,11 +7758,15 @@ def resultados_gravedad(data, modo):
 
 
 def resultados_materia_organica(data):
-    """Mismas fórmulas de la plantilla GDA-FLC-003: masa seca y contenido de materia orgánica (%)."""
+    """Mismas fórmulas de la plantilla GDA-FLC-003 (celdas I22/I23): masa seca = masa tras ignición − masa del
+    crisol; % materia orgánica = (masa seca inicial − masa tras ignición) / (masa seca inicial − masa del
+    crisol) × 100 — el denominador es la masa seca ANTES de la ignición (I19−I21), no la de después (I20−I21):
+    esa era la fórmula que traía la plantilla hasta ahora, un error real que ya se corrigió también en
+    templates/GDA-FLC-003_materia_organica.xlsx."""
     a, b, c = (to_float(data.get(k)) for k, _ in MO_CAMPOS)
-    if None in (a, b, c) or (b - c) == 0:
+    if None in (a, b, c) or (a - c) == 0:
         return []
-    return [("Masa seca (g)", fmt_num(b - c)), ("Contenido de materia orgánica (%)", fmt_num((a - b) / (b - c) * 100, 2))]
+    return [("Masa seca (g)", fmt_num(b - c)), ("Contenido de materia orgánica (%)", fmt_num((a - b) / (a - c) * 100, 2))]
 
 
 def resultados_limite_contraccion(data):
