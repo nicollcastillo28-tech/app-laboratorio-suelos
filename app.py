@@ -8885,6 +8885,14 @@ CP_HUMEDAD_FILAS = [
 ]
 EQUIPO_CARGA_PUNTUAL = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Horno GDA-E-007", "Acople carga puntual GDA-E-021",
                         "Pie de rey GDA-E-110", "Celda de carga GDA-E-016", "Celda de carga GDA-E-017", "Máquina multiusos GDA-E-008"]
+CP_SENTIDO_LABEL = {"DIAMETRAL": "Diametral", "AXIAL": "Axial", "BLOQUE": "Bloque", "IRREGULAR": "Irregular"}
+# Etiquetas cortas para la cuadrícula del formulario (la lectura de solo lectura sigue usando las descriptivas
+# de CP_HUMEDAD_FILAS, que no se tocan).
+CP_HUMEDAD_ETIQUETAS_CORTAS = {
+    "cp_hum_recipiente": "N° recipiente", "cp_hum_humedo": "Húmeda + recip. (g)",
+    "cp_hum_seco_14": "Seca 14 h (g)", "cp_hum_seco_15": "Seca 15 h (g)",
+    "cp_hum_seco_16": "Seca 16 h (g)", "cp_hum_masa_rec": "Masa recipiente (g)",
+}
 
 
 def _cp_resultado_fila(data, i):
@@ -8929,69 +8937,315 @@ def resultados_carga_puntual(data):
     return filas
 
 
+def _cp_estado_fila(data, i):
+    """Estado de un ensayo para los chips y el mensaje de la interfaz: 'completo', 'alerta' (geometría fuera
+    del rango que pide ASTM D5731 para que la fractura no salga por el borde del espécimen) o 'incompleto'
+    (faltan datos). Los umbrales -- L >= 0.5*D en diametral, 0.30 <= D/W <= 1.00 en los demás sentidos -- son
+    los de tamaño mínimo de espécimen de la norma; quedan sin confirmar con el jefe de laboratorio."""
+    sentido = data.get(f"cp_{i}_sentido", "DIAMETRAL")
+    d = to_float(data.get(f"cp_{i}_d"))
+    l1 = to_float(data.get(f"cp_{i}_l1"))
+    w2 = to_float(data.get(f"cp_{i}_w2"))
+    r = _cp_resultado_fila(data, i)
+    if r is None:
+        faltan = []
+        if to_float(data.get(f"cp_{i}_carga")) is None:
+            faltan.append("P")
+        if d is None:
+            faltan.append("D")
+        if l1 is None:
+            faltan.append("L" if sentido == "DIAMETRAL" else "W1")
+        if sentido != "DIAMETRAL" and w2 is None:
+            faltan.append("W2")
+        return "incompleto", ("Faltan datos: " + ", ".join(faltan)) if faltan else "Faltan datos"
+    if sentido == "DIAMETRAL":
+        ok = (l1 or 0) >= 0.5 * d
+        msg = (f"L ≥ 0.5·D  ({fmt_num(l1, 1)} ≥ {fmt_num(0.5 * d, 1)} mm)" if ok else
+               f"L < 0.5·D ({fmt_num(l1, 1)} < {fmt_num(0.5 * d, 1)} mm) — revise la medida")
+    else:
+        w = ((l1 or 0) + (w2 or 0)) / 2
+        ratio = d / w if w else 0
+        ok = 0.3 <= ratio <= 1.0
+        msg = (f"D/W = {fmt_num(ratio, 2)}  (rango 0.30 – 1.00)" if ok else
+               f"D/W = {fmt_num(ratio, 2)} fuera de 0.30 – 1.00 — revise medidas")
+    return ("completo" if ok else "alerta"), msg
+
+
+def _cp_diagrama_svg(sentido):
+    """Diagrama de referencia del sentido de falla elegido (mismas proporciones para los 4 casos)."""
+    if sentido == "DIAMETRAL":
+        forma = ('<rect x="40" y="55" width="190" height="60" rx="10" fill="#FFFFFF" stroke="{oscuro}" stroke-width="2"/>'
+                 '<polygon points="155,22 175,22 165,55" fill="{oscuro}"/>'
+                 '<polygon points="155,148 175,148 165,115" fill="{oscuro}"/>'
+                 '<line x1="24" y1="55" x2="24" y2="115" stroke="{mudo}" stroke-width="1.5"/>'
+                 '<line x1="18" y1="55" x2="30" y2="55" stroke="{mudo}" stroke-width="1.5"/>'
+                 '<line x1="18" y1="115" x2="30" y2="115" stroke="{mudo}" stroke-width="1.5"/>'
+                 '<text x="6" y="90" font-family="JetBrains Mono" font-size="15" fill="{mudo}">D</text>'
+                 '<line x1="165" y1="150" x2="165" y2="162" stroke="{acento}" stroke-width="1.5"/>'
+                 '<line x1="230" y1="118" x2="230" y2="162" stroke="{acento}" stroke-width="1.5" stroke-dasharray="3 3"/>'
+                 '<line x1="165" y1="158" x2="230" y2="158" stroke="{acento}" stroke-width="2.5"/>'
+                 '<text x="190" y="150" font-family="JetBrains Mono" font-size="16" font-weight="700" fill="{acento}">L</text>')
+    elif sentido == "AXIAL":
+        forma = ('<rect x="95" y="35" width="60" height="100" rx="8" fill="#FFFFFF" stroke="{oscuro}" stroke-width="2"/>'
+                 '<polygon points="115,6 135,6 125,35" fill="{oscuro}"/>'
+                 '<polygon points="115,164 135,164 125,135" fill="{oscuro}"/>'
+                 '<line x1="185" y1="35" x2="185" y2="135" stroke="{mudo}" stroke-width="1.5"/>'
+                 '<line x1="179" y1="35" x2="191" y2="35" stroke="{mudo}" stroke-width="1.5"/>'
+                 '<line x1="179" y1="135" x2="191" y2="135" stroke="{mudo}" stroke-width="1.5"/>'
+                 '<text x="196" y="90" font-family="JetBrains Mono" font-size="15" fill="{mudo}">D</text>'
+                 '<line x1="95" y1="85" x2="155" y2="85" stroke="{acento}" stroke-width="2.5"/>'
+                 '<text x="22" y="90" font-family="JetBrains Mono" font-size="15" font-weight="700" fill="{acento}">W1·W2</text>')
+    elif sentido == "BLOQUE":
+        forma = ('<rect x="70" y="45" width="110" height="80" rx="3" fill="#FFFFFF" stroke="{oscuro}" stroke-width="2"/>'
+                 '<polygon points="115,14 135,14 125,45" fill="{oscuro}"/>'
+                 '<polygon points="115,156 135,156 125,125" fill="{oscuro}"/>'
+                 '<line x1="205" y1="45" x2="205" y2="125" stroke="{mudo}" stroke-width="1.5"/>'
+                 '<line x1="199" y1="45" x2="211" y2="45" stroke="{mudo}" stroke-width="1.5"/>'
+                 '<line x1="199" y1="125" x2="211" y2="125" stroke="{mudo}" stroke-width="1.5"/>'
+                 '<text x="215" y="90" font-family="JetBrains Mono" font-size="15" fill="{mudo}">D</text>'
+                 '<line x1="70" y1="85" x2="180" y2="85" stroke="{acento}" stroke-width="2.5"/>'
+                 '<text x="4" y="90" font-family="JetBrains Mono" font-size="15" font-weight="700" fill="{acento}">W1·W2</text>')
+    else:
+        forma = ('<path d="M72 62 Q92 40 128 46 Q176 40 184 72 Q194 104 170 122 Q130 134 96 124 Q62 110 72 62 Z" '
+                 'fill="#FFFFFF" stroke="{oscuro}" stroke-width="2"/>'
+                 '<polygon points="118,14 138,14 128,45" fill="{oscuro}"/>'
+                 '<polygon points="118,158 138,158 128,128" fill="{oscuro}"/>'
+                 '<line x1="210" y1="45" x2="210" y2="128" stroke="{mudo}" stroke-width="1.5"/>'
+                 '<line x1="204" y1="45" x2="216" y2="45" stroke="{mudo}" stroke-width="1.5"/>'
+                 '<line x1="204" y1="128" x2="216" y2="128" stroke="{mudo}" stroke-width="1.5"/>'
+                 '<text x="220" y="92" font-family="JetBrains Mono" font-size="15" fill="{mudo}">D</text>'
+                 '<line x1="68" y1="86" x2="188" y2="86" stroke="{acento}" stroke-width="2.5"/>'
+                 '<text x="4" y="91" font-family="JetBrains Mono" font-size="15" font-weight="700" fill="{acento}">W1·W2</text>')
+    forma = forma.format(oscuro=PRIMARY_CONTAINER, mudo=MUTED, acento=PRIMARY_DARK)
+    return f'<svg width="100%" height="150" viewBox="0 0 250 170" fill="none" xmlns="http://www.w3.org/2000/svg">{forma}</svg>'
+
+
+def _cp_panel_calculo_html(r, estado, mensaje):
+    """Panel "calcula la app" con los 5 valores derivados del ensayo activo, más el mensaje de validación
+    de geometría (ver _cp_estado_fila)."""
+    if r:
+        de2, de, k, is_, is50 = r
+        # fmt_num recorta ceros finales sin distinguir si son parte del decimal (ok) o del entero (no) --
+        # con decimals=0 un valor como 2500 quedaría en "25". De² se redondea aparte por eso.
+        vals = [("De² mm²", f"{de2:.0f}"), ("De mm", fmt_num(de, 1)), ("K factor correc.", fmt_num(k, 3)),
+                ("Is MPa", fmt_num(is_, 3)), ("Is50 MPa", fmt_num(is50, 3))]
+    else:
+        vals = [("De² mm²", "—"), ("De mm", "—"), ("K factor correc.", "—"), ("Is MPa", "—"), ("Is50 MPa", "—")]
+    celdas = "".join(
+        f'<div><div style="font-size:13px;color:{MUTED};">{lbl}</div>'
+        f'<div class="font-mono" style="font-size:{"24px" if lbl.startswith("Is50") else "20px"};'
+        f'font-weight:{"700" if lbl.startswith("Is50") else "500"};color:{TEXT};">{val}</div></div>'
+        for lbl, val in vals
+    )
+    bg_msg, fg_msg = {"completo": (SUCCESS_LIGHT, SUCCESS), "alerta": (WARNING_LIGHT, WARNING),
+                       "incompleto": (BG, MUTED)}[estado]
+    return (f'<div style="background:{SECONDARY_CONTAINER};border-radius:12px;padding:16px 18px;margin:14px 0;">'
+            f'<div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:{PRIMARY};'
+            f'letter-spacing:0.02em;margin-bottom:12px;">{icon("lock", size=16)} CALCULA LA APP · NO EDITABLE</div>'
+            f'<div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;">{celdas}</div>'
+            f'<div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:{bg_msg};color:{fg_msg};'
+            f'font-size:14px;font-weight:500;">{html.escape(mensaje)}</div></div>')
+
+
+def _cp_panel_resultados_html(data):
+    """Panel oscuro con el Is50 promedio, cuántos ensayos tienen resultado y la humedad -- mismo resumen que
+    encabeza la sección de Resultados del diseño de referencia."""
+    resultados = [_cp_resultado_fila(data, i) for i in range(1, CP_MAX_ENSAYOS + 1)]
+    estados = [_cp_estado_fila(data, i)[0] for i in range(1, CP_MAX_ENSAYOS + 1)]
+    validos = [r[4] for r in resultados if r]
+    n_con_dato = sum(1 for r in resultados if r)
+    n_alerta = estados.count("alerta")
+    avg = sum(validos) / len(validos) if validos else None
+    humedo, rec = to_float(data.get("cp_hum_humedo")), to_float(data.get("cp_hum_masa_rec"))
+    seco = next((v for v in (to_float(data.get(f"cp_hum_seco_{x}")) for x in (16, 15, 14)) if v is not None), None)
+    w = (humedo - seco) / (seco - rec) * 100 if None not in (humedo, seco, rec) and (seco - rec) != 0 else None
+    alerta_txt = f"{n_alerta} con geometría a revisar" if n_alerta else "Sin alertas"
+    alerta_color = WARNING_LIGHT if n_alerta else "rgba(255,255,255,.72)"
+    return (
+        f'<div style="background:{PRIMARY_CONTAINER};border-radius:14px;padding:20px 22px;color:#FFFFFF;margin-bottom:14px;">'
+        f'<div style="display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:16px;">'
+        f'<div><div style="font-size:13px;color:rgba(255,255,255,.72);">Is50 promedio</div>'
+        f'<div class="font-mono" style="font-size:40px;font-weight:700;color:{TERTIARY};line-height:1;">'
+        f'{fmt_num(avg, 3) if avg is not None else "—"}</div>'
+        f'<div style="font-size:13px;color:rgba(255,255,255,.72);">MPa</div></div>'
+        f'<div><div style="font-size:13px;color:rgba(255,255,255,.72);">Ensayos con resultado</div>'
+        f'<div class="font-mono" style="font-size:26px;font-weight:700;">{n_con_dato} / {CP_MAX_ENSAYOS}</div>'
+        f'<div style="font-size:13px;color:{alerta_color};">{alerta_txt}</div></div>'
+        f'<div><div style="font-size:13px;color:rgba(255,255,255,.72);">Humedad w</div>'
+        f'<div class="font-mono" style="font-size:26px;font-weight:700;">'
+        f'{(fmt_num(w, 2) + " %") if w is not None else "—"}</div></div>'
+        f'</div></div>'
+    )
+
+
 def render_carga_puntual_form(data, assay_id):
     st.info("Formulario armado sobre la bitácora GDA-FL-020. El Excel para descargar (plantilla oficial GDA-FLC-018) "
             "está al final del ensayo. Hasta 10 ensayos por muestra.")
 
-    def _campo(key, label, placeholder="0.00"):
-        row = st.columns([2.2, 1])
-        row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
-        data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
-                                       label_visibility="collapsed", placeholder=placeholder)
+    n_key, activo_key, defecto_key = f"cp_n_filas_{assay_id}", f"cp_activo_{assay_id}", f"cp_sentido_defecto_{assay_id}"
+    if n_key not in st.session_state:
+        con_datos = max([i for i in range(1, CP_MAX_ENSAYOS + 1)
+                          if any(str(data.get(f"cp_{i}_{c}", "")).strip() for c in ("carga", "d", "l1", "w2", "masa"))],
+                         default=0)
+        st.session_state[n_key] = max(con_datos, 1)
+    if defecto_key not in st.session_state:
+        st.session_state[defecto_key] = "DIAMETRAL"
+    n_filas = st.session_state[n_key]
+    if activo_key not in st.session_state:
+        st.session_state[activo_key] = n_filas
+    activo = st.session_state[activo_key] = min(max(st.session_state[activo_key], 1), n_filas)
 
     # La plantilla oficial (GDA-FLC-018, columna E) usa una sola casilla para dos cosas distintas según el
     # sentido de falla: la LONGITUD L de la muestra en un ensayo diametral (solo para verificar que cumple el
     # tamaño mínimo — no entra en la fórmula), o la primera medida de ancho W1 en axial/bloque/irregular (esa
     # sí entra, promediada con W2). No se puede separar en dos casillas de Excel porque en la plantilla es una
-    # sola — por eso el título de la columna combina las dos, pero cada fila indica cuál de las dos le toca
-    # según su propio "Sentido de falla" (el marcador de la casilla cambia solo).
+    # sola — por eso cada ensayo se digita de a uno, con un diagrama al lado que muestra cuál de las dos le
+    # toca según su propio "Sentido de falla".
     with st.container(border=True):
         st.markdown(card_header_html("science", "Ensayos"), unsafe_allow_html=True)
         st.caption("La columna \"L / W1\" es una sola casilla en la plantilla oficial: se usa como L (longitud, "
                    "solo para verificar el tamaño mínimo) en ensayos diametrales, o como W1 (ancho, si se "
-                   "promedia con W2) en los demás sentidos — el marcador de la casilla cambia solo según lo "
-                   "que elijas en \"Sentido de falla\". La masa no está en la plantilla de Excel: se guarda "
+                   "promedia con W2) en los demás sentidos. La masa no está en la plantilla de Excel: se guarda "
                    "aquí solo como referencia.")
-        anchos = [0.5, 1, 1, 1.1, 0.9, 0.9, 1.3]
-        head = st.columns(anchos)
-        for j, texto in enumerate(("#", "Carga P (kN)", "Altura D (mm)", "L / W1 (mm)", "W2 (mm)", "Masa (g)", "Sentido de falla")):
-            head[j].markdown(f'<div class="cell-muted" style="text-align:center;font-weight:700;">{texto}</div>', unsafe_allow_html=True)
 
-        # No se muestran de una las 10 filas posibles: solo las que ya tienen datos, más una libre para seguir
-        # digitando — con un botón para ir revelando más, hasta el máximo de la bitácora.
-        con_datos = max([i for i in range(1, CP_MAX_ENSAYOS + 1) if str(data.get(f"cp_{i}_carga", "")).strip()], default=0)
-        visibles_key = f"cp_filas_visibles_{assay_id}"
-        if visibles_key not in st.session_state:
-            st.session_state[visibles_key] = min(max(con_datos + 1, 3), CP_MAX_ENSAYOS)
-        n_visibles = st.session_state[visibles_key]
-
-        for i in range(1, n_visibles + 1):
-            row = st.columns(anchos)
-            row[0].markdown(f'<div style="padding-top:8px;text-align:center;">{i}</div>', unsafe_allow_html=True)
-            sentido_actual = data.get(f"cp_{i}_sentido", "DIAMETRAL")
-            for col_i, campo, placeholder in ((1, "carga", "0.00"), (2, "d", "0.00"),
-                                               (3, "l1", "L" if sentido_actual == "DIAMETRAL" else "W1"),
-                                               (4, "w2", "0.00"), (5, "masa", "0.00")):
-                key = f"cp_{i}_{campo}"
-                data[key] = row[col_i].text_input(f"{campo} {i}", value=data.get(key, ""), key=f"{key}_{assay_id}",
-                                                   label_visibility="collapsed", placeholder=placeholder)
-            data[f"cp_{i}_sentido"] = row[6].selectbox(
-                f"Sentido {i}", CP_SENTIDOS, index=CP_SENTIDOS.index(sentido_actual) if sentido_actual in CP_SENTIDOS else 0,
-                key=f"cp_{i}_sentido_{assay_id}", label_visibility="collapsed")
-
-        if n_visibles < CP_MAX_ENSAYOS:
-            if st.button("Agregar ensayo", icon=":material/add:", key=f"cp_agregar_{assay_id}"):
-                st.session_state[visibles_key] = min(n_visibles + 1, CP_MAX_ENSAYOS)
+        st.markdown(f'<div style="font-size:14px;font-weight:600;color:{MUTED};margin-bottom:4px;">'
+                    f'Sentido de falla para ensayos nuevos</div>', unsafe_allow_html=True)
+        cols_def = st.columns(4)
+        for idx, s in enumerate(CP_SENTIDOS):
+            if cols_def[idx].button(CP_SENTIDO_LABEL[s], key=f"cp_defecto_{s}_{assay_id}", use_container_width=True,
+                                     type="primary" if st.session_state[defecto_key] == s else "secondary"):
+                st.session_state[defecto_key] = s
                 st.rerun()
+
+        GLYPH = {"completo": "✓", "alerta": "⚠", "incompleto": "○"}
+        estados = {i: _cp_estado_fila(data, i)[0] for i in range(1, n_filas + 1)}
+        items = list(range(1, n_filas + 1)) + (["+"] if n_filas < CP_MAX_ENSAYOS else [])
+        for inicio in range(0, len(items), 5):
+            fila_items = items[inicio:inicio + 5]
+            cols_chip = st.columns(5)
+            for c, it in zip(cols_chip, fila_items):
+                if it == "+":
+                    if c.button(f"Agregar ({n_filas}/{CP_MAX_ENSAYOS})", key=f"cp_agregar_{assay_id}",
+                                use_container_width=True, icon=":material/add:"):
+                        data[f"cp_{n_filas + 1}_sentido"] = st.session_state[defecto_key]
+                        # Se guarda ya mismo: el rerun de abajo corta el guion antes de llegar al autoguardado
+                        # normal del formulario, así que sin esto el sentido del ensayo nuevo se perdía (ver
+                        # _guardar_inmediato).
+                        if _guardar_inmediato(assay_id, data):
+                            st.session_state[n_key] = n_filas + 1
+                            st.session_state[activo_key] = n_filas + 1
+                            st.rerun()
+                else:
+                    etiqueta = f"{GLYPH[estados[it]]} {it}" if estados[it] != "incompleto" else str(it)
+                    if c.button(etiqueta, key=f"cp_chip_{it}_{assay_id}", use_container_width=True,
+                                type="primary" if it == activo else "secondary"):
+                        st.session_state[activo_key] = it
+                        st.rerun()
+        st.markdown(f'<div style="display:flex;gap:16px;font-size:13px;color:{MUTED};margin:2px 0 16px 0;">'
+                    f'<span>✓ Completo</span><span>⚠ Revisar geometría</span><span>○ Incompleto</span></div>',
+                    unsafe_allow_html=True)
+
+        with st.container(border=True):
+            colh = st.columns([3, 1])
+            colh[0].markdown(f'<div style="font-size:20px;font-weight:700;">Ensayo {activo}</div>', unsafe_allow_html=True)
+            colh[1].markdown(f'<div style="text-align:right;color:{MUTED};padding-top:6px;">{activo} de {n_filas}</div>',
+                              unsafe_allow_html=True)
+
+            sentido_actual = data.get(f"cp_{activo}_sentido", "DIAMETRAL")
+            st.markdown(f'<div style="font-size:14px;font-weight:600;color:{MUTED};margin:6px 0 4px 0;">Sentido de falla</div>',
+                        unsafe_allow_html=True)
+            cols_sent = st.columns(4)
+            cambio_sentido = False
+            for idx, s in enumerate(CP_SENTIDOS):
+                if cols_sent[idx].button(CP_SENTIDO_LABEL[s], key=f"cp_{activo}_sent_{s}_{assay_id}",
+                                          use_container_width=True, type="primary" if sentido_actual == s else "secondary"):
+                    data[f"cp_{activo}_sentido"] = sentido_actual = s
+                    cambio_sentido = True
+            if cambio_sentido:
+                # Igual que en "Agregar": sin guardar ya mismo, el rerun corta el guion antes del autoguardado
+                # normal y el cambio de sentido se pierde en la siguiente corrida.
+                if _guardar_inmediato(assay_id, data):
+                    st.rerun()
+
+            col_campos, col_diag = st.columns([3, 2])
+            with col_campos:
+                fc1, fc2 = st.columns(2)
+                data[f"cp_{activo}_carga"] = fc1.text_input("Carga P (kN)", value=data.get(f"cp_{activo}_carga", ""),
+                                                             key=f"cp_{activo}_carga_{assay_id}", placeholder="0.00")
+                data[f"cp_{activo}_d"] = fc2.text_input("Altura D (mm)", value=data.get(f"cp_{activo}_d", ""),
+                                                         key=f"cp_{activo}_d_{assay_id}", placeholder="0.00")
+                fc3, fc4 = st.columns(2)
+                data[f"cp_{activo}_l1"] = fc3.text_input("L (mm)" if sentido_actual == "DIAMETRAL" else "W1 (mm)",
+                                                          value=data.get(f"cp_{activo}_l1", ""),
+                                                          key=f"cp_{activo}_l1_{assay_id}", placeholder="0.00")
+                if sentido_actual == "DIAMETRAL":
+                    fc4.markdown(f'<div style="font-size:14px;margin-bottom:2px;">W2 (mm)</div>'
+                                 f'<div style="height:38px;border-radius:8px;border:1.5px dashed {BORDER};'
+                                 f'display:flex;align-items:center;justify-content:center;color:{MUTED};font-size:14px;">'
+                                 f'No aplica</div>', unsafe_allow_html=True)
+                else:
+                    data[f"cp_{activo}_w2"] = fc4.text_input("W2 (mm)", value=data.get(f"cp_{activo}_w2", ""),
+                                                              key=f"cp_{activo}_w2_{assay_id}", placeholder="0.00")
+                data[f"cp_{activo}_masa"] = st.text_input("Masa (g) — no se guarda en el Excel",
+                                                           value=data.get(f"cp_{activo}_masa", ""),
+                                                           key=f"cp_{activo}_masa_{assay_id}", placeholder="0.00")
+            with col_diag:
+                st.markdown(_cp_diagrama_svg(sentido_actual), unsafe_allow_html=True)
+                desc = ("Diametral: se mide L. Verifica L ≥ 0.5·D." if sentido_actual == "DIAMETRAL" else
+                        f"{CP_SENTIDO_LABEL[sentido_actual]}: se miden W1 y W2. Verifica 0.3 ≤ D/W ≤ 1.0.")
+                st.caption(desc)
+                st.markdown(f'<div style="font-size:12px;color:{MUTED};border-top:1px solid {BORDER};padding-top:6px;">'
+                            f'En el Excel oficial este valor va a la casilla única <b>L / W1</b>.</div>', unsafe_allow_html=True)
+
+            resultado_activo = _cp_resultado_fila(data, activo)
+            estado_activo, mensaje_activo = _cp_estado_fila(data, activo)
+            st.markdown(_cp_panel_calculo_html(resultado_activo, estado_activo, mensaje_activo), unsafe_allow_html=True)
+
+            colnav = st.columns([1, 2])
+            if colnav[0].button("← Anterior", key=f"cp_anterior_{assay_id}", disabled=(activo == 1), use_container_width=True):
+                st.session_state[activo_key] = activo - 1
+                st.rerun()
+            if activo < n_filas:
+                siguiente_label, siguiente_disabled = f"Siguiente: ensayo {activo + 1} →", False
+            elif n_filas < CP_MAX_ENSAYOS:
+                siguiente_label, siguiente_disabled = f"Guardar y agregar ensayo {n_filas + 1} →", False
+            else:
+                siguiente_label, siguiente_disabled = "Listo — 10 de 10 ensayos", True
+            if colnav[1].button(siguiente_label, key=f"cp_siguiente_{assay_id}", type="primary",
+                                 disabled=siguiente_disabled, use_container_width=True):
+                if activo < n_filas:
+                    st.session_state[activo_key] = activo + 1
+                    st.rerun()
+                else:
+                    data[f"cp_{n_filas + 1}_sentido"] = st.session_state[defecto_key]
+                    if _guardar_inmediato(assay_id, data):
+                        st.session_state[n_key] = n_filas + 1
+                        st.session_state[activo_key] = n_filas + 1
+                        st.rerun()
     with st.container(border=True):
         st.markdown(card_header_html("water_drop", "Datos de Humedad"), unsafe_allow_html=True)
-        for key, label in CP_HUMEDAD_FILAS:
-            _campo(key, label, placeholder="" if key == "cp_hum_recipiente" else "0.00")
-            if key == "cp_hum_seco_14" and data.get("cp_hum_seco_14"):
-                for siguiente in ("cp_hum_seco_15", "cp_hum_seco_16"):
-                    if not data.get(siguiente):
-                        st.session_state[f"{siguiente}_{assay_id}"] = data["cp_hum_seco_14"]
-                        data[siguiente] = data["cp_hum_seco_14"]
+        for inicio in range(0, len(CP_HUMEDAD_FILAS), 3):
+            cols_h = st.columns(3)
+            for c, (key, _label) in zip(cols_h, CP_HUMEDAD_FILAS[inicio:inicio + 3]):
+                label = CP_HUMEDAD_ETIQUETAS_CORTAS[key]
+                data[key] = c.text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                          placeholder="" if key == "cp_hum_recipiente" else "0.00")
+                if key == "cp_hum_seco_14" and data.get("cp_hum_seco_14"):
+                    for siguiente in ("cp_hum_seco_15", "cp_hum_seco_16"):
+                        if not data.get(siguiente):
+                            st.session_state[f"{siguiente}_{assay_id}"] = data["cp_hum_seco_14"]
+                            data[siguiente] = data["cp_hum_seco_14"]
+        mr, s15, s16 = to_float(data.get("cp_hum_masa_rec")), to_float(data.get("cp_hum_seco_15")), to_float(data.get("cp_hum_seco_16"))
+        if None not in (mr, s15, s16) and (s16 - mr) != 0:
+            delta = abs(s15 - s16) / (s16 - mr) * 100
+            ok = delta <= 0.1
+            color, bg = (SUCCESS, SUCCESS_LIGHT) if ok else (WARNING, WARNING_LIGHT)
+            texto = (f"Masa constante 15 h → 16 h (Δ {fmt_num(delta, 3)} %)" if ok else
+                     f"Aún pierde masa (Δ {fmt_num(delta, 2)} %) — otra pesada")
+        else:
+            color, bg, texto = MUTED, BG, "Falta la pesada de 16 h para confirmar masa constante"
+        st.markdown(f'<div style="background:{bg};color:{color};border-radius:10px;padding:10px 14px;'
+                    f'font-size:14px;font-weight:500;margin-top:6px;">{texto}</div>', unsafe_allow_html=True)
     with st.container(border=True):
         st.markdown(card_header_html("photo_camera", "Foto de la Muestra"), unsafe_allow_html=True)
         st.caption("Se agrega al Excel, junto a la tabla de ensayos (no queda ajustada a ningún recuadro): la acomodas a "
@@ -9017,6 +9271,7 @@ def render_carga_puntual_form(data, assay_id):
     with resultados_desplegable():
         filas = resultados_carga_puntual(data)
         if filas:
+            st.markdown(_cp_panel_resultados_html(data), unsafe_allow_html=True)
             st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
         else:
             st.caption("Se muestran a medida que se digitan los datos de arriba.")
