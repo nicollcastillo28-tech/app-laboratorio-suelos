@@ -5536,7 +5536,51 @@ def _reparar_enlaces_externos(xlsx_bytes):
 
 def _restaurar_imagenes_perdidas(xlsx_bytes, template_path):
     reparado = _reparar_enlaces_externos(xlsx_bytes)
-    return _restaurar_orden_formato_condicional(_restaurar_drawings_perdidos(reparado, template_path), template_path)
+    reparado = _restaurar_orden_formato_condicional(_restaurar_drawings_perdidos(reparado, template_path), template_path)
+    return _reparar_marcadores_grafico(reparado, template_path)
+
+
+def _reparar_marcadores_grafico(xlsx_bytes, template_path):
+    """openpyxl, al volver a guardar un gráfico de dispersión (la curva granulométrica, la de compactación
+    Proctor, etc.), le agrega un <marker><symbol val="none"/></marker> a cada serie que en la plantilla
+    original NO tenía ningún <marker> — esa ausencia es justo lo que le dice a Excel "usa el marcador por
+    defecto del gráfico" (en estas plantillas, un rombo/círculo en cada punto), así que la app terminaba
+    descargando la curva SIN los puntos marcados aunque la plantilla sí los muestra. Series que la plantilla
+    sí traía con un marcador explícito (ej. un solo punto en rombo para el Límite Líquido) no se tocan — ya
+    las conserva bien. Se compara serie por serie (mismo orden) contra la plantilla original; si esta no
+    trae <c:marker>, se le quita el que openpyxl inventó."""
+    with zipfile.ZipFile(template_path) as tpl:
+        charts = sorted(n for n in tpl.namelist() if re.match(r"xl/charts/chart\d+\.xml$", n))
+        if not charts:
+            return xlsx_bytes
+        parches = {}
+        with zipfile.ZipFile(BytesIO(xlsx_bytes)) as out:
+            out_names = set(out.namelist())
+            for nombre in charts:
+                if nombre not in out_names:
+                    continue
+                sin_marcador = [i for i, ser in enumerate(re.findall(r"<c:ser>.*?</c:ser>", tpl.read(nombre).decode("utf-8"), re.S))
+                                if "<c:marker>" not in ser]
+                if not sin_marcador:
+                    continue
+                xml = out.read(nombre).decode("utf-8")
+                series = re.split(r"(<ser>.*?</ser>)", xml, flags=re.S)
+                # re.split con grupo captor intercala texto-fuera-de-serie y series: las series quedan en los
+                # índices impares (1, 3, 5, ...), en el mismo orden en que aparecen en el archivo.
+                for i in sin_marcador:
+                    pos = 2 * i + 1
+                    if pos < len(series):
+                        series[pos] = re.sub(r"<marker>.*?</marker>", "", series[pos], flags=re.S)
+                nuevo_xml = "".join(series)
+                if nuevo_xml != xml:
+                    parches[nombre] = nuevo_xml.encode("utf-8")
+        if not parches:
+            return xlsx_bytes
+        bio = BytesIO()
+        with zipfile.ZipFile(BytesIO(xlsx_bytes)) as out, zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as z:
+            for item in out.infolist():
+                z.writestr(item, parches.get(item.filename, out.read(item.filename)))
+        return bio.getvalue()
 
 
 def _restaurar_drawings_perdidos(xlsx_bytes, template_path):
