@@ -1868,10 +1868,39 @@ def resultados_limites(data, key_prefix="lim"):
         st.caption("La línea punteada marca los 25 golpes; el rombo rojo es el Límite Líquido.")
 
 
+def _pasa200_masa_seca_despues(data):
+    """Masa seca DESPUÉS del lavado (neta, sin el recipiente): el dato digitado directo si existe; si no, la
+    suma de lo ya pesado por tamiz en Granulometría — el material que queda retenido al lavar por el tamiz
+    No. 200 es justo el que después se reparte en toda la serie de tamices, así que sumarlos da lo mismo que
+    pesarlo aparte, y no hace falta digitarlo dos veces."""
+    sr, rc = to_float(data.get("p200_seco_mas_recipiente_despues")), to_float(data.get("p200_masa_recipiente_despues"))
+    if sr is not None and rc is not None:
+        return sr - rc
+    if any(str(data.get(k, "")).strip() for k, _l, _a, _c in SIEVES):
+        return sum(to_float(data.get(k)) or 0.0 for k, _l, _a, _c in SIEVES)
+    return None
+
+
+def _pasa200_filas_efectivas(data):
+    """Filas (etiqueta, antes, después) de la Determinación Pasa No. 200 para las vistas de solo lectura —
+    igual que los datos guardados, pero con "Masa suelo seco + recipiente (después)" derivada de la suma de
+    tamices de Granulometría cuando no se digitó directamente (ver _pasa200_masa_seca_despues)."""
+    filas = [(label, data.get(f"{key}_antes"), data.get(f"{key}_despues")) for key, label in PASA_200_FILAS]
+    if not str(data.get("p200_seco_mas_recipiente_despues", "")).strip():
+        rc = to_float(data.get("p200_masa_recipiente_despues"))
+        neto = _pasa200_masa_seca_despues(data)
+        if rc is not None and neto is not None:
+            filas = [(label, antes, fmt_num(neto + rc, 2) if label == "Masa suelo seco + recipiente" else despues)
+                     for label, antes, despues in filas]
+    return filas
+
+
 def resultados_pasa200(data):
     """Filas de resultados del Pasa No. 200: masa seca antes/después del lavado y % que pasa el tamiz 200
     (material perdido en el lavado / masa seca antes × 100)."""
     def masa(suf):
+        if suf == "despues":
+            return _pasa200_masa_seca_despues(data)
         sr, rc = to_float(data.get(f"p200_seco_mas_recipiente_{suf}")), to_float(data.get(f"p200_masa_recipiente_{suf}"))
         return sr - rc if sr is not None and rc is not None else None
     antes, despues = masa("antes"), masa("despues")
@@ -6924,6 +6953,15 @@ def render_pasa200_section(data, assay_id, requerido=True):
     `data` puede terminar siendo el mismo diccionario compartido (ver render_assay_form), así
     que lo que se digite en cualquiera de las dos pantallas se refleja en la otra."""
     badge = '<span class="badge badge-warning">Requerido</span>' if requerido else ""
+    # "Masa suelo seco + recipiente" DESPUÉS del lavado es, físicamente, lo mismo que ya se pesó por separado
+    # en cada tamiz de Granulometría (el material que queda retenido en el tamiz No. 200 se reparte en la
+    # serie completa de tamices) — si esos tamices ya están digitados, no hace falta pesarlo aparte: se suma
+    # solo, igual que si el laboratorista lo hubiera escrito a mano. Si el laboratorista lo cambia después,
+    # ese valor manda hasta que la suma de tamices vuelva a cambiar (mismo patrón que el resto de autocompletados
+    # de esta pantalla).
+    suma_tamices = None
+    if any(str(data.get(k, "")).strip() for k, _l, _a, _c in SIEVES):
+        suma_tamices = sum(to_float(data.get(k)) or 0.0 for k, _l, _a, _c in SIEVES)
     with st.container(border=True):
         st.markdown(card_header_html("water_drop", "Determinación Pasa No. 200", badge), unsafe_allow_html=True)
         head = st.columns([2.2, 1, 1])
@@ -6935,12 +6973,24 @@ def render_pasa200_section(data, assay_id, requerido=True):
             for suffix, col in (("antes", row[1]), ("despues", row[2])):
                 field_key = f"{key}_{suffix}"
                 widget_key = f"{field_key}_{assay_id}"
+                if key == "p200_seco_mas_recipiente" and suffix == "despues" and suma_tamices is not None:
+                    masa_recip_despues = to_float(data.get("p200_masa_recipiente_despues"))
+                    if masa_recip_despues is not None:
+                        candidato = fmt_num(suma_tamices + masa_recip_despues, 2)
+                        lastsync_key = f"{field_key}_gran_lastsync"
+                        actual = st.session_state.get(widget_key, data.get(field_key, ""))
+                        if data.get(lastsync_key) != candidato and (not actual or actual == data.get(lastsync_key)):
+                            st.session_state[widget_key] = candidato
+                        data[lastsync_key] = candidato
                 # No se pasa `value=` junto con un key que también se controla por session_state
                 # (el autocompletado de abajo lo hace) — Streamlit no permite mezclar ambos.
                 if widget_key not in st.session_state:
                     st.session_state[widget_key] = data.get(field_key, "")
                 data[field_key] = col.text_input(
                     f"{label} {suffix}", key=widget_key, label_visibility="collapsed", placeholder="0.00")
+            if key == "p200_seco_mas_recipiente" and suma_tamices is not None:
+                st.caption("La masa después del lavado se suma sola a partir de lo digitado en la tabla de "
+                           "Granulometría — puedes corregirla a mano si hace falta.")
             if key == "p200_seco_mas_recipiente":
                 # Autocompleta las 3 lecturas de horas con esta masa apenas se digita, pero si el
                 # laboratorista ya las cambió a mano, no se vuelven a pisar en el siguiente rerun —
@@ -9561,7 +9611,7 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
         # con sus dos columnas (antes/después del lavado), igual que en el formulario editable.
         with st.container(border=True):
             st.markdown(card_header_html("water_drop", "Determinación Pasa No. 200"), unsafe_allow_html=True)
-            pasa200_rows = [(label, data.get(f"{key}_antes"), data.get(f"{key}_despues")) for key, label in PASA_200_FILAS]
+            pasa200_rows = _pasa200_filas_efectivas(data)
             st.markdown(param_table_3col_html(pasa200_rows), unsafe_allow_html=True)
         # "Masa inicial seca" no se muestra en la app (ni aquí ni en el formulario editable) —
         # se deriva solo al momento de generar el Excel (ver generar_excel_granulometria), tal
@@ -9578,7 +9628,7 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
     elif tipo == "pasa200":
         with st.container(border=True):
             st.markdown(card_header_html("water_drop", "Determinación Pasa No. 200"), unsafe_allow_html=True)
-            pasa200_rows = [(label, data.get(f"{key}_antes"), data.get(f"{key}_despues")) for key, label in PASA_200_FILAS]
+            pasa200_rows = _pasa200_filas_efectivas(data)
             st.markdown(param_table_3col_html(pasa200_rows), unsafe_allow_html=True)
         with resultados_desplegable():
             st.markdown(param_table_html(resultados_pasa200(data) or [("Pasa No. 200 (%)", "—")], header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
