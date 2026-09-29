@@ -75,6 +75,10 @@ TEMPLATE_LIMITE_CONTRACCION = os.path.join(BASE_DIR, "templates", "GDA-FLC-022_l
 TEMPLATE_CONSOLIDACION = os.path.join(BASE_DIR, "templates", "GDA-FLC-009_consolidacion.xlsx")
 TEMPLATE_COMPRESION_INCONFINADA = os.path.join(BASE_DIR, "templates", "GDA-FLC-008_compresion_inconfinada.xlsm")
 TEMPLATE_COMPRESION_ROCA = os.path.join(BASE_DIR, "templates", "GDA-FLC-043_compresion_roca.xlsx")
+# Estas dos plantillas traen de fábrica 5 hojas ocultas ("PE4-3 M10", etc.) con datos reales de proyectos
+# anteriores de OTROS clientes — nunca se llenan, pero tampoco se quitaban solas (ver _quitar_hojas_ajenas,
+# usado al final de generar_excel_compresion_inconfinada/roca): cada descarga las llevaba encima.
+HOJAS_AJENAS_COMPRESION = ["PE4-3 M10", "PE4-2 M11", "PE4-7 M7", "PP4-3 M6", "PP4-4 M5"]
 TEMPLATE_CARGA_PUNTUAL = os.path.join(BASE_DIR, "templates", "GDA-FLC-018_carga_puntual.xlsx")
 TEMPLATE_SOLIDEZ_SULFATOS = os.path.join(BASE_DIR, "templates", "GDA-FLC-033_solidez_sulfatos.xlsx")
 TEMPLATE_TERRONES_ARCILLA = os.path.join(BASE_DIR, "templates", "GDA-FLC-034_terrones_arcilla.xlsx")
@@ -5830,6 +5834,30 @@ class _Paquete:
         xml = xml.replace("</Types>", f'<Override PartName="/{parte}" ContentType="{content_type}"/></Types>')
         self.partes[nombre] = xml.encode("utf-8")
 
+    def quitar_relacion(self, parte, rid):
+        """Quita la <Relationship> con ese Id de la .rels de `parte`, si existe (y la .rels entera si se
+        queda sin relaciones — una .rels vacía es, en sí, una forma distinta de archivo inválido)."""
+        nombre = _rels_path(parte)
+        if nombre not in self.partes:
+            return
+        xml = self.partes[nombre].decode("utf-8")
+        nuevo = re.sub(r"<Relationship\b(?=[^>]*\bId=\"" + re.escape(rid) + r"\")[^>]*/>", "", xml)
+        if nuevo == xml:
+            return
+        if not re.search(r"<Relationship\b", nuevo):
+            del self.partes[nombre]
+        else:
+            self.partes[nombre] = nuevo.encode("utf-8")
+
+    def quitar_parte(self, parte):
+        """Quita una parte del paquete (si existe) y su Override en [Content_Types].xml."""
+        self.partes.pop(parte, None)
+        nombre = "[Content_Types].xml"
+        xml = self.partes[nombre].decode("utf-8")
+        nuevo = re.sub(r'<Override PartName="/' + re.escape(parte) + r'"[^>]*/>', "", xml)
+        if nuevo != xml:
+            self.partes[nombre] = nuevo.encode("utf-8")
+
     def guardar(self):
         bio = BytesIO()
         with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as z:
@@ -6085,6 +6113,78 @@ def _forzar_recalculo(pkg):
         rels = pkg.partes["xl/_rels/workbook.xml.rels"].decode("utf-8")
         rels = re.sub(r'<Relationship[^>]*Target="calcChain\.xml"[^>]*/>', "", rels)
         pkg.partes["xl/_rels/workbook.xml.rels"] = rels.encode("utf-8")
+
+
+def _quitar_hojas_ajenas(xlsx_bytes, hojas_a_quitar):
+    """Quita del libro, por NOMBRE, una o más hojas enteras — pensado para las hojas ocultas que traen de
+    fábrica las plantillas de Compresión inconfinada/roca (GDA-FLC-008/043) con datos reales de proyectos
+    anteriores de OTROS clientes, que sus generadores nunca llenan ni deberían entregar en cada descarga
+    (ver generar_excel_cbr, que resuelve lo mismo para su propia plantilla vía openpyxl con `del wb[nombre]`
+    — estas dos plantillas no pasan por openpyxl, así que se hace a mano acá, a nivel de zip/XML).
+
+    Por cada hoja: se quita su <sheet> de workbook.xml, la <Relationship> correspondiente, la propia hoja
+    (worksheet) y todo lo que sea EXCLUSIVAMENTE suyo (su drawing, sus gráficos, vmlDrawing, comentarios,
+    configuración de impresión, casillas de verificación) — recorriendo las relaciones tal como se hizo para
+    la descarga por lote (ver _leer_rels/_Paquete más arriba). Nunca se tocan imágenes (`image`) ni XML
+    incrustado (`customXml`, tinta digital): por si acaso alguna hoja que SÍ se conserva las comparte, quedan
+    sin usar en el archivo — inofensivo — en vez de arriesgarse a dejar una imagen rota en la hoja buena.
+
+    También se quitan los <definedName> propios de esas hojas (cada una trae, por ejemplo, su propio Print_Area
+    y varios nombres de rango heredados de versiones viejas de Excel) y se renumera el localSheetId de los que
+    quedan — si no, Excel encuentra un rango con nombre apuntando a una hoja que ya no existe y lo reporta como
+    "reparado" al abrir (confirmado con Excel real)."""
+    pkg = _Paquete(xlsx_bytes)
+    with zipfile.ZipFile(BytesIO(xlsx_bytes)) as zin:
+        info_hojas = _sheet_info(zin)
+        objetivo = [(nombre, info_hojas[nombre]) for nombre in hojas_a_quitar if nombre in info_hojas]
+        if not objetivo:
+            return xlsx_bytes
+        rels_wb = dict((rid, target) for rid, typ, target in _leer_rels(zin, "xl/workbook.xml") if typ == T_WORKSHEET)
+        rid_por_parte = {target: rid for rid, target in rels_wb.items()}
+        indices_quitados = sorted(idx for _nombre, (_parte, _sid, idx) in objetivo)
+
+        wb = pkg.partes["xl/workbook.xml"].decode("utf-8")
+        for nombre_hoja, _info in objetivo:
+            wb = re.sub(r'<sheet name="' + re.escape(nombre_hoja) + r'"[^>]*/>', "", wb, count=1)
+
+        def _renumerar_o_quitar(m):
+            cuerpo = m.group(0)
+            im = re.search(r'localSheetId="(\d+)"', cuerpo)
+            if not im:
+                return cuerpo  # sin localSheetId = alcance de todo el libro, no depende de ninguna hoja puntual
+            idx = int(im.group(1))
+            if idx in indices_quitados:
+                return ""
+            nuevo_idx = idx - sum(1 for i in indices_quitados if i < idx)
+            return re.sub(r'localSheetId="\d+"', f'localSheetId="{nuevo_idx}"', cuerpo, count=1)
+
+        wb = re.sub(r"<definedName\b[^>]*>.*?</definedName>", _renumerar_o_quitar, wb, flags=re.S)
+        pkg.partes["xl/workbook.xml"] = wb.encode("utf-8")
+
+        for nombre_hoja, (parte_ws, _sid, _idx) in objetivo:
+            rid = rid_por_parte.get(parte_ws)
+            if rid:
+                pkg.quitar_relacion("xl/workbook.xml", rid)
+
+            # Cierre de todo lo que cuelga EXCLUSIVAMENTE de esta hoja (drawing -> charts -> chartUserShapes/
+            # estilo, comentarios, vmlDrawing, impresión, controles) — nunca imágenes ni customXml.
+            cierre, vistos, pendientes = [], set(), [parte_ws]
+            while pendientes:
+                parte = pendientes.pop()
+                if parte in vistos:
+                    continue
+                vistos.add(parte)
+                cierre.append(parte)
+                for _rid2, tipo2, target2 in _leer_rels(zin, parte):
+                    tipo_corto = tipo2.rsplit("/", 1)[-1]
+                    if tipo_corto in ("image", "customXml"):
+                        continue
+                    pendientes.append(target2)
+
+            for parte in cierre:
+                pkg.quitar_parte(parte)
+                pkg.partes.pop(_rels_path(parte), None)
+    return pkg.guardar()
 
 
 def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_data=None, lim_data=None, observaciones_ensayo=""):
@@ -8516,7 +8616,7 @@ def generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, 
         # cilindro (queda encima) ni se ajusta al recuadro exacto: se centra y se encoge lo justo para no salirse.
         salida = _insertar_imagen_hoja(salida, "xl/drawings/drawing1.xml", imagen, foto["ext"],
                                        **_foto_dentro_de_recuadro(foto))
-    return salida
+    return _quitar_hojas_ajenas(salida, HOJAS_AJENAS_COMPRESION)
 
 # Compresión simple en roca (ASTM D7012 método B) — bitácora GDA-FL-007 y plantilla GDA-FLC-043. La plantilla de
 # descarga es prácticamente igual a la de Compresión inconfinada (mismas columnas de la tabla de la máquina, mismos
@@ -8766,7 +8866,7 @@ def generar_excel_compresion_roca(codigo, perf_codigo, muestra, project, data, o
         imagen = base64.b64decode(foto["b64"])
         salida = _insertar_imagen_hoja(salida, "xl/drawings/drawing1.xml", imagen, foto["ext"],
                                        **_foto_dentro_de_recuadro(foto))
-    return salida
+    return _quitar_hojas_ajenas(salida, HOJAS_AJENAS_COMPRESION)
 
 # Carga puntual — índice de fuerza de carga puntual de la roca (ASTM D5731) — bitácora GDA-FL-020 y plantilla
 # GDA-FLC-018. Hasta 10 ensayos por muestra; cada uno puede ser diametral, axial, en bloque o irregular, y esa
