@@ -8939,22 +8939,50 @@ def render_carga_puntual_form(data, assay_id):
         data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
                                        label_visibility="collapsed", placeholder=placeholder)
 
+    # La plantilla oficial (GDA-FLC-018, columna E) usa una sola casilla para dos cosas distintas según el
+    # sentido de falla: la LONGITUD L de la muestra en un ensayo diametral (solo para verificar que cumple el
+    # tamaño mínimo — no entra en la fórmula), o la primera medida de ancho W1 en axial/bloque/irregular (esa
+    # sí entra, promediada con W2). No se puede separar en dos casillas de Excel porque en la plantilla es una
+    # sola — por eso el título de la columna combina las dos, pero cada fila indica cuál de las dos le toca
+    # según su propio "Sentido de falla" (el marcador de la casilla cambia solo).
     with st.container(border=True):
         st.markdown(card_header_html("science", "Ensayos"), unsafe_allow_html=True)
-        head = st.columns([0.6, 1, 1, 1, 1, 1.3])
-        for j, texto in enumerate(("#", "Carga P (kN)", "Altura D (mm)", "L1 ó W1 (mm)", "W2 (mm)", "Sentido de falla")):
+        st.caption("La columna \"L / W1\" es una sola casilla en la plantilla oficial: se usa como L (longitud, "
+                   "solo para verificar el tamaño mínimo) en ensayos diametrales, o como W1 (ancho, si se "
+                   "promedia con W2) en los demás sentidos — el marcador de la casilla cambia solo según lo "
+                   "que elijas en \"Sentido de falla\". La masa no está en la plantilla de Excel: se guarda "
+                   "aquí solo como referencia.")
+        anchos = [0.5, 1, 1, 1.1, 0.9, 0.9, 1.3]
+        head = st.columns(anchos)
+        for j, texto in enumerate(("#", "Carga P (kN)", "Altura D (mm)", "L / W1 (mm)", "W2 (mm)", "Masa (g)", "Sentido de falla")):
             head[j].markdown(f'<div class="cell-muted" style="text-align:center;font-weight:700;">{texto}</div>', unsafe_allow_html=True)
-        for i in range(1, CP_MAX_ENSAYOS + 1):
-            row = st.columns([0.6, 1, 1, 1, 1, 1.3])
+
+        # No se muestran de una las 10 filas posibles: solo las que ya tienen datos, más una libre para seguir
+        # digitando — con un botón para ir revelando más, hasta el máximo de la bitácora.
+        con_datos = max([i for i in range(1, CP_MAX_ENSAYOS + 1) if str(data.get(f"cp_{i}_carga", "")).strip()], default=0)
+        visibles_key = f"cp_filas_visibles_{assay_id}"
+        if visibles_key not in st.session_state:
+            st.session_state[visibles_key] = min(max(con_datos + 1, 3), CP_MAX_ENSAYOS)
+        n_visibles = st.session_state[visibles_key]
+
+        for i in range(1, n_visibles + 1):
+            row = st.columns(anchos)
             row[0].markdown(f'<div style="padding-top:8px;text-align:center;">{i}</div>', unsafe_allow_html=True)
-            for col_i, campo in ((1, "carga"), (2, "d"), (3, "l1"), (4, "w2")):
+            sentido_actual = data.get(f"cp_{i}_sentido", "DIAMETRAL")
+            for col_i, campo, placeholder in ((1, "carga", "0.00"), (2, "d", "0.00"),
+                                               (3, "l1", "L" if sentido_actual == "DIAMETRAL" else "W1"),
+                                               (4, "w2", "0.00"), (5, "masa", "0.00")):
                 key = f"cp_{i}_{campo}"
                 data[key] = row[col_i].text_input(f"{campo} {i}", value=data.get(key, ""), key=f"{key}_{assay_id}",
-                                                   label_visibility="collapsed")
-            actual = data.get(f"cp_{i}_sentido", "DIAMETRAL")
-            data[f"cp_{i}_sentido"] = row[5].selectbox(
-                f"Sentido {i}", CP_SENTIDOS, index=CP_SENTIDOS.index(actual) if actual in CP_SENTIDOS else 0,
+                                                   label_visibility="collapsed", placeholder=placeholder)
+            data[f"cp_{i}_sentido"] = row[6].selectbox(
+                f"Sentido {i}", CP_SENTIDOS, index=CP_SENTIDOS.index(sentido_actual) if sentido_actual in CP_SENTIDOS else 0,
                 key=f"cp_{i}_sentido_{assay_id}", label_visibility="collapsed")
+
+        if n_visibles < CP_MAX_ENSAYOS:
+            if st.button("Agregar ensayo", icon=":material/add:", key=f"cp_agregar_{assay_id}"):
+                st.session_state[visibles_key] = min(n_visibles + 1, CP_MAX_ENSAYOS)
+                st.rerun()
     with st.container(border=True):
         st.markdown(card_header_html("water_drop", "Datos de Humedad"), unsafe_allow_html=True)
         for key, label in CP_HUMEDAD_FILAS:
@@ -9939,11 +9967,11 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             st.markdown(card_header_html("science", "Ensayos"), unsafe_allow_html=True)
             filas_tabla = []
             for i in range(1, CP_MAX_ENSAYOS + 1):
-                if any(data.get(f"cp_{i}_{c}") for c in ("carga", "d", "l1", "w2")):
+                if any(data.get(f"cp_{i}_{c}") for c in ("carga", "d", "l1", "w2", "masa")):
                     filas_tabla.append((i, data.get(f"cp_{i}_carga"), data.get(f"cp_{i}_d"), data.get(f"cp_{i}_l1"),
-                                        data.get(f"cp_{i}_w2"), data.get(f"cp_{i}_sentido")))
+                                        data.get(f"cp_{i}_w2"), data.get(f"cp_{i}_masa"), data.get(f"cp_{i}_sentido")))
             if filas_tabla:
-                st.markdown(param_table_ncol_html(["#", "CARGA P (kN)", "ALTURA D (mm)", "L1 ó W1 (mm)", "W2 (mm)", "SENTIDO"],
+                st.markdown(param_table_ncol_html(["#", "CARGA P (kN)", "ALTURA D (mm)", "L / W1 (mm)", "W2 (mm)", "MASA (g)", "SENTIDO"],
                                                   filas_tabla), unsafe_allow_html=True)
         with st.container(border=True):
             st.markdown(card_header_html("water_drop", "Datos de Humedad"), unsafe_allow_html=True)
