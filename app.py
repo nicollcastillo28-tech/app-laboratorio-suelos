@@ -4355,6 +4355,8 @@ def render_perforacion_detail():
     else:
         with st.container(border=True):
             _render_tabla_muestras_con_semaforo(muestras)
+        if st.session_state.role in ("jefe", "ingeniero"):
+            render_descarga_por_lote(codigo, perf_codigo, project, muestras)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -5592,6 +5594,425 @@ def _restaurar_drawings_perdidos(xlsx_bytes, template_path):
             bio.seek(0)
             return bio.getvalue()
 
+# ════════════════════════════════════════════════════════════════════
+# DESCARGA POR LOTE (una perforación, un ensayo -> un solo Excel con una hoja por muestra)
+# Junta los archivos YA GENERADOS de N muestras (cada uno la salida normal y ya probada de un
+# generar_excel_* de más abajo, sin tocarla) en un solo libro — sin pasar por openpyxl, que pierde
+# gráficos/imágenes al reescribir (ver _reparar_graficos_perdidos/_restaurar_imagenes_perdidas más
+# arriba): es manipulación directa del zip/XML del formato Office. Solo sirve para ensayos donde
+# el Excel de una muestra tiene UNA sola hoja de datos por muestra (ver EXCEL_LOTE_CONFIG) — Corte
+# Directo y Consolidación quedan afuera porque cada muestra ya ocupa varias hojas relacionadas
+# entre sí, y combinar eso es harina de otro costal.
+#
+# Verificado a mano con Excel real (COM, en el equipo de desarrollo — no corre en producción) contra
+# Granulometría/Límites (la plantilla más compleja: macros VBA, 3 gráficos con anotaciones de texto,
+# 14 imágenes, casillas de verificación, comentarios), Humedad (sin gráficos, con una hoja extra de
+# "CONTROL DE CAMBIOS" que se conserva sin tocar) y CBR — los 3 abren sin el aviso de "reparar" de
+# Excel y cada hoja muestra los datos y gráficos de su propia muestra, no los de la primera.
+#
+# Reglas que costó encontrar con Excel real (cada una tumbaba el archivo con "reparar" o lo dejaba
+# abrir con partes quitadas en silencio):
+#   - Un drawingN.xml (el contenedor de gráficos/imágenes de una hoja) NO se puede compartir entre
+#     2 hojas — hay que clonarlo siempre, aunque no tenga ningún gráfico adentro. Lo mismo para el
+#     chartUserShapes de un gráfico (las anotaciones de texto dibujadas encima).
+#   - Los "rId" que ya trae escritos el XML de una hoja copiada tal cual hay que conservarlos
+#     exactos en su nuevo archivo de relaciones — no inventar unos nuevos.
+#   - Renombrar variasrelaciones de golpe con un .sub() por una, en secuencia, puede pisar una
+#     relación que por casualidad comparte texto con el ID nuevo de otra — hay que hacerlo en una
+#     sola pasada (ver _remapear_rids).
+#   - El sheetId de una hoja nueva tiene que ser único en TODO el libro, no solo entre las hojas que
+#     se están agregando — la plantilla puede traer otras hojas de fábrica con su propio sheetId.
+
+
+R_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+T_WORKSHEET = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"
+T_DRAWING = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing"
+T_CHART = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart"
+
+
+def _rels_path(parte):
+    carpeta, nombre = parte.rsplit("/", 1)
+    return f"{carpeta}/_rels/{nombre}.rels"
+
+
+def _resolver_target(parte, target):
+    if target.startswith("/"):
+        return target.lstrip("/")
+    base = parte.rsplit("/", 1)[0].split("/")
+    for p in target.split("/"):
+        if p == "..":
+            base.pop()
+        elif p and p != ".":
+            base.append(p)
+    return "/".join(base)
+
+
+def _leer_rels(zin, parte):
+    """[(rid, type, target_absoluto)] de las relaciones de `parte`, o [] si no tiene .rels."""
+    nombre = _rels_path(parte)
+    if nombre not in zin.namelist():
+        return []
+    xml = zin.read(nombre).decode("utf-8")
+    out = []
+    for m in re.finditer(r"<Relationship\b([^>]*)/>", xml):
+        attrs = dict(re.findall(r'(\w+)="([^"]*)"', m.group(1)))
+        if attrs.get("TargetMode") == "External":
+            continue
+        out.append((attrs["Id"], attrs["Type"], _resolver_target(parte, attrs["Target"])))
+    return out
+
+
+def _sheet_info(zin):
+    """{nombre_hoja: (parte_worksheet, sheetId, localSheetIndex)} a partir de workbook.xml + rels."""
+    wb = zin.read("xl/workbook.xml").decode("utf-8")
+    rels = dict((rid, target) for rid, typ, target in _leer_rels(zin, "xl/workbook.xml") if typ == T_WORKSHEET)
+    info = {}
+    for i, m in enumerate(re.finditer(r"<sheet\b([^>]*)/>", wb)):
+        attrs = dict(re.findall(r'([\w:]+)="([^"]*)"', m.group(1)))
+        rid = attrs.get(f"{{{R_REL}}}id") or attrs.get("r:id")
+        if not rid or rid not in rels:
+            continue
+        info[attrs["name"]] = (rels[rid], attrs.get("sheetId"), i)
+    return info
+
+
+def _content_type_de(ct_xml, parte):
+    """Busca el ContentType de `parte` en un [Content_Types].xml -- por atributos, no por texto literal: openpyxl
+    serializa estas etiquetas con un espacio antes de "/>" (`ContentType="..." />`), que un regex literal
+    "..."/>" no encuentra (y devolver None ahi metia un ContentType="None" invalido, que Excel rechaza)."""
+    for m in re.finditer(r"<Override\b([^>]*)/>", ct_xml):
+        attrs = dict(re.findall(r'(\w+)="([^"]*)"', m.group(1)))
+        if attrs.get("PartName") == "/" + parte:
+            return attrs.get("ContentType")
+    ext = parte.rsplit(".", 1)[-1].lower()
+    for m in re.finditer(r"<Default\b([^>]*)/>", ct_xml):
+        attrs = dict(re.findall(r'(\w+)="([^"]*)"', m.group(1)))
+        if attrs.get("Extension", "").lower() == ext:
+            return attrs.get("ContentType")
+    return None
+
+
+def _sanear_nombre_hoja(nombre, usados):
+    nombre = re.sub(r'[:\\/?*\[\]]', "-", nombre)[:31].strip() or "Hoja"
+    base, i = nombre, 2
+    while nombre in usados:
+        sufijo = f" ({i})"
+        nombre = base[: 31 - len(sufijo)] + sufijo
+        i += 1
+    usados.add(nombre)
+    return nombre
+
+
+class _Paquete:
+    """Paquete de salida en memoria: partes (nombre -> bytes) + contadores para nombrar archivos nuevos."""
+
+    def __init__(self, base_bytes):
+        with zipfile.ZipFile(BytesIO(base_bytes)) as z:
+            self.partes = {n: z.read(n) for n in z.namelist()}
+        self.usados_hoja = set()
+
+    def siguiente_nombre(self, carpeta, prefijo, ext):
+        n = 1
+        while f"xl/{carpeta}/{prefijo}{n}.{ext}" in self.partes:
+            n += 1
+        return f"xl/{carpeta}/{prefijo}{n}.{ext}"
+
+    def agregar_relacion(self, parte, tipo, target):
+        """Agrega una <Relationship> a la .rels de `parte` (creandola si no existe) con un rId nuevo asignado
+        por esta funcion, y lo devuelve. Solo sirve para partes CLONADAS cuyo XML se reescribe para usar ese
+        rId (drawings/charts, ver _clonar_drawing_con_charts/_clonar_chart) -- para una hoja copiada tal cual
+        hay que usar agregar_relacion_fija, que conserva el mismo Id que el XML de la hoja ya trae escrito."""
+        nombre = _rels_path(parte)
+        if nombre in self.partes:
+            xml = self.partes[nombre].decode("utf-8")
+            ids = [int(m) for m in re.findall(r'Id="rId(\d+)"', xml)]
+            rid = f"rId{(max(ids) + 1) if ids else 1}"
+        else:
+            rid = "rId1"
+        self.agregar_relacion_fija(parte, rid, tipo, target)
+        return rid
+
+    def agregar_relacion_fija(self, parte, rid, tipo, target):
+        """Como agregar_relacion, pero con un Id fijo (para una parte clonada tal cual, cuyo propio XML ya
+        referencia ese Id internamente -- ej. el <drawing r:id="rId1"/> o <legacyDrawing r:id="anysvml"/> que
+        trae una hoja copiada byte a byte de su archivo de origen)."""
+        nombre = _rels_path(parte)
+        if nombre in self.partes:
+            xml = self.partes[nombre].decode("utf-8")
+            xml = xml.replace("</Relationships>",
+                               f'<Relationship Id="{rid}" Type="{tipo}" Target="{target}"/></Relationships>')
+        else:
+            xml = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                   f'<Relationship Id="{rid}" Type="{tipo}" Target="{target}"/></Relationships>')
+        self.partes[nombre] = xml.encode("utf-8")
+
+    def agregar_content_type(self, parte, content_type):
+        if not content_type:
+            raise ValueError(f"no se encontro el Content-Type de {parte!r} en el paquete de origen")
+        nombre = "[Content_Types].xml"
+        xml = self.partes[nombre].decode("utf-8")
+        if f'PartName="/{parte}"' in xml:
+            return
+        xml = xml.replace("</Types>", f'<Override PartName="/{parte}" ContentType="{content_type}"/></Types>')
+        self.partes[nombre] = xml.encode("utf-8")
+
+    def guardar(self):
+        bio = BytesIO()
+        with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as z:
+            for nombre, contenido in self.partes.items():
+                z.writestr(nombre, contenido)
+        return bio.getvalue()
+
+
+def _target_relativo(desde_parte, hacia_parte):
+    desde = desde_parte.rsplit("/", 1)[0].split("/")
+    hacia = hacia_parte.split("/")
+    i = 0
+    while i < len(desde) and i < len(hacia) - 1 and desde[i] == hacia[i]:
+        i += 1
+    return "../" * (len(desde) - i) + "/".join(hacia[i:])
+
+
+def _remapear_rids(xml, mapa_rid):
+    """Reemplaza cada r:id="viejo" por r:id="nuevo" segun mapa_rid, EN UNA SOLA PASADA sobre el texto -- si se
+    hace con un .sub() por entrada, en secuencia, un reemplazo puede volver a escribir un id que coincide con
+    el ORIGINAL (no el nuevo) de otra entrada que todavia no se proceso, y esa entrada se pierde/pisa (bug real,
+    encontrado con Excel real rechazando el archivo: 2 relaciones quedaban sin usar y otras corrompidas)."""
+    patron = re.compile(r'r:(id|embed)="([^"]+)"')
+    return patron.sub(lambda m: f'r:{m.group(1)}="{mapa_rid.get(m.group(2), m.group(2))}"', xml)
+
+
+def _clonar_chart(zin_origen, pkg, parte_chart, nombre_hoja_viejo, nombre_hoja_nuevo):
+    """Clona un chartN.xml (reescribiendo el calificador de hoja en sus <c:f>) junto con sus partes propias
+    -- chartUserShapes (anotaciones), chartColorStyle/chartStyle (estilo Excel 2016+) -- TAMBIEN clonadas,
+    nunca compartidas: confirmado con Excel real que un drawing/chartUserShapes referenciado desde mas de una
+    hoja/chart lo deja invalido y lo quita al abrir ("Parte quitada: .../drawingN.xml (Forma de dibujo)"),
+    aun si el contenido es identico. Devuelve la parte nueva del chart."""
+    xml = zin_origen.read(parte_chart).decode("utf-8")
+    patron = re.compile(r"(?<![\w'])" + re.escape(nombre_hoja_viejo) + r"!")
+    patron_q = re.compile(r"'" + re.escape(nombre_hoja_viejo) + r"'!")
+    nuevo_q = f"'{nombre_hoja_nuevo}'!" if any(c in nombre_hoja_nuevo for c in " -()") else f"{nombre_hoja_nuevo}!"
+    xml = patron_q.sub(nuevo_q, xml)
+    xml = patron.sub(nuevo_q, xml)
+
+    nueva_parte = pkg.siguiente_nombre("charts", "chart", "xml")
+    pkg.partes[nueva_parte] = xml.encode("utf-8")
+    ct_origen = zin_origen.read("[Content_Types].xml").decode("utf-8")
+    pkg.agregar_content_type(nueva_parte, _content_type_de(ct_origen, parte_chart))
+
+    mapa_rid = {}
+    for rid, tipo, target in _leer_rels(zin_origen, parte_chart):
+        tipo_corto = tipo.rsplit("/", 1)[-1]
+        if tipo_corto not in ("chartUserShapes", "chartColorStyle", "chartStyle"):
+            continue
+        carpeta = "drawings" if tipo_corto == "chartUserShapes" else "charts"
+        prefijo = "drawing" if tipo_corto == "chartUserShapes" else ("colors" if tipo_corto == "chartColorStyle" else "style")
+        nueva_aux = pkg.siguiente_nombre(carpeta, prefijo, "xml")
+        pkg.partes[nueva_aux] = zin_origen.read(target)
+        pkg.agregar_content_type(nueva_aux, _content_type_de(ct_origen, target))
+        nuevo_rid = pkg.agregar_relacion(nueva_parte, tipo, _target_relativo(nueva_parte, nueva_aux))
+        mapa_rid[rid] = nuevo_rid
+
+    # el propio chartN.xml referencia esas relaciones por Id (ej. <c:userShapes r:id="..."/>)
+    xml = _remapear_rids(pkg.partes[nueva_parte].decode("utf-8"), mapa_rid)
+    pkg.partes[nueva_parte] = xml.encode("utf-8")
+    return nueva_parte
+
+
+def _clonar_drawing(zin_origen, pkg, parte_drawing, nombre_hoja_viejo, nombre_hoja_nuevo):
+    """Clona un drawingN.xml (SIEMPRE, tenga o no chart adentro -- confirmado con Excel real que 2 hojas no
+    pueden compartir el mismo drawingN.xml, lo quita al abrir con "Parte quitada: .../drawingN.xml (Forma de
+    dibujo)"). El XML del drawing no necesita reescritura en si, solo sus relaciones: los charts que tenga se
+    clonan (renombrados a la hoja nueva), y las imagenes u otros recursos se reutilizan del paquete base.
+    Devuelve la parte nueva del drawing."""
+    ct_origen = zin_origen.read("[Content_Types].xml").decode("utf-8")
+    nueva_parte = pkg.siguiente_nombre("drawings", "drawing", "xml")
+    pkg.partes[nueva_parte] = zin_origen.read(parte_drawing)
+    pkg.agregar_content_type(nueva_parte, _content_type_de(ct_origen, parte_drawing))
+
+    mapa_rid = {}
+    for rid, tipo, target in _leer_rels(zin_origen, parte_drawing):
+        if tipo == T_CHART:
+            nueva_chart = _clonar_chart(zin_origen, pkg, target, nombre_hoja_viejo, nombre_hoja_nuevo)
+            nuevo_rid = pkg.agregar_relacion(nueva_parte, tipo, _target_relativo(nueva_parte, nueva_chart))
+        else:
+            # imagenes y demas: se comparten (misma copia que ya trae el paquete base, sacada de ese mismo
+            # target si el paquete base es justo la primera muestra -- que es de donde salio este drawing
+            # tambien, asi que el target YA existe con ese mismo nombre en pkg.partes).
+            if target not in pkg.partes:
+                pkg.partes[target] = zin_origen.read(target)
+                pkg.agregar_content_type(target, _content_type_de(ct_origen, target))
+            nuevo_rid = pkg.agregar_relacion(nueva_parte, tipo, _target_relativo(nueva_parte, target))
+        mapa_rid[rid] = nuevo_rid
+
+    xml = _remapear_rids(pkg.partes[nueva_parte].decode("utf-8"), mapa_rid)
+    pkg.partes[nueva_parte] = xml.encode("utf-8")
+    return nueva_parte
+
+
+def empaquetar_hojas(hoja_principal, archivos):
+    """archivos = [(etiqueta_hoja, xlsx_bytes), ...] en el orden final deseado. Cada xlsx_bytes es la salida
+    YA GENERADA (y ya probada) de un generar_excel_* de la app, para UNA muestra, todas del MISMO ensayo
+    (misma plantilla). Devuelve los bytes del libro combinado, una hoja `etiqueta_hoja` por archivo."""
+    assert archivos, "no hay archivos que empaquetar"
+    etiqueta1, bytes1 = archivos[0]
+    pkg = _Paquete(bytes1)
+    with zipfile.ZipFile(BytesIO(bytes1)) as z1:
+        info1 = _sheet_info(z1)
+        parte_ws1, sheet_id1, idx1 = info1[hoja_principal]
+        etiqueta1_final = _sanear_nombre_hoja(etiqueta1, pkg.usados_hoja)
+        _renombrar_hoja_en_workbook(pkg, hoja_principal, etiqueta1_final, sheet_id1)
+        _renombrar_defined_names(pkg, hoja_principal, etiqueta1_final, idx1)
+        rels_ws1 = _leer_rels(z1, parte_ws1)
+        for rid, tipo, target in rels_ws1:
+            # El drawing de una hoja SIEMPRE se clona, aunque no tenga ningun chart adentro -- Excel no acepta
+            # que 2 hojas distintas compartan el mismo drawingN.xml (lo quita al abrir, "Forma de dibujo",
+            # confirmado con Excel real). Lo unico que se comparte de verdad son imagenes/estilos de chart.
+            if tipo == T_DRAWING:
+                nuevo_drawing = _clonar_drawing(z1, pkg, target, hoja_principal, etiqueta1_final)
+                if nuevo_drawing != target:
+                    _repuntar_relacion(pkg, parte_ws1, rid, nuevo_drawing)
+
+    # sheetId debe ser unico en TODO el libro -- no solo entre las hojas clonadas: la plantilla puede traer
+    # otras hojas de fabrica (ej. "CONTROL DE CAMBIOS") con su propio sheetId, que hay que evitar pisar.
+    wb_ids = [int(m) for m in re.findall(r'<sheet\b[^>]*\bsheetId="(\d+)"', pkg.partes["xl/workbook.xml"].decode("utf-8"))]
+    max_sheet_id = max(wb_ids) if wb_ids else int(sheet_id1)
+    for etiqueta, xlsx_bytes in archivos[1:]:
+        with zipfile.ZipFile(BytesIO(xlsx_bytes)) as zin:
+            info = _sheet_info(zin)
+            parte_ws, _sheet_id, idx = info[hoja_principal]
+            etiqueta_final = _sanear_nombre_hoja(etiqueta, pkg.usados_hoja)
+            max_sheet_id += 1
+
+            nueva_ws = pkg.siguiente_nombre("worksheets", "sheet", "xml")
+            pkg.partes[nueva_ws] = zin.read(parte_ws)
+            ct_origen = zin.read("[Content_Types].xml").decode("utf-8")
+            pkg.agregar_content_type(nueva_ws, _content_type_de(ct_origen, parte_ws))
+
+            nuevo_rid_wb = pkg.agregar_relacion("xl/workbook.xml", T_WORKSHEET, nueva_ws.split("xl/", 1)[1])
+            _agregar_sheet_a_workbook(pkg, etiqueta_final, max_sheet_id, nuevo_rid_wb)
+            nuevo_idx = _index_de_hoja(pkg, etiqueta_final)
+            _clonar_defined_names(zin, pkg, hoja_principal, etiqueta_final, idx, nuevo_idx)
+
+            # `nueva_ws` es una copia BYTE A BYTE de la hoja de origen (no se reescribe su XML), asi que las
+            # relaciones "r:id" que ya trae escritas adentro (drawing/legacyDrawing/controls/...) tienen que
+            # apuntar a los MISMOS Id que traia alla -- por eso agregar_relacion_fija(rid) y no agregar_relacion
+            # (que inventaria unos nuevos que la hoja copiada no referencia, dejandola con relaciones colgantes).
+            for rid, tipo, target in _leer_rels(zin, parte_ws):
+                if tipo == T_DRAWING:
+                    nuevo_drawing = _clonar_drawing(zin, pkg, target, hoja_principal, etiqueta_final)
+                    pkg.agregar_relacion_fija(nueva_ws, rid, tipo, _target_relativo(nueva_ws, nuevo_drawing))
+                else:
+                    if target not in pkg.partes:
+                        pkg.partes[target] = zin.read(target)
+                        pkg.agregar_content_type(target, _content_type_de(ct_origen, target))
+                    pkg.agregar_relacion_fija(nueva_ws, rid, tipo, _target_relativo(nueva_ws, target))
+
+    _forzar_recalculo(pkg)
+    return pkg.guardar()
+
+
+def _renombrar_hoja_en_workbook(pkg, nombre_viejo, nombre_nuevo, sheet_id):
+    wb = pkg.partes["xl/workbook.xml"].decode("utf-8")
+    wb = wb.replace(f'<sheet name="{nombre_viejo}" sheetId="{sheet_id}"',
+                     f'<sheet name="{_xml_escape(nombre_nuevo)}" sheetId="{sheet_id}"', 1)
+    pkg.partes["xl/workbook.xml"] = wb.encode("utf-8")
+
+
+def _agregar_sheet_a_workbook(pkg, nombre, sheet_id, rid):
+    wb = pkg.partes["xl/workbook.xml"].decode("utf-8")
+    nueva = f'<sheet name="{_xml_escape(nombre)}" sheetId="{sheet_id}" r:id="{rid}"/>'
+    wb = wb.replace("</sheets>", nueva + "</sheets>")
+    pkg.partes["xl/workbook.xml"] = wb.encode("utf-8")
+
+
+def _index_de_hoja(pkg, nombre):
+    wb = pkg.partes["xl/workbook.xml"].decode("utf-8")
+    m = re.search(r"<sheets>(.*?)</sheets>", wb, re.S)
+    hojas = re.findall(r'<sheet name="([^"]*)"', m.group(1))
+    return hojas.index(nombre)
+
+
+def _renombrar_defined_names(pkg, nombre_viejo, nombre_nuevo, idx):
+    wb = pkg.partes["xl/workbook.xml"].decode("utf-8")
+
+    def rep(m):
+        cuerpo = m.group(0)
+        if f'localSheetId="{idx}"' not in cuerpo:
+            return cuerpo
+        return _reemplazar_calificador_hoja(cuerpo, nombre_viejo, nombre_nuevo)
+
+    wb = re.sub(r"<definedName\b[^>]*>.*?</definedName>", rep, wb, flags=re.S)
+    pkg.partes["xl/workbook.xml"] = wb.encode("utf-8")
+
+
+def _clonar_defined_names(zin_origen, pkg, nombre_hoja, nombre_hoja_nuevo, idx_origen, idx_destino):
+    wb_origen = zin_origen.read("xl/workbook.xml").decode("utf-8")
+    nuevos = []
+    for m in re.finditer(r'<definedName\b([^>]*)>(.*?)</definedName>', wb_origen, re.S):
+        attrs, cuerpo = m.groups()
+        if f'localSheetId="{idx_origen}"' not in attrs:
+            continue
+        attrs2 = re.sub(r'localSheetId="\d+"', f'localSheetId="{idx_destino}"', attrs)
+        cuerpo2 = _reemplazar_calificador_hoja(cuerpo, nombre_hoja, nombre_hoja_nuevo)
+        nuevos.append(f"<definedName{attrs2}>{cuerpo2}</definedName>")
+    if not nuevos:
+        return
+    wb = pkg.partes["xl/workbook.xml"].decode("utf-8")
+    if "<definedNames>" in wb:
+        wb = wb.replace("</definedNames>", "".join(nuevos) + "</definedNames>")
+    else:
+        wb = wb.replace("</sheets>", "</sheets><definedNames>" + "".join(nuevos) + "</definedNames>")
+    pkg.partes["xl/workbook.xml"] = wb.encode("utf-8")
+
+
+def _reemplazar_calificador_hoja(texto, viejo, nuevo):
+    nuevo_q = f"'{nuevo}'!" if any(c in nuevo for c in " -()") else f"{nuevo}!"
+    texto = re.sub(r"'" + re.escape(viejo) + r"'!", nuevo_q, texto)
+    texto = re.sub(r"(?<![\w'])" + re.escape(viejo) + r"!", nuevo_q, texto)
+    return texto
+
+
+def _repuntar_relacion(pkg, parte, rid, nuevo_target_parte):
+    """Cambia el Target de la relacion `rid` de la .rels de `parte`. Los atributos de <Relationship> no vienen
+    siempre en el mismo orden (openpyxl reescribe la .rels de la hoja que SI toco con Type/Target/Id, en vez
+    del Id/Type/Target de las demas), asi que no se puede asumir que Id venga primero."""
+    nombre = _rels_path(parte)
+    xml = pkg.partes[nombre].decode("utf-8")
+
+    def rep(m):
+        tag = m.group(0)
+        if not re.search(r'\bId="' + re.escape(rid) + r'"', tag):
+            return tag
+        nuevo_target = _target_relativo(parte, nuevo_target_parte)
+        return re.sub(r'Target="[^"]*"', f'Target="{nuevo_target}"', tag)
+
+    xml = re.sub(r"<Relationship\b[^>]*/>", rep, xml)
+    pkg.partes[nombre] = xml.encode("utf-8")
+
+
+def _xml_escape(s):
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def _forzar_recalculo(pkg):
+    nombre = "xl/workbook.xml"
+    xml = pkg.partes[nombre].decode("utf-8")
+    if "fullCalcOnLoad" not in xml:
+        xml = re.sub(r"<calcPr ", '<calcPr fullCalcOnLoad="1" ', xml, count=1)
+        if "<calcPr " not in xml and "<calcPr/>" not in xml and "fullCalcOnLoad" not in xml:
+            xml = xml.replace("</workbook>", '<calcPr fullCalcOnLoad="1"/></workbook>')
+        pkg.partes[nombre] = xml.encode("utf-8")
+    if "xl/calcChain.xml" in pkg.partes:
+        del pkg.partes["xl/calcChain.xml"]
+        ct = pkg.partes["[Content_Types].xml"].decode("utf-8")
+        ct = re.sub(r'<Override PartName="/xl/calcChain\.xml"[^>]*/>', "", ct)
+        pkg.partes["[Content_Types].xml"] = ct.encode("utf-8")
+        rels = pkg.partes["xl/_rels/workbook.xml.rels"].decode("utf-8")
+        rels = re.sub(r'<Relationship[^>]*Target="calcChain\.xml"[^>]*/>', "", rels)
+        pkg.partes["xl/_rels/workbook.xml.rels"] = rels.encode("utf-8")
+
 
 def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_data=None, lim_data=None, observaciones_ensayo=""):
     """Granulometría y Límites de Atterberg comparten la misma plantilla y hoja ("GUIA") —
@@ -6011,6 +6432,96 @@ def generar_excel_proctor(codigo, perf_codigo, muestra, project, data, observaci
     wb.save(bio)
     bio.seek(0)
     return _restaurar_imagenes_perdidas(_reparar_graficos_perdidos(bio.getvalue(), TEMPLATE_PROCTOR), TEMPLATE_PROCTOR)
+
+
+# Ensayos con descarga por lote (ver empaquetar_hojas más arriba): solo los que tienen UNA sola hoja de datos
+# por muestra, siempre en la misma plantilla — Corte Directo y Consolidación quedan afuera porque cada muestra
+# ya ocupa varias hojas relacionadas entre sí (ver el comentario de "DESCARGA POR LOTE"). Peso unitario y
+# Gravedad específica también quedan afuera de este primer alcance: cada muestra puede usar una plantilla
+# distinta según el método elegido (Parafinado/Método B; fino/grueso/arcilla), y agruparlas por variante es
+# trabajo aparte.
+EXCEL_LOTE_CONFIG = {
+    "granulometria": {"hoja": "GUIA", "generar": generar_excel_granulometria, "ext": "xlsm",
+                       "mime": "application/vnd.ms-excel.sheet.macroEnabled.12",
+                       "prefijo": "Clasificacion_de_suelos", "etiqueta": "Granulometría y Límites de Atterberg",
+                       "bitacora": "Granulometría"},
+    "humedad": {"hoja": "GUIA", "generar": generar_excel_humedad, "ext": "xlsx",
+                "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "prefijo": "Humedad", "etiqueta": "Humedad", "bitacora": "Humedad"},
+    "cbr": {"hoja": "GUIA", "generar": generar_excel_cbr, "ext": "xlsx",
+            "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "prefijo": "CBR", "etiqueta": "CBR", "bitacora": "CBR"},
+    "limite-contraccion": {"hoja": "GUIA", "generar": generar_excel_limite_contraccion, "ext": "xlsx",
+                            "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            "prefijo": "Limite_contraccion", "etiqueta": "Límite de contracción",
+                            "bitacora": "Límite de contracción"},
+    "materia-organica": {"hoja": "GUIA", "generar": generar_excel_materia_organica, "ext": "xlsx",
+                          "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                          "prefijo": "Materia_organica", "etiqueta": "Materia orgánica", "bitacora": "Materia orgánica"},
+    "masa-unitaria": {"hoja": "GUIA", "generar": generar_excel_masa_unitaria, "ext": "xlsx",
+                       "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       "prefijo": "Peso_unitario_parafinado", "etiqueta": "Peso unitario (Parafinado)",
+                       "bitacora": "Peso unitario",
+                       "filtro": lambda data: data.get("mu_metodo") != "Método B"},
+    "proctor": {"hoja": "Hoja1", "generar": generar_excel_proctor, "ext": "xlsm",
+                "mime": "application/vnd.ms-excel.sheet.macroEnabled.12",
+                "prefijo": "Proctor", "etiqueta": "Proctor", "bitacora": "Proctor"},
+}
+
+
+def _muestras_para_lote(muestras, tipo_lote):
+    """(muestra, data) de las muestras de una perforación que tienen ese ensayo solicitado Y ya con datos
+    digitados — y que pasan el filtro de variante si el ensayo tiene una (ver EXCEL_LOTE_CONFIG['masa-unitaria'])."""
+    cfg = EXCEL_LOTE_CONFIG[tipo_lote]
+    filtro = cfg.get("filtro")
+    salida = []
+    for m in muestras:
+        if not m["ensayos"].get(cfg["bitacora"]):
+            continue
+        assay = get_assay(m["id_unico"], tipo_lote)
+        data = assay.get("data") if assay else None
+        if not data:
+            continue
+        if filtro and not filtro(data):
+            continue
+        salida.append((m, data))
+    return salida
+
+
+def render_descarga_por_lote(codigo, perf_codigo, project, muestras):
+    """Sección "Descargar por lote" de una perforación: un botón por tipo de ensayo con 2 o más muestras ya
+    digitadas, que junta todas en un solo Excel (una hoja por muestra) con empaquetar_hojas — ver el
+    comentario de "DESCARGA POR LOTE" más arriba."""
+    grupos = {tipo: _muestras_para_lote(muestras, tipo) for tipo in EXCEL_LOTE_CONFIG}
+    grupos = {tipo: pares for tipo, pares in grupos.items() if len(pares) >= 2}
+    if not grupos:
+        return
+    with st.container(border=True):
+        st.markdown('<div class="section-title">Descargar por lote</div>', unsafe_allow_html=True)
+        st.caption("Un solo Excel por ensayo, con todas las muestras que ya tienen datos — cada una en su "
+                   "propia hoja, numerada por muestra.")
+        for tipo, pares in grupos.items():
+            cfg = EXCEL_LOTE_CONFIG[tipo]
+            col1, col2 = st.columns([3, 1])
+            col1.markdown(f'<div style="padding-top:8px;">{html.escape(cfg["etiqueta"])} — {len(pares)} muestra(s)</div>',
+                          unsafe_allow_html=True)
+            with col2:
+                if st.button("Preparar", key=f"lote_prep_{tipo}_{perf_codigo}", use_container_width=True,
+                              icon=":material/folder_zip:"):
+                    st.session_state[f"lote_listo_{tipo}_{perf_codigo}"] = True
+            if st.session_state.get(f"lote_listo_{tipo}_{perf_codigo}"):
+                try:
+                    archivos = [(f"M{m['numero']}", cfg["generar"](codigo, perf_codigo, m, project, data, ""))
+                                for m, data in sorted(pares, key=lambda par: str(par[0]["numero"]))]
+                    excel_bytes = empaquetar_hojas(cfg["hoja"], archivos)
+                except Exception as e:
+                    st.error(f"No se pudo armar el Excel por lote de {cfg['etiqueta']}: {e}")
+                else:
+                    st.download_button(
+                        f"Descargar Excel — {cfg['etiqueta']} ({perf_codigo}, {len(pares)} muestras)",
+                        data=excel_bytes, file_name=f"{cfg['prefijo']}_{codigo}_{perf_codigo}.{cfg['ext']}",
+                        mime=cfg["mime"], use_container_width=True, key=f"lote_dl_{tipo}_{perf_codigo}",
+                        icon=":material/download:")
 
 
 def _fijar_celda_formula(xlsx_bytes, celda, formula):
