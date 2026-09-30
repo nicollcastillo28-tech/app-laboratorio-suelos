@@ -9254,28 +9254,33 @@ def render_carga_puntual_form(data, assay_id):
                 if _guardar_inmediato(assay_id, data):
                     st.rerun()
 
+            def _campo_cp(key, label, placeholder="0.00"):
+                row = st.columns([2.2, 1])
+                row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
+                data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                               label_visibility="collapsed", placeholder=placeholder)
+
             col_campos, col_diag = st.columns([3, 2])
             with col_campos:
-                fc1, fc2 = st.columns(2)
-                data[f"cp_{activo}_carga"] = fc1.text_input("Carga P (kN)", value=data.get(f"cp_{activo}_carga", ""),
-                                                             key=f"cp_{activo}_carga_{assay_id}", placeholder="0.00")
-                data[f"cp_{activo}_d"] = fc2.text_input("Altura D (mm)", value=data.get(f"cp_{activo}_d", ""),
-                                                         key=f"cp_{activo}_d_{assay_id}", placeholder="0.00")
-                fc3, fc4 = st.columns(2)
-                data[f"cp_{activo}_l1"] = fc3.text_input("L (mm)" if sentido_actual == "DIAMETRAL" else "W1 (mm)",
-                                                          value=data.get(f"cp_{activo}_l1", ""),
-                                                          key=f"cp_{activo}_l1_{assay_id}", placeholder="0.00")
+                _campo_cp(f"cp_{activo}_carga", "Carga P (kN)")
+                _campo_cp(f"cp_{activo}_d", "Altura D (mm)")
+                _campo_cp(f"cp_{activo}_l1", "L (mm)" if sentido_actual == "DIAMETRAL" else "W1 (mm)")
                 if sentido_actual == "DIAMETRAL":
-                    fc4.markdown(f'<div style="font-size:14px;margin-bottom:2px;">W2 (mm)</div>'
-                                 f'<div style="height:38px;border-radius:8px;border:1.5px dashed {BORDER};'
-                                 f'display:flex;align-items:center;justify-content:center;color:{MUTED};font-size:14px;">'
-                                 f'No aplica</div>', unsafe_allow_html=True)
+                    row_w2 = st.columns([2.2, 1])
+                    row_w2[0].markdown('<div style="padding-top:8px;">W2 (mm)</div>', unsafe_allow_html=True)
+                    row_w2[1].markdown(f'<div style="height:38px;border-radius:8px;border:1.5px dashed {BORDER};'
+                                        f'display:flex;align-items:center;justify-content:center;color:{MUTED};font-size:14px;">'
+                                        f'No aplica</div>', unsafe_allow_html=True)
                 else:
-                    data[f"cp_{activo}_w2"] = fc4.text_input("W2 (mm)", value=data.get(f"cp_{activo}_w2", ""),
-                                                              key=f"cp_{activo}_w2_{assay_id}", placeholder="0.00")
-                data[f"cp_{activo}_masa"] = st.text_input("Masa (g) — no se guarda en el Excel",
-                                                           value=data.get(f"cp_{activo}_masa", ""),
-                                                           key=f"cp_{activo}_masa_{assay_id}", placeholder="0.00")
+                    _campo_cp(f"cp_{activo}_w2", "W2 (mm)")
+                row_masa = st.columns([2.2, 1])
+                row_masa[0].markdown(f'<div style="padding-top:8px;">Masa (g)'
+                                      f'<span class="tag-app" style="background:{WARNING_LIGHT};color:{WARNING};'
+                                      f'font-size:10px;font-weight:700;letter-spacing:0.04em;padding:2px 6px;'
+                                      f'border-radius:4px;margin-left:6px;">SOLO APP</span></div>', unsafe_allow_html=True)
+                data[f"cp_{activo}_masa"] = row_masa[1].text_input("Masa (g)", value=data.get(f"cp_{activo}_masa", ""),
+                                                                    key=f"cp_{activo}_masa_{assay_id}",
+                                                                    label_visibility="collapsed", placeholder="0.00")
             with col_diag:
                 st.markdown(_cp_diagrama_svg(sentido_actual), unsafe_allow_html=True)
                 desc = ("Diametral: se mide L. Verifica L ≥ 0.5·D." if sentido_actual == "DIAMETRAL" else
