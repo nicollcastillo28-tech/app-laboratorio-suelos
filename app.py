@@ -198,14 +198,22 @@ st.markdown(f"""
     @media (max-width: 1180px) {{
         .st-key-topbar-nav {{ display: none; }}
         div[data-testid="stColumn"]:has(.st-key-topbar-nav) {{ display: none; }}
+        /* Misma barra oscura y píldora translúcida que la navegación de arriba (ver
+           .st-key-topbar-nav) — antes se quedaba blanca mientras la de arriba ya era verde
+           bosque, así que en tablet (donde esta es la que se ve) parecía que nada había cambiado. */
         .st-key-bottomnav {{
             display: block; position: fixed; bottom: 0; left: 0; width: 100%; z-index: 999;
-            background: {SURFACE}; border-top: 1px solid {BORDER}; padding: 6px 8px 8px 8px; box-shadow: 0 -2px 8px rgba(0,0,0,0.04);
+            background: {PRIMARY_CONTAINER}; border-top: none; padding: 6px 8px 8px 8px; box-shadow: 0 -2px 10px rgba(11,28,48,0.18);
         }}
         .st-key-bottomnav .stButton button {{
             font-family: 'JetBrains Mono', monospace; font-size: clamp(8px, 2.6vw, 10px); text-transform: uppercase;
             letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
             padding-top: 10px; padding-bottom: 10px; padding-left: 2px; padding-right: 2px;
+            border: none !important; background: transparent !important; color: #CFE6D6 !important; border-radius: 10px !important;
+        }}
+        .st-key-bottomnav .stButton button:hover {{ background: rgba(255,255,255,0.14) !important; color: #FFFFFF !important; }}
+        .st-key-bottomnav div.stButton > button[kind="primary"] {{
+            background: #FFFFFF !important; color: {PRIMARY_CONTAINER} !important; border: none !important;
         }}
         .st-key-bottomnav [data-testid="stHorizontalBlock"] {{ flex-direction: row !important; flex-wrap: nowrap !important; gap: 6px !important; }}
         .st-key-bottomnav [data-testid="stColumn"] {{ width: auto !important; flex: 1 1 0 !important; min-width: 0 !important; }}
@@ -473,8 +481,11 @@ st.markdown(f"""
        Cada tarjeta es un bloque con clave propia: la tarjeta visual (HTML) y, encima, el botón de
        Streamlit transparente que ocupa toda la tarjeta y hace la navegación. */
     .home-quick-head {{ display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 4px 0; }}
-    .home-quick-head h2 {{ margin: 0; font-size: 18px; font-weight: 700; color: #16231A; }}
-    .home-quick-head span {{ font-size: 13px; color: #5B6B5F; }}
+    .home-quick-head h2 {{
+        margin: 0; font-size: 20px; font-weight: 800; color: {TEXT};
+        font-family: 'Bricolage Grotesque', 'IBM Plex Sans', sans-serif; letter-spacing: -0.02em;
+    }}
+    .home-quick-head span {{ font-size: 13px; color: {MUTED}; font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.06em; }}
     [class*="st-key-home-tiles"] {{
         display: grid !important; gap: 14px !important; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: stretch;
     }}
