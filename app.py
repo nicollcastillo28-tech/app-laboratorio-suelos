@@ -393,13 +393,15 @@ st.markdown(f"""
     div.stButton > button[kind="primary"]:hover {{ background-color: {PRIMARY_DARK}; border-color: {PRIMARY_DARK}; }}
     h1, h2, h3, h4, h5, h6 {{ color: {TEXT}; letter-spacing: -0.02em; font-family: 'IBM Plex Sans', sans-serif !important; }}
 
-    /* Campos digitables con fondo distinto al de la página, para que se note qué se puede editar */
+    /* Campos digitables con fondo distinto al de la página, para que se note qué se puede editar.
+       Borde de 2px en EDGE (no BORDER, que es el borde fino de tarjetas/divisores): es la regla
+       central del sistema de diseño 2026 -- "lo que se digita lleva borde grueso". */
     .stTextInput input, .stTextArea textarea, .stNumberInput input,
     .stDateInput input, [data-testid="stDateInputField"],
     .stSelectbox > div > div, .stMultiSelect > div > div {{
         background-color: {SURFACE} !important;
-        border: 1px solid {BORDER} !important;
-        border-radius: 8px !important;
+        border: 2px solid {EDGE} !important;
+        border-radius: 10px !important;
     }}
     /* El date_input de Streamlit ya no usa un <input> normal, sino un grupo de "spinbuttons"
        (día/mes/año) sin caja propia — sin esto se ve como texto plano sobre el fondo gris. */
@@ -9084,31 +9086,58 @@ def _cp_diagrama_svg(sentido):
     return f'<svg width="100%" height="150" viewBox="0 0 250 170" fill="none" xmlns="http://www.w3.org/2000/svg">{forma}</svg>'
 
 
-def _cp_panel_calculo_html(r, estado, mensaje):
-    """Panel "calcula la app" con los 5 valores derivados del ensayo activo, más el mensaje de validación
-    de geometría (ver _cp_estado_fila)."""
+def _cp_panel_calculo_html(data, activo):
+    """Panel "calcula la app" del ensayo activo (De², De, K, Is, Is50, Humedad) más el mensaje de
+    validación de geometría (ver _cp_estado_fila) y el Is50 promedio corrido -- una sola tarjeta con
+    fondo "calculado", igual que la tarjeta fija de resultados que trae el diseño de referencia
+    mientras se digita (junta el resultado del ensayo activo y el promedio de todos en el mismo sitio,
+    en vez de dejar el promedio solo para el expander de Resultados de más abajo)."""
+    r = _cp_resultado_fila(data, activo)
+    estado, mensaje = _cp_estado_fila(data, activo)
+    humedo, rec = to_float(data.get("cp_hum_humedo")), to_float(data.get("cp_hum_masa_rec"))
+    seco = next((v for v in (to_float(data.get(f"cp_hum_seco_{x}")) for x in (16, 15, 14)) if v is not None), None)
+    hum_pct = (humedo - seco) / (seco - rec) * 100 if None not in (humedo, seco, rec) and (seco - rec) != 0 else None
+    resultados_todos = [_cp_resultado_fila(data, i) for i in range(1, CP_MAX_ENSAYOS + 1)]
+    validos = [x[4] for x in resultados_todos if x]
+    n_con_dato = len(validos)
+    avg = sum(validos) / n_con_dato if validos else None
+
     if r:
         de2, de, k, is_, is50 = r
         # fmt_num recorta ceros finales sin distinguir si son parte del decimal (ok) o del entero (no) --
         # con decimals=0 un valor como 2500 quedaría en "25". De² se redondea aparte por eso.
-        vals = [("De² mm²", f"{de2:.0f}"), ("De mm", fmt_num(de, 1)), ("K factor correc.", fmt_num(k, 3)),
-                ("Is MPa", fmt_num(is_, 3)), ("Is50 MPa", fmt_num(is50, 3))]
+        vals = [("De²", "mm²", f"{de2:.0f}"), ("De", "mm", fmt_num(de, 1)), ("Factor de corrección K", "", fmt_num(k, 3)),
+                ("Is", "MPa", fmt_num(is_, 3)), ("Is50", "MPa", fmt_num(is50, 3))]
     else:
-        vals = [("De² mm²", "—"), ("De mm", "—"), ("K factor correc.", "—"), ("Is MPa", "—"), ("Is50 MPa", "—")]
-    celdas = "".join(
-        f'<div><div style="font-size:13px;color:{MUTED};">{lbl}</div>'
-        f'<div class="font-mono" style="font-size:{"24px" if lbl.startswith("Is50") else "20px"};'
-        f'font-weight:{"700" if lbl.startswith("Is50") else "500"};color:{TEXT};">{val}</div></div>'
-        for lbl, val in vals
-    )
+        vals = [("De²", "mm²", "—"), ("De", "mm", "—"), ("Factor de corrección K", "", "—"), ("Is", "MPa", "—"), ("Is50", "MPa", "—")]
+    vals.append(("Humedad", "%", fmt_num(hum_pct, 2) if hum_pct is not None else "—"))
+
+    def _fila(lbl, uni, val, grande=False):
+        uni_html = f' <em style="font-style:normal;color:{MUTED};font-size:12px;">({uni})</em>' if uni else ""
+        val_bg, val_color, val_size = (PRIMARY, "#FFFFFF", "24px") if grande else ("#FFFFFF", TEXT, "18px")
+        return (f'<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;'
+                f'border-top:1px solid #B6D6BE;"><span style="font-size:15px;{"font-weight:700;" if grande else ""}'
+                f'color:{TEXT};">{lbl}{uni_html}</span>'
+                f'<span class="font-mono" style="background:{val_bg};color:{val_color};font-weight:600;'
+                f'font-size:{val_size};padding:4px 12px;border-radius:8px;">{val}</span></div>')
+
+    filas_html = "".join(_fila(lbl, uni, val, grande=(lbl == "Is50")) for lbl, uni, val in vals)
     bg_msg, fg_msg = {"completo": (SUCCESS_LIGHT, SUCCESS), "alerta": (WARNING_LIGHT, WARNING),
                        "incompleto": (BG, MUTED)}[estado]
-    return (f'<div style="background:{SECONDARY_CONTAINER};border-radius:12px;padding:16px 18px;margin:14px 0;">'
+    promedio_html = (
+        f'<div style="border-top:2px solid #7FB591;margin-top:10px;padding-top:12px;display:flex;'
+        f'justify-content:space-between;align-items:baseline;">'
+        f'<span style="font-size:15px;color:{TEXT};">Is50 promedio <em style="font-style:normal;color:{MUTED};'
+        f'font-size:12px;">({n_con_dato} ensayo{"s" if n_con_dato != 1 else ""})</em></span>'
+        f'<span class="font-mono" style="font-size:30px;font-weight:700;color:{PRIMARY_DARK};">'
+        f'{fmt_num(avg, 3) if avg is not None else "—"}</span></div>')
+    return (f'<div style="background:{SECONDARY_CONTAINER};border:1px solid #B6D6BE;border-radius:14px;padding:16px 18px;margin:14px 0;">'
             f'<div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:{PRIMARY};'
-            f'letter-spacing:0.02em;margin-bottom:12px;">{icon("lock", size=16)} CALCULA LA APP · NO EDITABLE</div>'
-            f'<div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;">{celdas}</div>'
+            f'letter-spacing:0.02em;margin-bottom:4px;">{icon("calculate", size=16)} RESULTADOS DEL ENSAYO {activo} · CALCULADO</div>'
+            f'{filas_html}'
             f'<div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:{bg_msg};color:{fg_msg};'
-            f'font-size:14px;font-weight:500;">{html.escape(mensaje)}</div></div>')
+            f'font-size:14px;font-weight:500;">{html.escape(mensaje)}</div>'
+            f'{promedio_html}</div>')
 
 
 def _cp_panel_resultados_html(data):
@@ -9261,9 +9290,7 @@ def render_carga_puntual_form(data, assay_id):
                 st.markdown(f'<div style="font-size:12px;color:{MUTED};border-top:1px solid {BORDER};padding-top:6px;">'
                             f'En el Excel oficial este valor va a la casilla única <b>L / W1</b>.</div>', unsafe_allow_html=True)
 
-            resultado_activo = _cp_resultado_fila(data, activo)
-            estado_activo, mensaje_activo = _cp_estado_fila(data, activo)
-            st.markdown(_cp_panel_calculo_html(resultado_activo, estado_activo, mensaje_activo), unsafe_allow_html=True)
+            st.markdown(_cp_panel_calculo_html(data, activo), unsafe_allow_html=True)
 
             colnav = st.columns([1, 2])
             if colnav[0].button("← Anterior", key=f"cp_anterior_{assay_id}", disabled=(activo == 1), use_container_width=True):
