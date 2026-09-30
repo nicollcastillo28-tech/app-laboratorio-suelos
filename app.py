@@ -9087,11 +9087,11 @@ def _cp_diagrama_svg(sentido):
 
 
 def _cp_panel_calculo_html(data, activo):
-    """Panel "calcula la app" del ensayo activo (De², De, K, Is, Is50, Humedad) más el mensaje de
-    validación de geometría (ver _cp_estado_fila) y el Is50 promedio corrido -- una sola tarjeta con
-    fondo "calculado", igual que la tarjeta fija de resultados que trae el diseño de referencia
-    mientras se digita (junta el resultado del ensayo activo y el promedio de todos en el mismo sitio,
-    en vez de dejar el promedio solo para el expander de Resultados de más abajo)."""
+    """Filas del ensayo activo (De², De, K, Is, Is50, Humedad) más el mensaje de validación de
+    geometría (ver _cp_estado_fila) y el Is50 promedio corrido -- para meter dentro de un
+    resultados_desplegable(), igual que en el diseño de referencia (el propio expander ya pone el
+    título "Resultados del ensayo N" y el candado de "calculado", por eso este HTML no repite
+    ninguno de los dos)."""
     r = _cp_resultado_fila(data, activo)
     estado, mensaje = _cp_estado_fila(data, activo)
     humedo, rec = to_float(data.get("cp_hum_humedo")), to_float(data.get("cp_hum_masa_rec"))
@@ -9131,13 +9131,10 @@ def _cp_panel_calculo_html(data, activo):
         f'font-size:12px;">({n_con_dato} ensayo{"s" if n_con_dato != 1 else ""})</em></span>'
         f'<span class="font-mono" style="font-size:30px;font-weight:700;color:{PRIMARY_DARK};">'
         f'{fmt_num(avg, 3) if avg is not None else "—"}</span></div>')
-    return (f'<div style="background:{SECONDARY_CONTAINER};border:1px solid #B6D6BE;border-radius:14px;padding:16px 18px;margin:14px 0;">'
-            f'<div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:{PRIMARY};'
-            f'letter-spacing:0.02em;margin-bottom:4px;">{icon("calculate", size=16)} RESULTADOS DEL ENSAYO {activo} · CALCULADO</div>'
-            f'{filas_html}'
+    return (f'{filas_html}'
             f'<div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:{bg_msg};color:{fg_msg};'
             f'font-size:14px;font-weight:500;">{html.escape(mensaje)}</div>'
-            f'{promedio_html}</div>')
+            f'{promedio_html}')
 
 
 def _cp_panel_resultados_html(data):
@@ -9239,10 +9236,7 @@ def render_carga_puntual_form(data, assay_id):
                     unsafe_allow_html=True)
 
         with st.container(border=True):
-            colh = st.columns([3, 1])
-            colh[0].markdown(f'<div style="font-size:20px;font-weight:700;">Ensayo {activo}</div>', unsafe_allow_html=True)
-            colh[1].markdown(f'<div style="text-align:right;color:{MUTED};padding-top:6px;">{activo} de {n_filas}</div>',
-                              unsafe_allow_html=True)
+            st.markdown(card_header_html("compress", f"Ensayo {activo} de {CP_MAX_ENSAYOS}"), unsafe_allow_html=True)
 
             sentido_actual = data.get(f"cp_{activo}_sentido", "DIAMETRAL")
             st.markdown(f'<div style="font-size:14px;font-weight:600;color:{MUTED};margin:6px 0 4px 0;">Sentido de falla</div>',
@@ -9290,7 +9284,8 @@ def render_carga_puntual_form(data, assay_id):
                 st.markdown(f'<div style="font-size:12px;color:{MUTED};border-top:1px solid {BORDER};padding-top:6px;">'
                             f'En el Excel oficial este valor va a la casilla única <b>L / W1</b>.</div>', unsafe_allow_html=True)
 
-            st.markdown(_cp_panel_calculo_html(data, activo), unsafe_allow_html=True)
+            with resultados_desplegable(f"Resultados del ensayo {activo}"):
+                st.markdown(_cp_panel_calculo_html(data, activo), unsafe_allow_html=True)
 
             colnav = st.columns([1, 2])
             if colnav[0].button("← Anterior", key=f"cp_anterior_{assay_id}", disabled=(activo == 1), use_container_width=True):
