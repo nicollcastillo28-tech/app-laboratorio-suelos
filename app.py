@@ -7266,9 +7266,11 @@ def resultados_masa_unitaria_parafinado(data, muestra_id):
     (G24, G25, G26, G27): densidad húmeda (g/cm³) = B / ( -(D-A) + C - ((C-B)/densidad_parafina) ),
     con A = masa de la cuerda (0, no se digita en la app), B = masa en el aire, C = masa en el aire
     parafinado, D = masa en el agua parafinado, densidad_parafina = 0.86 (valor por defecto de la
-    plantilla). La humedad se toma del ensayo de Humedad de la misma muestra si tiene uno asignado
-    (igual que en CBR); si no tiene, se usa la que se digite manualmente aquí — sin ninguna de las
-    dos solo se puede mostrar la densidad húmeda, no la seca."""
+    plantilla). El kN/m³ (G26/G27) es densidad × 9.81 — confirmado contra la plantilla real; a
+    diferencia de otras plantillas de la app que aproximan con ×10, esta sí usa la gravedad real.
+    La humedad se toma del ensayo de Humedad de la misma muestra si tiene uno asignado (igual que
+    en CBR); si no tiene, se usa la que se digite manualmente aquí — sin ninguna de las dos solo se
+    puede mostrar la densidad húmeda, no la seca."""
     b = to_float(data.get("mu_peso_aire"))
     c = to_float(data.get("mu_peso_aire_par"))
     d = to_float(data.get("mu_peso_agua_par"))
@@ -7279,7 +7281,7 @@ def resultados_masa_unitaria_parafinado(data, muestra_id):
         return [], None, None
     dens_humeda = b / denominador
     filas = [("Densidad húmeda (g/cm³)", fmt_num(dens_humeda, 3)),
-             ("Densidad húmeda (kN/m³)", fmt_num(dens_humeda * 10, 2))]
+             ("Densidad húmeda (kN/m³)", fmt_num(dens_humeda * 9.81, 2))]
     humedad_pct, fuente = _mu_humedad_parafinado(data, muestra_id)
     if humedad_pct is not None:
         etiqueta = "Humedad (%) — del ensayo de Humedad" if fuente == "ensayo" else "Humedad (%) — digitada aquí"
@@ -7287,7 +7289,7 @@ def resultados_masa_unitaria_parafinado(data, muestra_id):
         if humedad_pct != -100:
             dens_seca = dens_humeda / (1 + humedad_pct / 100)
             filas += [("Densidad seca (g/cm³)", fmt_num(dens_seca, 3)),
-                      ("Densidad seca (kN/m³)", fmt_num(dens_seca * 10, 2))]
+                      ("Densidad seca (kN/m³)", fmt_num(dens_seca * 9.81, 2))]
     return filas, humedad_pct, fuente
 
 
