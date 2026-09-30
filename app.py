@@ -201,9 +201,10 @@ st.markdown(f"""
         /* Misma barra oscura y píldora translúcida que la navegación de arriba (ver
            .st-key-topbar-nav) — antes se quedaba blanca mientras la de arriba ya era verde
            bosque, así que en tablet (donde esta es la que se ve) parecía que nada había cambiado. */
-        .st-key-bottomnav {{
+        div[data-testid="stVerticalBlock"].st-key-bottomnav {{
             display: block; position: fixed; bottom: 0; left: 0; width: 100%; z-index: 999;
-            background: {PRIMARY_CONTAINER}; border-top: none; padding: 6px 8px 8px 8px; box-shadow: 0 -2px 10px rgba(11,28,48,0.18);
+            background: {PRIMARY_CONTAINER} !important; border: none !important; border-top: none !important;
+            box-shadow: 0 -2px 10px rgba(11,28,48,0.18) !important; padding: 6px 8px 8px 8px;
         }}
         .st-key-bottomnav .stButton button {{
             font-family: 'JetBrains Mono', monospace; font-size: clamp(8px, 2.6vw, 10px); text-transform: uppercase;
@@ -232,11 +233,23 @@ st.markdown(f"""
     /* Contenedores con borde nativos de Streamlit = nuestras "tarjetas" (sin bugs de HTML suelto) */
     /* OJO: en esta versión de Streamlit ya no existe stVerticalBlockBorderWrapper como wrapper
     aparte — st.container(border=True) marca el propio stVerticalBlock con
-    data-test-scroll-behavior="normal" (no lo tienen los stVerticalBlock sin borde). */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"] {{
+    data-test-scroll-behavior="normal" (no lo tienen los stVerticalBlock sin borde). EXCEPTO que en
+    la práctica (confirmado por captura real en Streamlit Cloud) los st.container(key=...) SIN
+    borde de la barra superior/inferior TAMBIÉN traían ese atributo: como esta regla no excluía
+    nada y tiene más especificidad que ".st-key-topbar" sola, el fondo blanco !important de acá
+    le ganaba al fondo oscuro !important de la barra — se veía blanca aunque el CSS de más abajo
+    estuviera bien. Se excluyen los mismos contenedores de "no son una tarjeta" que ya excluía la
+    regla del acento izquierdo, más "logout-btn" (el ícono de cerrar sesión, invisible cuando su
+    contenedor quedaba con este fondo blanco por detrás). */
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]) {{
         border-radius: 12px !important; border: 1px solid {BORDER} !important;
         box-shadow: 0 1px 4px rgba(11,28,48,0.08) !important; background: {SURFACE} !important;
     }}
+    /* Defensa adicional: el fondo de la barra y del botón de cerrar sesión se fuerzan también con
+       el selector completo (tag + clase), más específico que cualquier regla genérica de tarjeta,
+       para que no vuelvan a perderse aunque cambie qué contenedores reciben data-test-scroll-behavior. */
+    div[data-testid="stVerticalBlock"].st-key-topbar {{ background: {PRIMARY_CONTAINER} !important; border: none !important; box-shadow: 0 2px 10px rgba(11,28,48,0.18) !important; }}
+    div[data-testid="stVerticalBlock"].st-key-logout-btn {{ background: transparent !important; border: none !important; box-shadow: none !important; }}
     /* st.expander (tarjetas de "Perforaciones y muestras", "Historial de Cambios", etc.) trae de
     fábrica un borde casi invisible (20% de opacidad) y sin sombra ni fondo propio — se pierde
     contra el fondo cuadriculado de la app. Se le da el mismo tratamiento de tarjeta que a los
@@ -309,7 +322,7 @@ st.markdown(f"""
        borde tapando el grupo entero en vez de resaltar una sola tarjeta. bell-alert/bell-quiet
        (el botón-contenedor de la campana en el topbar) tampoco: es un ícono, no una tarjeta —
        se veía como una rayita verde suelta pegada a la campana. */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not([class*="st-key-notif-card-"]) {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]) {{
         border-left: 4px solid {PRIMARY} !important;
     }}
     /* Tarjetas de "Ensayos asignados" (una por ensayo): más separación entre sí y sombra
