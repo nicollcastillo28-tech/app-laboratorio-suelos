@@ -88,21 +88,32 @@ ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "laboratorista": "Laboratorista", 
 ROLE_INICIALES = {"jefe": "JL", "laboratorista": "LB", "ingeniero": "DT"}
 
 # ════════════════════════════════════════════════════════════════════
-# ESTILOS — paleta "Verdant Precision" (Primary #007A33 · Secondary #4A7862 · Tertiary #D1E8D5 · Neutral #212121)
+# ESTILOS — rediseño 2026 (Claude Design), paleta "papel milimetrado / tinta verde / mono para
+# números" — reemplaza la paleta "Verdant Precision" anterior. Mismos nombres de constante que
+# antes (para no tocar los ~cientos de usos repartidos por el archivo), valores nuevos.
+# EDGE y ACCENT_BRIGHT son constantes nuevas, propias de este sistema: EDGE es el borde grueso
+# (2px) reservado para lo que se digita — BORDER sigue siendo el borde fino de tarjetas/divisores.
+# ACCENT_BRIGHT es el verde menta brillante para insignias/avatar sobre fondo oscuro (PRIMARY_CONTAINER).
 # ════════════════════════════════════════════════════════════════════
-PRIMARY, PRIMARY_DARK, PRIMARY_CONTAINER = "#007A33", "#00591F", "#0B3D22"
-SECONDARY, SECONDARY_CONTAINER = "#4A7862", "#D1E8D5"
-TERTIARY = "#D1E8D5"
-NEUTRAL = "#6B7570"
-SUCCESS, SUCCESS_LIGHT = "#16A34A", "#DCFCE7"
-WARNING, WARNING_LIGHT = "#D97706", "#FEF3C7"
-DANGER, DANGER_LIGHT = "#DC2626", "#FEE2E2"
-SURFACE, BG, BORDER, TEXT = "#FFFFFF", "#F7FAF8", "#D6D9D5", "#212121"
+PRIMARY, PRIMARY_DARK, PRIMARY_CONTAINER = "#0A7A3A", "#075A2B", "#0B3D22"
+SECONDARY, SECONDARY_CONTAINER = "#56625A", "#E2EFE3"
+TERTIARY = "#E2EFE3"
+NEUTRAL = "#56625A"
+SUCCESS, SUCCESS_LIGHT = "#0A5A2A", "#D5EFDC"
+WARNING, WARNING_LIGHT = "#8A4B06", "#FBEBC8"
+DANGER, DANGER_LIGHT = "#A51D1D", "#FBE1DE"
+SURFACE, BG, BORDER, TEXT = "#FFFFFF", "#F3F1E8", "#D3D6C9", "#10241A"
 MUTED = NEUTRAL
+EDGE = "#8F9A8B"
+ACCENT_BRIGHT = "#6FE39A"
 
 st.markdown(f"""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700;800&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
+    .font-disp, [data-testid="stHeadingWithActionElements"] h1, [data-testid="stHeadingWithActionElements"] h2,
+    [data-testid="stHeadingWithActionElements"] h3 {{
+        font-family: 'Bricolage Grotesque', 'IBM Plex Sans', sans-serif !important; font-weight: 800 !important; letter-spacing: -0.02em !important;
+    }}
     .material-symbols-outlined, [data-testid="stMarkdownContainer"] span.material-symbols-outlined,
     [data-testid="stMarkdownContainer"] p span.material-symbols-outlined {{
         font-family: 'Material Symbols Outlined' !important;
@@ -123,8 +134,8 @@ st.markdown(f"""
     .stApp {{
         background-color: {BG};
         background-image:
-            linear-gradient(rgba(33,33,33,0.05) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(33,33,33,0.05) 1px, transparent 1px);
+            linear-gradient(rgba(16,36,26,0.05) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(16,36,26,0.05) 1px, transparent 1px);
         background-size: 26px 26px;
     }}
     [data-testid="collapsedControl"] {{ display: none; }}
@@ -132,9 +143,13 @@ st.markdown(f"""
     .font-mono {{ font-family: 'JetBrains Mono', monospace; }}
 
     /* ---- TOP APP BAR (desktop / tablet ancho) ---- */
+    /* Barra oscura (antes blanca): la marca, la píldora de navegación y los íconos ahora se leen
+       en claro sobre el verde bosque — ver las reglas de .st-key-topbar-nav y los botones de
+       ícono más abajo, que invierten los colores por defecto para que no se pierdan contra el fondo. */
     .st-key-topbar {{
-        position: sticky; top: 0; z-index: 999; background: {SURFACE};
-        border-bottom: 1px solid {BORDER}; padding: 10px 4px 6px 4px; margin-bottom: 8px;
+        position: sticky; top: 0; z-index: 999; background: {PRIMARY_CONTAINER};
+        border-bottom: none; padding: 10px 4px 6px 4px; margin-bottom: 8px;
+        box-shadow: 0 2px 10px rgba(11,28,48,0.18);
     }}
     .st-key-topbar .stButton button {{
         font-family: 'JetBrains Mono', monospace; font-weight: 700;
@@ -142,14 +157,38 @@ st.markdown(f"""
         font-size: clamp(10px, 1.1vw, 12px); padding-left: 8px; padding-right: 8px;
     }}
     .topbar-brand {{ display: flex; align-items: center; gap: 10px; height: 38px; }}
+    .topbar-brand .mark {{
+        width: 32px; height: 32px; border-radius: 9px; background: {ACCENT_BRIGHT}; color: {PRIMARY_CONTAINER};
+        display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }}
     .topbar-brand .brand-title {{
-        font-size: clamp(15px, 2vw, 20px); font-weight: 700; color: {PRIMARY}; letter-spacing: -0.02em; white-space: nowrap;
+        font-family: 'Bricolage Grotesque', 'IBM Plex Sans', sans-serif;
+        font-size: clamp(15px, 2vw, 20px); font-weight: 800; color: #FFFFFF; letter-spacing: -0.02em; white-space: nowrap;
     }}
     .topbar-avatar {{
-        width: 36px; height: 36px; border-radius: 999px; background: {PRIMARY_CONTAINER}; color: #FFFFFF;
-        display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px;
-        border: 1px solid {BORDER}; margin-left: auto; flex-shrink: 0;
+        width: 36px; height: 36px; border-radius: 999px; background: {ACCENT_BRIGHT}; color: {PRIMARY_CONTAINER};
+        display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px;
+        font-family: 'Bricolage Grotesque', sans-serif;
+        border: none; margin-left: auto; flex-shrink: 0;
     }}
+    /* Píldora de navegación: fondo translúcido dentro de la barra oscura. El destino activo se ve
+       como una pastilla blanca; los otros dos quedan en menta translúcido, sin borde propio (el
+       borde verde por defecto de los botones "secondary" se pierde contra el fondo oscuro). */
+    .st-key-topbar-nav {{ background: rgba(255,255,255,0.08); border-radius: 14px; padding: 5px; }}
+    .st-key-topbar-nav .stButton button {{
+        border: none !important; background: transparent !important; color: #CFE6D6 !important; border-radius: 10px !important;
+    }}
+    .st-key-topbar-nav .stButton button:hover {{ background: rgba(255,255,255,0.14) !important; color: #FFFFFF !important; }}
+    .st-key-topbar-nav div.stButton > button[kind="primary"] {{
+        background: #FFFFFF !important; color: {PRIMARY_CONTAINER} !important; border: none !important;
+    }}
+    .st-key-topbar-nav div.stButton > button[kind="primary"]:hover {{ background: #FFFFFF !important; }}
+    /* Campana (sin avisos) y cerrar sesión: botones-ícono translúcidos a juego con el fondo
+       oscuro — la campana CON avisos sigue en rojo (regla .st-key-bell-alert, más abajo). */
+    .st-key-bell-quiet button, .st-key-logout-btn button {{
+        background: rgba(255,255,255,0.10) !important; border: none !important; color: #FFFFFF !important;
+    }}
+    .st-key-bell-quiet button:hover, .st-key-logout-btn button:hover {{ background: rgba(255,255,255,0.20) !important; }}
 
     /* ---- BOTTOM NAV (celular y tablet, ambas orientaciones) ----
        900px solo cubría tablet en vertical; en horizontal (~1024-1194px, iPad/Android típico)
@@ -454,12 +493,15 @@ st.markdown(f"""
        acomoda ícono, texto y flecha, y el botón transparente cubre la tarjeta entera. */
     div[data-testid="stVerticalBlock"][class*="st-key-home-tiles"] {{ border: none !important; box-shadow: none !important; background: transparent !important; border-radius: 0 !important; }}
     div[data-testid="stVerticalBlock"][class*="st-key-tile-"] {{
-        position: relative; flex: 1 0 auto; gap: 0 !important; justify-content: center; box-sizing: border-box;
-        padding: 16px 18px; min-height: 88px; border-radius: 14px !important; border: 1px solid #DCE5DD !important; background: #FFFFFF !important;
-        box-shadow: none !important; color: #16231A;
-        transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease, background .15s ease;
+        position: relative; flex: 1 0 auto; gap: 0 !important; justify-content: flex-end; box-sizing: border-box;
+        padding: 20px; min-height: 148px; border-radius: 16px !important; border: 1.5px solid {TEXT} !important; background: {SURFACE} !important;
+        box-shadow: 4px 4px 0 {TEXT} !important; color: {TEXT};
+        transition: transform .08s ease, box-shadow .08s ease;
     }}
-    div[data-testid="stVerticalBlock"][class*="st-key-tile-p-"] {{ background: #0B4A26 !important; border-color: #0B4A26 !important; color: #FFFFFF; }}
+    div[data-testid="stVerticalBlock"][class*="st-key-tile-p-"] {{
+        background: {PRIMARY_CONTAINER} !important; border-color: {PRIMARY_CONTAINER} !important; color: #FFFFFF;
+        box-shadow: 4px 4px 0 {PRIMARY} !important;
+    }}
     [class*="st-key-tile-"] [data-testid="stMarkdownContainer"] {{ margin-bottom: 0 !important; }}
     [class*="st-key-tile-"] > [data-testid="stElementContainer"] {{ width: 100%; }}
     [class*="st-key-tile-"] > [class*="st-key-btn-"] {{
@@ -469,25 +511,19 @@ st.markdown(f"""
     [class*="st-key-tile-"] > [class*="st-key-btn-"] button {{
         width: 100% !important; height: 100% !important; min-height: 0; opacity: 0; cursor: pointer; padding: 0;
     }}
-    .gd-tile {{ display: flex; align-items: center; gap: 14px; width: 100%; }}
-    .gd-tile .gd-ico {{ width: 44px; height: 44px; border-radius: 12px; background: #E3F1E6; display: flex; align-items: center;
-        justify-content: center; flex-shrink: 0; }}
-    .gd-tile .gd-txt {{ display: flex; flex-direction: column; gap: 3px; flex-grow: 1; min-width: 0; }}
-    .gd-tile .gd-title {{ display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700; line-height: 1.25; }}
-    .gd-tile .gd-sub {{ font-size: 13px; color: #5B6B5F; line-height: 1.3; }}
-    .gd-tile .gd-badge {{ min-width: 22px; height: 22px; padding: 0 7px; box-sizing: border-box; border-radius: 999px; background: #0F7A3A;
-        color: #FFFFFF; font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }}
-    .gd-tile .gd-go {{ width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-        flex-shrink: 0; background: #EAF3EC; color: #0F7A3A; transition: background .15s ease, color .15s ease; }}
-    .gd-tile.primary .gd-ico {{ background: rgba(255,255,255,0.14); }}
-    .gd-tile.primary .gd-sub {{ color: #CFE6D6; }}
-    .gd-tile.primary .gd-badge {{ background: #FFFFFF; color: #0B4A26; }}
-    .gd-tile.primary .gd-go {{ background: rgba(255,255,255,0.16); color: #FFFFFF; }}
-    div[data-testid="stVerticalBlock"][class*="st-key-tile-"]:hover {{ transform: translateY(-2px); border-color: #0F7A3A !important; box-shadow: 0 8px 20px rgba(11,61,30,0.10) !important; }}
-    [class*="st-key-tile-"]:hover .gd-go {{ background: #0F7A3A; color: #FFFFFF; }}
-    div[data-testid="stVerticalBlock"][class*="st-key-tile-p-"]:hover {{ background: #0A5B2D !important; box-shadow: 0 10px 24px rgba(11,74,38,0.28) !important; }}
-    [class*="st-key-tile-p-"]:hover .gd-go {{ background: #FFFFFF; color: #0B4A26; }}
-    [class*="st-key-tile-"]:has(button:focus-visible) {{ outline: 3px solid #0F7A3A; outline-offset: 2px; }}
+    /* Tarjeta "qa": ícono suelto arriba a la izquierda, el número (si hay) arriba a la derecha en
+       mono grande, título y subtítulo abajo — reemplaza el ícono con fondo circular de antes. */
+    .qa-c {{ display: flex; flex-direction: column; width: 100%; position: relative; min-height: 108px; }}
+    .qa-c .qa-ico {{ display: block; line-height: 1; }}
+    .qa-c .qa-n {{
+        position: absolute; top: 0; right: 0; font-family: 'JetBrains Mono', monospace; font-weight: 600;
+        font-size: 32px; line-height: 1;
+    }}
+    .qa-c .qa-t {{ font-family: 'Bricolage Grotesque', sans-serif; font-weight: 700; font-size: 20px; line-height: 1.15; margin-top: auto; padding-top: 14px; }}
+    .qa-c .qa-s {{ font-size: 14px; opacity: .8; margin-top: 4px; }}
+    div[data-testid="stVerticalBlock"][class*="st-key-tile-"]:hover {{ transform: translate(2px, 2px); box-shadow: 2px 2px 0 {TEXT} !important; }}
+    div[data-testid="stVerticalBlock"][class*="st-key-tile-p-"]:hover {{ box-shadow: 2px 2px 0 {PRIMARY} !important; }}
+    [class*="st-key-tile-"]:has(button:focus-visible) {{ outline: 3px solid {PRIMARY}; outline-offset: 2px; }}
     @media (hover: none) {{
         [class*="st-key-tile-"]:hover {{ transform: none; }}
     }}
@@ -2689,7 +2725,7 @@ def render_topbar():
     with st.container(key="topbar"):
         c_brand, c_nav, c_bell, c_avatar, c_logout = st.columns([2.2, 4.2, 0.7, 0.7, 0.7])
         with c_brand:
-            st.markdown(f'<div class="topbar-brand">{icon("biotech", size=24)}'
+            st.markdown(f'<div class="topbar-brand"><span class="mark">{icon("biotech", size=20)}</span>'
                         f'<span class="brand-title">Geodelta Lab</span></div>', unsafe_allow_html=True)
         with c_nav:
             with st.container(key="topbar-nav"):
@@ -2728,7 +2764,7 @@ def render_topbar():
         with c_avatar:
             iniciales = ROLE_INICIALES.get(st.session_state.role, "LB")
             st.markdown(f'<div class="topbar-avatar">{iniciales}</div>', unsafe_allow_html=True)
-        with c_logout:
+        with c_logout, st.container(key="logout-btn"):
             if st.button("", key="logout_top", help="Cerrar sesión", use_container_width=True, icon=":material/logout:"):
                 db.sign_out()
                 st.session_state.role = None
@@ -2770,28 +2806,30 @@ def _ensayos_pendientes_dt():
 
 
 _TILE_ICONOS = {
-    "nuevo": '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>',
-    "ejecucion": '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3"></path><path d="M7.5 15h9"></path></svg>',
-    "ejecutados": '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1.5"></rect><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"></path><path d="M9.5 13.5l2 2 3.5-3.5"></path></svg>',
-    "balanzas": '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18M7 21h10M4 7h16"></path><path d="M4 7l-3 7a3.5 3.5 0 0 0 6 0z"></path><path d="M20 7l-3 7a3.5 3.5 0 0 0 6 0z"></path></svg>',
-    "aprobar": '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>',
+    "nuevo": '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>',
+    "ejecucion": '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3"></path><path d="M7.5 15h9"></path></svg>',
+    "ejecutados": '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1.5"></rect><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"></path><path d="M9.5 13.5l2 2 3.5-3.5"></path></svg>',
+    "balanzas": '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18M7 21h10M4 7h16"></path><path d="M4 7l-3 7a3.5 3.5 0 0 0 6 0z"></path><path d="M20 7l-3 7a3.5 3.5 0 0 0 6 0z"></path></svg>',
+    "aprobar": '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>',
 }
-_TILE_FLECHA = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>'
 
 
 def render_accesos_rapidos(tiles):
     """Menú de Inicio: 'Accesos rápidos'. tiles = [(clave, icono, titulo, subtitulo, badge|None, primaria, pantalla|None)];
-    sin pantalla la tarjeta es solo informativa (sin botón)."""
+    sin pantalla la tarjeta es solo informativa (sin botón). Tarjeta tipo "qa" del rediseño 2026:
+    borde grueso de tinta y sombra desplazada (en vez del degradado suave de antes), con el número
+    grande arriba a la derecha en vez de una pastilla pequeña junto al título."""
     st.markdown('<div class="home-quick-head"><h2>Accesos rápidos</h2><span>Laboratorio Geodelta</span></div>', unsafe_allow_html=True)
     with st.container(key=f"home-tiles-{len(tiles)}"):
         for clave, ico, titulo, sub, badge, primaria, pantalla in tiles:
-            color = "#FFFFFF" if primaria else "#0F7A3A"
-            badge_html = f'<span class="gd-badge">{badge}</span>' if badge is not None else ""
+            color = "#FFFFFF" if primaria else TEXT
+            badge_html = f'<span class="qa-n">{badge}</span>' if badge is not None else ""
             with st.container(key=f"tile-p-{clave}" if primaria else f"tile-{clave}"):
                 st.markdown(
-                    f'<div class="gd-tile{" primary" if primaria else ""}"><span class="gd-ico">{_TILE_ICONOS[ico].format(c=color)}</span>'
-                    f'<span class="gd-txt"><span class="gd-title">{html.escape(titulo)}{badge_html}</span>'
-                    f'<span class="gd-sub">{html.escape(sub)}</span></span>{f"<span class=gd-go>{_TILE_FLECHA}</span>" if pantalla else ""}</div>',
+                    f'<div class="qa-c{" primary" if primaria else ""}">'
+                    f'<span class="qa-ico">{_TILE_ICONOS[ico].format(c=color)}</span>{badge_html}'
+                    f'<span class="qa-t">{html.escape(titulo)}</span>'
+                    f'<span class="qa-s">{html.escape(sub)}</span></div>',
                     unsafe_allow_html=True)
                 if pantalla and st.button(titulo, key=f"btn-{clave}", use_container_width=True):
                     navigate(pantalla)
