@@ -794,9 +794,20 @@ NORMAS_ENSAYO = {
     "solidez-sulfatos": ["INV E-220-13", "ASTM C88"],
     "terrones-arcilla": ["INV E-211-13"],
 }
-STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado"}
-STATUS_BADGE = {"sin-iniciar": "badge-danger", "en-proceso": "badge-warning", "finalizado": "badge-success"}
-STATUS_ICON = {"sin-iniciar": "radio_button_unchecked", "en-proceso": "autorenew", "finalizado": "check_circle"}
+STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado", "no-realizado": "No realizado"}
+STATUS_BADGE = {"sin-iniciar": "badge-danger", "en-proceso": "badge-warning", "finalizado": "badge-success", "no-realizado": "badge-muted"}
+STATUS_ICON = {"sin-iniciar": "radio_button_unchecked", "en-proceso": "autorenew", "finalizado": "check_circle", "no-realizado": "block"}
+
+
+def assay_estado_display(assay):
+    """Estado para mostrar en badges/círculos: 'no-realizado' si el laboratorista marcó que el
+    ensayo no se pudo hacer (ver render_no_realizado_control), aunque por dentro el status siga
+    guardado como 'finalizado' -- así el flujo de aprobación (Jefe -> Director Técnico) y los
+    conteos de avance de la muestra/proyecto no tienen que distinguir este caso aparte, se tratan
+    igual que cualquier ensayo terminado."""
+    if (assay.get("data") or {}).get("_no_realizado"):
+        return "no-realizado"
+    return assay["status"]
 
 TIPO_PERFORACION_PREFIX = {"Sondeo": "S", "Apique": "AP", "Fuente/Cantera": "F"}
 # Texto que espera la lista desplegable de "tipo de perforación" en la plantilla
@@ -2970,7 +2981,7 @@ def render_home():
                     cols[2].markdown(f'<div class="cell-sub">{subtitulo}</div>', unsafe_allow_html=True)
                     cols[3].markdown(f'<span class="cell-muted">{html.escape(actualizacion)}</span>', unsafe_allow_html=True)
                     with cols[4]:
-                        st.markdown(f'<div style="text-align:center;">{status_circle_html(a["status"], size=16)}</div>', unsafe_allow_html=True)
+                        st.markdown(f'<div style="text-align:center;">{status_circle_html(assay_estado_display(a), size=16)}</div>', unsafe_allow_html=True)
                     with cols[5]:
                         if st.button("Abrir", key=f"open_recent_{a['id']}", use_container_width=True):
                             st.session_state.selected_codigo = a["codigo_interno"]
@@ -5205,13 +5216,14 @@ def render_muestra_detail():
             tipo_interno = SUPPORTED_ASSAY_MAP.get(ensayo_label)
             existing = get_assay(muestra_id, tipo_interno) if tipo_interno else None
             status = existing["status"] if existing else "sin-iniciar"
+            estado_mostrado = assay_estado_display(existing) if existing else "sin-iniciar"
             etapa = existing.get("etapa_revision") if existing else None
             mostrar_aprobacion = bool(tipo_interno and existing and status == "finalizado")
             slug = re.sub(r"[^a-z0-9]+", "-", ensayo_label.lower())
 
             with st.container(border=True, key=f"ensayo-card-{slug}"):
                 cols = st.columns([0.5, 2.0, 1.3, 0.9], vertical_alignment="center")
-                cols[0].markdown(status_circle_html(status), unsafe_allow_html=True)
+                cols[0].markdown(status_circle_html(estado_mostrado), unsafe_allow_html=True)
                 with cols[1]:
                     st.markdown(f"**{ensayo_label}**")
                     if existing and existing.get("laboratorist"):
@@ -10549,7 +10561,7 @@ def render_assay_form():
 
     st.markdown(f"## {ASSAY_LABELS[assay['tipo']]}")
     st.caption("Resultados de Ensayo" if read_only else "Registro de Ensayo")
-    st.markdown(f'<div style="margin-bottom:10px;">{status_badge_html(assay["status"])}&nbsp;&nbsp;'
+    st.markdown(f'<div style="margin-bottom:10px;">{status_badge_html(assay_estado_display(assay))}&nbsp;&nbsp;'
                 f'<span class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(assay["lastModified"])}'
                 + (f' · {html.escape(assay["laboratorist"])}' if assay.get("laboratorist") else "") + '</span></div>',
                 unsafe_allow_html=True)
@@ -10615,6 +10627,13 @@ def render_assay_form():
     # cualquier otro ensayo independiente.
     pasa200_gran_sibling = get_assay(muestra_id, "granulometria") if assay["tipo"] == "pasa200" else None
     data = dict(pasa200_gran_sibling["data"]) if pasa200_gran_sibling else dict(assay.get("data", {}))
+
+    motivo_no_realizado = data.get("_motivo_no_realizado") if data.get("_no_realizado") else None
+    if motivo_no_realizado:
+        st.markdown(f'<div class="alert-no-realizado" style="background:{WARNING_LIGHT};color:{WARNING};'
+                    f'border-radius:10px;padding:12px 16px;margin-bottom:14px;">'
+                    f'{icon("block", size=18)} <b>No se pudo realizar este ensayo.</b> {html.escape(motivo_no_realizado)}</div>',
+                    unsafe_allow_html=True)
 
     if read_only:
         if es_supervisor:
@@ -10767,6 +10786,56 @@ def render_assay_form():
                                 add_notification("jefe", f"La Muestra {muestra['numero']} de {codigo} ya completó todos sus "
                                                           f"ensayos — está lista para tu confirmación.", codigo, perf_codigo, muestra_id)
                     navigate("muestra-detail")
+
+        # "No se pudo realizar": para cuando el ensayo no se puede completar por una razón ajena a
+        # los datos (ej. en Carga puntual, los especímenes no cumplían las dimensiones mínimas) --
+        # no tiene sentido pedir los campos obligatorios de siempre (por eso no pasa por
+        # campos_faltantes), pero sí exige un motivo y sigue el mismo camino de "Enviar a revisión"
+        # (status "finalizado", mismo aviso al Jefe, misma aprobación en dos etapas) para que quede
+        # igual de visible y trazable que un ensayo terminado normal -- ver assay_estado_display,
+        # que es lo único que distingue este caso en pantalla.
+        no_realizado_key = f"_nr_intento_{assay_id}"
+        if st.session_state.get(no_realizado_key):
+            motivo_valor = st.text_area(
+                "Motivo por el que no se pudo realizar el ensayo", key=f"_nr_motivo_{assay_id}",
+                placeholder="Ej.: los especímenes no cumplían las dimensiones mínimas que exige la norma.")
+            colnr1, colnr2 = st.columns(2)
+            with colnr1:
+                if st.button("Cancelar", key=f"_nr_cancelar_{assay_id}", use_container_width=True):
+                    st.session_state.pop(no_realizado_key, None)
+                    st.rerun()
+            with colnr2:
+                if st.button("Confirmar: no se pudo realizar", key=f"_nr_confirmar_{assay_id}", type="primary",
+                             use_container_width=True, icon=":material/block:", disabled=not motivo_valor.strip()):
+                    data["_no_realizado"] = True
+                    data["_motivo_no_realizado"] = motivo_valor.strip()
+                    try:
+                        with st.spinner("Guardando…"):
+                            ya_estaba_finalizado = assay["status"] == "finalizado"
+                            db.update_assay_data(assay["id"], data=data, observations=observations,
+                                                  laboratorist=laboratorist, status="finalizado")
+                            if pasa200_gran_sibling:
+                                db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
+                        assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado")
+                        st.session_state.pop(no_realizado_key, None)
+                        if muestra:
+                            actor_lab = f"{laboratorist} (Laboratorista)" if laboratorist else "Laboratorista"
+                            add_historial(assay, "Marcado como no realizado", actor_lab, icono="block", tono="danger")
+                            if not ya_estaba_finalizado:
+                                add_notification("jefe", f"El laboratorista marcó {ASSAY_LABELS[assay['tipo']]} de la Muestra "
+                                                          f"{muestra['numero']} de {codigo} como NO REALIZADO: {data['_motivo_no_realizado']}",
+                                                  codigo, perf_codigo, muestra_id)
+                                if compute_muestra_estado(muestra) == "finalizado":
+                                    add_notification("jefe", f"La Muestra {muestra['numero']} de {codigo} ya completó todos sus "
+                                                              f"ensayos — está lista para tu confirmación.", codigo, perf_codigo, muestra_id)
+                        navigate("muestra-detail")
+                    except Exception:
+                        st.error("No se pudo guardar (revisa tu conexión) — vuelve a intentarlo.")
+        else:
+            if st.button("No se pudo realizar este ensayo", key=f"_nr_abrir_{assay_id}", use_container_width=True,
+                         icon=":material/block:"):
+                st.session_state[no_realizado_key] = True
+                st.rerun()
 
     if es_supervisor and assay["tipo"] == "granulometria" and muestra:
         st.markdown("---")
@@ -11073,7 +11142,7 @@ def render_search():
                 if i:
                     st.markdown(f'<hr style="margin:8px 0;border-color:{BORDER};">', unsafe_allow_html=True)
                 existing = get_assay(m["id_unico"], tipo_interno)
-                status = existing["status"] if existing else "sin-iniciar"
+                status = assay_estado_display(existing) if existing else "sin-iniciar"
                 ensayo_id = f'{codigo}-{perf["codigo"]}-M{m["numero"]}'
                 cols = st.columns(col_ratios, vertical_alignment="center")
                 cols[0].markdown(f'<span class="cell-id">{html.escape(ensayo_id)}</span>', unsafe_allow_html=True)
