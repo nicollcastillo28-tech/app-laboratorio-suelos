@@ -6715,12 +6715,16 @@ EXCEL_LOTE_CONFIG = {
     "proctor": {"hoja": "Hoja1", "generar": generar_excel_proctor, "ext": "xlsm",
                 "mime": "application/vnd.ms-excel.sheet.macroEnabled.12",
                 "prefijo": "Proctor", "etiqueta": "Proctor", "bitacora": "Proctor"},
+    # "carga-puntual" se agrega más abajo (ver junto a generar_excel_carga_puntual) -- esa función se
+    # define más adelante en el archivo, así que no se puede nombrar todavía aquí arriba.
 }
 
 
 def _muestras_para_lote(muestras, tipo_lote):
     """(muestra, data) de las muestras de una perforación que tienen ese ensayo solicitado Y ya con datos
-    digitados — y que pasan el filtro de variante si el ensayo tiene una (ver EXCEL_LOTE_CONFIG['masa-unitaria'])."""
+    digitados — y que pasan el filtro de variante si el ensayo tiene una (ver EXCEL_LOTE_CONFIG['masa-unitaria']).
+    Una muestra marcada "no se pudo realizar" (ver render_no_realizado) nunca entra aquí -- no hay datos
+    de verdad que meterle a su hoja del paquete."""
     cfg = EXCEL_LOTE_CONFIG[tipo_lote]
     filtro = cfg.get("filtro")
     salida = []
@@ -6729,7 +6733,7 @@ def _muestras_para_lote(muestras, tipo_lote):
             continue
         assay = get_assay(m["id_unico"], tipo_lote)
         data = assay.get("data") if assay else None
-        if not data:
+        if not data or data.get("_no_realizado"):
             continue
         if filtro and not filtro(data):
             continue
@@ -9469,6 +9473,18 @@ def generar_excel_carga_puntual(codigo, perf_codigo, muestra, project, data, obs
         salida = _insertar_imagen_hoja(salida, "xl/drawings/drawing2.xml", imagen, foto["ext"], col=20, fila=17,
                                        ancho_emu=ancho_emu, alto_emu=alto_emu)
     return salida
+
+
+# Se registra acá (no junto a las demás entradas de EXCEL_LOTE_CONFIG, más arriba en el archivo)
+# porque generar_excel_carga_puntual recién se acaba de definir -- referenciarla antes de este punto
+# sería un NameError al cargar el módulo. Misma plantilla (una sola hoja "FORMATO" por muestra, sin
+# hojas relacionadas aparte) que el resto de ensayos ya loteables, así que no hay nada más que la
+# distinga de ellos para el empaquetado.
+EXCEL_LOTE_CONFIG["carga-puntual"] = {
+    "hoja": "FORMATO", "generar": generar_excel_carga_puntual, "ext": "xlsx",
+    "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "prefijo": "Carga_puntual", "etiqueta": "Carga puntual", "bitacora": "Carga puntual",
+}
 
 # Solidez de los agregados frente a sulfato de sodio o de magnesio (INV E-220, plantilla GDA-FLC-033). No tengo
 # bitácora de papel para este ensayo — el formulario se armó directo sobre la plantilla de descarga. La columna
