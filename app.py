@@ -6945,6 +6945,8 @@ def conmutador(skey, etiqueta, actual):
 
 
 def render_equipo(data, prefix, equipo_list=None):
+    if data.get("_no_realizado"):
+        return
     lista = equipo_list or EQUIPO_LIST
     with st.container(border=True):
         st.markdown(card_header_html("construction", "Equipos Utilizados"), unsafe_allow_html=True)
@@ -10536,9 +10538,10 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
         st.markdown(card_header_html("rule", "Norma Aplicada"), unsafe_allow_html=True)
         st.markdown(f'<div style="font-weight:600;">{html.escape(norma or "—")}</div>', unsafe_allow_html=True)
 
-    with st.container(border=True):
-        st.markdown(card_header_html("construction", "Equipos Utilizados"), unsafe_allow_html=True)
-        st.markdown(equipos_readonly_html(equipos), unsafe_allow_html=True)
+    if not data.get("_no_realizado"):
+        with st.container(border=True):
+            st.markdown(card_header_html("construction", "Equipos Utilizados"), unsafe_allow_html=True)
+            st.markdown(equipos_readonly_html(equipos), unsafe_allow_html=True)
 
 
 def render_assay_form():
@@ -10837,7 +10840,9 @@ def render_assay_form():
                 st.session_state[no_realizado_key] = True
                 st.rerun()
 
-    if es_supervisor and assay["tipo"] == "granulometria" and muestra:
+    # No se ofrece descarga de Excel para un ensayo marcado "no se pudo realizar" (ver
+    # motivo_no_realizado más arriba) -- no hay datos de verdad que exportar.
+    if not motivo_no_realizado and es_supervisor and assay["tipo"] == "granulometria" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_granulometria(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -10847,7 +10852,7 @@ def render_assay_form():
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
-    if es_supervisor and assay["tipo"] == "pasa200" and muestra:
+    if not motivo_no_realizado and es_supervisor and assay["tipo"] == "pasa200" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_pasa200(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -10857,7 +10862,7 @@ def render_assay_form():
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
-    if es_supervisor and assay["tipo"] == "humedad" and muestra:
+    if not motivo_no_realizado and es_supervisor and assay["tipo"] == "humedad" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_humedad(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -10867,7 +10872,7 @@ def render_assay_form():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
 
-    if es_supervisor and assay["tipo"] == "limites" and muestra:
+    if not motivo_no_realizado and es_supervisor and assay["tipo"] == "limites" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_limites(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -10877,7 +10882,7 @@ def render_assay_form():
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
-    if es_supervisor and assay["tipo"] == "masa-unitaria" and muestra and data.get("mu_metodo") != "Método B":
+    if not motivo_no_realizado and es_supervisor and assay["tipo"] == "masa-unitaria" and muestra and data.get("mu_metodo") != "Método B":
         # Parafinado y Método B usan plantillas de Excel distintas (GDA-FLC-004 y GDA-FLC-030) — cada una con su
         # propio botón, más abajo para Método B.
         st.markdown("---")
@@ -10889,7 +10894,7 @@ def render_assay_form():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
 
-    if es_supervisor and assay["tipo"] == "masa-unitaria" and muestra and data.get("mu_metodo") == "Método B":
+    if not motivo_no_realizado and es_supervisor and assay["tipo"] == "masa-unitaria" and muestra and data.get("mu_metodo") == "Método B":
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -10899,7 +10904,7 @@ def render_assay_form():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_masa_unitaria_b")
 
-    if assay["tipo"] == "compresion-inconfinada" and muestra:
+    if not motivo_no_realizado and assay["tipo"] == "compresion-inconfinada" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -10908,7 +10913,7 @@ def render_assay_form():
             file_name=f"Compresion_inconfinada_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True, key="dl_compresion_inconfinada")
 
-    if assay["tipo"] == "compresion-roca" and muestra:
+    if not motivo_no_realizado and assay["tipo"] == "compresion-roca" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -10918,7 +10923,7 @@ def render_assay_form():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_compresion_roca")
 
-    if assay["tipo"] == "carga-puntual" and muestra:
+    if not motivo_no_realizado and assay["tipo"] == "carga-puntual" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -10928,7 +10933,7 @@ def render_assay_form():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_carga_puntual")
 
-    if assay["tipo"] == "solidez-sulfatos" and muestra:
+    if not motivo_no_realizado and assay["tipo"] == "solidez-sulfatos" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -10938,7 +10943,7 @@ def render_assay_form():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_solidez_sulfatos")
 
-    if assay["tipo"] == "terrones-arcilla" and muestra:
+    if not motivo_no_realizado and assay["tipo"] == "terrones-arcilla" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -10948,7 +10953,7 @@ def render_assay_form():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_terrones_arcilla")
 
-    if assay["tipo"] == "consolidacion" and muestra:
+    if not motivo_no_realizado and assay["tipo"] == "consolidacion" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -10958,7 +10963,7 @@ def render_assay_form():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_consolidacion")
 
-    if assay["tipo"] == "limite-contraccion" and muestra:
+    if not motivo_no_realizado and assay["tipo"] == "limite-contraccion" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -10968,7 +10973,7 @@ def render_assay_form():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_limite_contraccion")
 
-    if assay["tipo"] == "materia-organica" and muestra:
+    if not motivo_no_realizado and assay["tipo"] == "materia-organica" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -10978,7 +10983,7 @@ def render_assay_form():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_materia_organica")
 
-    if assay["tipo"] == "proctor" and muestra:
+    if not motivo_no_realizado and assay["tipo"] == "proctor" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -10989,7 +10994,7 @@ def render_assay_form():
         st.caption("Trae el Proctor y su CBR de suelos compactados (3 moldes). El método (A/B/C), la preparación de "
                    "la muestra y el martillo/molde usado no se digitan en la app: se marcan en el Excel.")
 
-    if assay["tipo"] == "gravedad-especifica" and muestra:
+    if not motivo_no_realizado and assay["tipo"] == "gravedad-especifica" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         sel = data.get("gesp_sel", GESP_OPCIONES[0])
@@ -11015,7 +11020,7 @@ def render_assay_form():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
                 key="dl_gesp_grueso")
 
-    if assay["tipo"] == "corte-directo" and muestra:
+    if not motivo_no_realizado and assay["tipo"] == "corte-directo" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -11028,7 +11033,7 @@ def render_assay_form():
                    "deformación/carga de la máquina no se digitan en la app: el esfuerzo cortante, la cohesión "
                    "y el ángulo de fricción se completan en el Excel.")
 
-    if assay["tipo"] == "cbr" and muestra:
+    if not motivo_no_realizado and assay["tipo"] == "cbr" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_cbr(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
