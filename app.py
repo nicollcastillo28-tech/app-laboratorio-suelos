@@ -9086,14 +9086,31 @@ def _cp_diagrama_svg(sentido):
     return f'<svg width="100%" height="150" viewBox="0 0 250 170" fill="none" xmlns="http://www.w3.org/2000/svg">{forma}</svg>'
 
 
+def _cp_panel_geometria_html(sentido_actual, estado, mensaje):
+    """Tarjeta "Geometría" (encabezado, diagrama, nota y mensaje de validación) -- siempre visible,
+    no colapsada, porque a diferencia de los resultados numéricos (ver resultados_desplegable) esto
+    es una alerta accionable que hay que ver de una vez, no algo que se consulta aparte."""
+    desc = ("Diametral: se mide L. Verifica L ≥ 0.5·D." if sentido_actual == "DIAMETRAL" else
+            f"{CP_SENTIDO_LABEL[sentido_actual]}: se miden W1 y W2. Verifica 0.3 ≤ D/W ≤ 1.0.")
+    bg_msg, fg_msg = {"completo": (SUCCESS_LIGHT, SUCCESS), "alerta": (WARNING_LIGHT, WARNING),
+                       "incompleto": (BG, MUTED)}[estado]
+    return (f'<div style="background:#F7F7F1;border:1px solid {BORDER};border-radius:14px;padding:16px 18px;margin-bottom:14px;">'
+            + card_header_html("architecture", f"Geometría · {CP_SENTIDO_LABEL[sentido_actual].lower()}") +
+            f'{_cp_diagrama_svg(sentido_actual)}'
+            f'<div style="margin-top:10px;font-size:14px;color:{MUTED};">{desc}</div>'
+            f'<div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:{bg_msg};color:{fg_msg};'
+            f'font-size:14px;font-weight:500;">{html.escape(mensaje)}</div>'
+            f'<div style="margin-top:10px;font-size:12px;color:{MUTED};border-top:1px solid {BORDER};padding-top:8px;">'
+            f'En el Excel oficial este valor va a la casilla única <b>L / W1</b>.</div></div>')
+
+
 def _cp_panel_calculo_html(data, activo):
-    """Filas del ensayo activo (De², De, K, Is, Is50, Humedad) más el mensaje de validación de
-    geometría (ver _cp_estado_fila) y el Is50 promedio corrido -- para meter dentro de un
-    resultados_desplegable(), igual que en el diseño de referencia (el propio expander ya pone el
-    título "Resultados del ensayo N" y el candado de "calculado", por eso este HTML no repite
-    ninguno de los dos)."""
+    """Filas del ensayo activo (De², De, K, Is, Is50, Humedad) más el Is50 promedio corrido -- para
+    meter dentro de un resultados_desplegable(), igual que en el diseño de referencia (el propio
+    expander ya pone el título "Resultados del ensayo N" y el candado de "calculado", por eso este
+    HTML no lo repite). El mensaje de validación de geometría NO va acá -- va siempre visible en la
+    tarjeta de Geometría (ver _cp_panel_geometria_html), no escondido en un desplegable."""
     r = _cp_resultado_fila(data, activo)
-    estado, mensaje = _cp_estado_fila(data, activo)
     humedo, rec = to_float(data.get("cp_hum_humedo")), to_float(data.get("cp_hum_masa_rec"))
     seco = next((v for v in (to_float(data.get(f"cp_hum_seco_{x}")) for x in (16, 15, 14)) if v is not None), None)
     hum_pct = (humedo - seco) / (seco - rec) * 100 if None not in (humedo, seco, rec) and (seco - rec) != 0 else None
@@ -9122,8 +9139,6 @@ def _cp_panel_calculo_html(data, activo):
                 f'font-size:{val_size};padding:4px 12px;border-radius:8px;">{val}</span></div>')
 
     filas_html = "".join(_fila(lbl, uni, val, grande=(lbl == "Is50")) for lbl, uni, val in vals)
-    bg_msg, fg_msg = {"completo": (SUCCESS_LIGHT, SUCCESS), "alerta": (WARNING_LIGHT, WARNING),
-                       "incompleto": (BG, MUTED)}[estado]
     promedio_html = (
         f'<div style="border-top:2px solid #7FB591;margin-top:10px;padding-top:12px;display:flex;'
         f'justify-content:space-between;align-items:baseline;">'
@@ -9131,10 +9146,7 @@ def _cp_panel_calculo_html(data, activo):
         f'font-size:12px;">({n_con_dato} ensayo{"s" if n_con_dato != 1 else ""})</em></span>'
         f'<span class="font-mono" style="font-size:30px;font-weight:700;color:{PRIMARY_DARK};">'
         f'{fmt_num(avg, 3) if avg is not None else "—"}</span></div>')
-    return (f'{filas_html}'
-            f'<div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:{bg_msg};color:{fg_msg};'
-            f'font-size:14px;font-weight:500;">{html.escape(mensaje)}</div>'
-            f'{promedio_html}')
+    return f'{filas_html}{promedio_html}'
 
 
 def _cp_panel_resultados_html(data):
@@ -9282,12 +9294,8 @@ def render_carga_puntual_form(data, assay_id):
                                                                     key=f"cp_{activo}_masa_{assay_id}",
                                                                     label_visibility="collapsed", placeholder="0.00")
             with col_diag:
-                st.markdown(_cp_diagrama_svg(sentido_actual), unsafe_allow_html=True)
-                desc = ("Diametral: se mide L. Verifica L ≥ 0.5·D." if sentido_actual == "DIAMETRAL" else
-                        f"{CP_SENTIDO_LABEL[sentido_actual]}: se miden W1 y W2. Verifica 0.3 ≤ D/W ≤ 1.0.")
-                st.caption(desc)
-                st.markdown(f'<div style="font-size:12px;color:{MUTED};border-top:1px solid {BORDER};padding-top:6px;">'
-                            f'En el Excel oficial este valor va a la casilla única <b>L / W1</b>.</div>', unsafe_allow_html=True)
+                estado_activo, mensaje_activo = _cp_estado_fila(data, activo)
+                st.markdown(_cp_panel_geometria_html(sentido_actual, estado_activo, mensaje_activo), unsafe_allow_html=True)
 
             with resultados_desplegable(f"Resultados del ensayo {activo}"):
                 st.markdown(_cp_panel_calculo_html(data, activo), unsafe_allow_html=True)
