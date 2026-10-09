@@ -184,6 +184,20 @@ def create_perforacion(project_id: str, tipo: str, consecutivo: int, codigo: str
     return res.data[0]
 
 
+def restore_or_create_perforacion(project_id: str, tipo: str, consecutivo: int, codigo: str) -> dict:
+    """Crea la perforación, o la reactiva si ya existe archivada con ese mismo código: el índice único
+    (project_id, codigo) cuenta también las archivadas, así que borrar una perforación y volver a
+    importar/crear la misma fallaba con un error de llave duplicada sin agregar nada."""
+    client = get_client()
+    rows = client.table("perforaciones").select("*").eq("project_id", project_id).eq("codigo", codigo).execute().data or []
+    if rows:
+        row = rows[0]
+        if row.get("archived"):
+            row = client.table("perforaciones").update({"archived": False, "tipo": tipo}).eq("id", row["id"]).execute().data[0]
+        return row
+    return create_perforacion(project_id, tipo, consecutivo, codigo)
+
+
 def archive_perforacion(perforacion_id: str):
     client = get_client()
     client.table("perforaciones").update({"archived": True}).eq("id", perforacion_id).execute()
@@ -212,6 +226,20 @@ def get_muestra(muestra_id: str) -> dict | None:
 def create_muestra(perforacion_id: str, **fields) -> dict:
     res = get_client().table("muestras").insert({"perforacion_id": perforacion_id, **fields}).execute()
     return res.data[0]
+
+
+def upsert_muestra(perforacion_id: str, id_unico: str, **fields) -> dict:
+    """Crea la muestra, o la reactiva (con sus ensayos) si ya existe archivada con ese id_unico: los
+    índices únicos (id_unico y perforacion_id + numero) cuentan también las archivadas, así que volver a
+    agregar un número de muestra que se había borrado fallaba con una llave duplicada."""
+    client = get_client()
+    rows = client.table("muestras").select("*").eq("id_unico", id_unico).execute().data or []
+    if not rows:
+        return create_muestra(perforacion_id, id_unico=id_unico, **fields)
+    row = rows[0]
+    if row.get("archived"):
+        client.table("assays").update({"archived": False}).eq("muestra_id", row["id"]).execute()
+    return client.table("muestras").update({**fields, "perforacion_id": perforacion_id, "archived": False}).eq("id", row["id"]).execute().data[0]
 
 
 def update_muestra(muestra_id: str, **fields) -> dict:

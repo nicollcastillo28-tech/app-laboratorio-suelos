@@ -1244,6 +1244,7 @@ BITACORA_XLSX_ENSAYO_COL = {
 BITACORA_XLSX_NORMA_CELL = {"IDU": "AG10", "INVIAS": "AI10", "NTC": "AG12", "Otro": "AI12"}
 BITACORA_XLSX_TIPO_CELL = {"Sondeo": "H14", "Apique": "D14", "Fuente/Cantera": "AH14"}
 BITACORA_XLSX_MAX_ROWS = 14  # la plantilla trae 14 filas fijas (18 a 31)
+BITACORA_XLSX_LECTURA_MAX = 300  # tope de filas al IMPORTAR (el cliente puede insertar más de las 14 de fábrica)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -1410,6 +1411,15 @@ def _normalizar_numero_muestra(valor):
     return m.group(1).strip() if m else s
 
 
+def clave_numero_muestra(numero):
+    """Clave de orden "natural" para el número de una muestra: 1, 2, 3 ... 9, 10, 11, no 1, 10, 11, 2 ...
+    El número se guarda como texto (puede traer letras, ej. "5A"), y ordenado como texto el "10" quedaba
+    antes que el "2" -- así se veían las muestras en toda la app. Los tramos de dígitos se comparan como
+    números y el resto como texto."""
+    partes = re.split(r"(\d+)", str(numero).strip())
+    return [(0, int(p), "") if p.isdigit() else (1, 0, p.lower()) for p in partes if p != ""]
+
+
 def _fila_sin_ensayos(fila):
     """True si esta fila no trae ningún ensayo marcado — esas filas no se importan: sin ensayo
     asignado no hay nada que un laboratorista pueda digitar, así que solo estorbarían en la
@@ -1455,13 +1465,26 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
         # listar varias perforaciones distintas, una por fila (ej. apiques AP-1, AP-2, AP-3...),
         # no solo el uso "de fábrica" de una hoja = un sondeo con varias muestras de profundidad.
         filas_por_codigo, sin_codigo, sin_ensayo = {}, [], 0
-        for i in range(BITACORA_XLSX_MAX_ROWS):
+        ultimo_codigo = None
+        # La plantilla trae 14 filas (18-31) pero el cliente puede insertar más: se lee hasta el "*" del pie
+        # (columna B) o hasta BITACORA_XLSX_LECTURA_MAX filas si lo borró.
+        for i in range(BITACORA_XLSX_LECTURA_MAX):
             r = 18 + i
             numero = ws[f"B{r}"].value
-            if numero is None or str(numero).strip() == "":
-                continue
+            if str(numero).strip() == "*":
+                break
+            # El código de la perforación se arrastra hacia abajo: en la plantilla esa columna suele venir
+            # combinada (el valor solo está en la primera fila) o escrito una sola vez, y además la fila que lo
+            # trae puede no tener ensayos marcados -- antes se leía fila por fila, así que el código se perdía
+            # y la perforación terminaba con el nombre de la hoja en vez de su número.
             perf_r = ws[f"A{r}"].value
             perf_r = str(perf_r).strip() if perf_r and str(perf_r).strip() else None
+            if perf_r:
+                ultimo_codigo = perf_r
+            else:
+                perf_r = ultimo_codigo
+            if numero is None or str(numero).strip() == "":
+                continue
             fila = {
                 "Número": _normalizar_numero_muestra(numero),
                 "Prof. De": to_float(ws[f"D{r}"].value, 0.0),
@@ -1575,6 +1598,8 @@ def _load_data(solo_balanzas=False):
         if perf and proj:
             key = f"{proj['codigo_interno']}::{perf['codigo']}"
             muestras.setdefault(key, []).append(m)
+    for lista in muestras.values():
+        lista.sort(key=lambda m: clave_numero_muestra(m["numero"]))
     st.session_state.muestras = muestras
 
     assays = []
@@ -4191,7 +4216,7 @@ def render_project_detail():
             # exportar el perfil completo, o que el Jefe agregue una muestra nueva.
             if muestras:
                 with st.expander(f"Ver muestras ({len(muestras)})", icon=":material/visibility:"):
-                    _render_tabla_muestras_con_semaforo(sorted(muestras, key=lambda m: m["numero"]))
+                    _render_tabla_muestras_con_semaforo(sorted(muestras, key=lambda m: clave_numero_muestra(m["numero"])))
 
             bc1, bc2 = st.columns(2)
             with bc1:
@@ -4520,7 +4545,7 @@ def _sync_muestras_perforacion(perforacion_id, codigo, perf_codigo, nuevas_rows)
         if existente:
             db.update_muestra(existente["id"], **campos)
         else:
-            db.create_muestra(perforacion_id, id_unico=id_unico, **campos)
+            db.upsert_muestra(perforacion_id, id_unico, **campos)
     for id_unico, m in actuales_by_id_unico.items():
         if id_unico not in vistos:
             db.archive_muestra(m["id"])
@@ -4558,7 +4583,7 @@ def render_bitacora():
                 prefix = TIPO_PERFORACION_PREFIX[tipo]
                 consecutivo = len([p for p in perforaciones if p["tipo"] == tipo]) + 1
                 codigo_perf = f"{prefix}{consecutivo}"
-                db.create_perforacion(project["id"], tipo, consecutivo, codigo_perf)
+                db.restore_or_create_perforacion(project["id"], tipo, consecutivo, codigo_perf)
                 st.rerun()
 
         with st.expander("Importar desde Excel (plantilla GDA-FL-003 ya diligenciada)", icon=":material/upload_file:"):
@@ -4567,7 +4592,9 @@ def render_bitacora():
                        "traer un solo sondeo o varias hojas (una por sondeo/apique). Las perforaciones y "
                        "muestras que traiga se agregan a la tabla de abajo para que las revises antes de "
                        "guardar — con solo subir el archivo todavía no se guarda nada.")
-            archivos = st.file_uploader("Archivos .xlsx", type=["xlsx"], accept_multiple_files=True,
+            # También .xlsm: la plantilla oficial con macros (casillas) que llena el cliente es macro-habilitada y
+            # el selector la rechazaba antes de siquiera intentar leerla.
+            archivos = st.file_uploader("Archivos .xlsx / .xlsm", type=["xlsx", "xlsm"], accept_multiple_files=True,
                                           key=f"import_bitacora_{codigo}")
             if archivos and st.button("Importar de estos archivos", icon=":material/publish:",
                                         key=f"btn_import_bitacora_{codigo}"):
@@ -4581,7 +4608,7 @@ def render_bitacora():
                         perf = next((p for p in perforaciones if p["codigo"].strip().upper() == codigo_norm), None)
                         if not perf:
                             consecutivo = len([p for p in perforaciones if p["tipo"] == pp["tipo"]]) + 1
-                            perf = db.create_perforacion(project["id"], pp["tipo"], consecutivo, pp["codigo"])
+                            perf = db.restore_or_create_perforacion(project["id"], pp["tipo"], consecutivo, pp["codigo"])
                             perforaciones.append(perf)
                         key = f"{codigo}::{perf['codigo']}"
                         df_actual = _bitacora_draft_df(key, st.session_state.muestras.setdefault(key, []))
@@ -4590,7 +4617,12 @@ def render_bitacora():
                         if filas_nuevas:
                             df_actual = pd.concat([df_actual, pd.DataFrame(filas_nuevas)], ignore_index=True)
                             df_actual = df_actual[df_actual["Número"].astype(str).str.strip() != ""]  # quita la fila vacía de arranque
+                            orden = sorted(range(len(df_actual)), key=lambda i: clave_numero_muestra(df_actual["Número"].iloc[i]))
+                            df_actual = df_actual.iloc[orden].reset_index(drop=True)
                             st.session_state.bitacora_draft[key] = df_actual[BITACORA_BASE_COLS]
+                            # El editor guarda sus propias ediciones por posición de fila: si queda el estado viejo, se
+                            # le re-aplican a la tabla nueva (filas corridas, datos pisados). Se descarta al importar.
+                            st.session_state.pop(f"editor_{key}", None)
                             importadas += len(filas_nuevas)
                 if importadas:
                     st.success(f"Se importaron {importadas} muestra(s). Revísalas en la tabla de abajo antes de guardar la bitácora.")
@@ -6765,7 +6797,7 @@ def render_descarga_por_lote(codigo, perf_codigo, project, muestras):
             if st.session_state.get(f"lote_listo_{tipo}_{perf_codigo}"):
                 try:
                     archivos = [(f"M{m['numero']}", cfg["generar"](codigo, perf_codigo, m, project, data, ""))
-                                for m, data in sorted(pares, key=lambda par: str(par[0]["numero"]))]
+                                for m, data in sorted(pares, key=lambda par: clave_numero_muestra(par[0]["numero"]))]
                     excel_bytes = empaquetar_hojas(cfg["hoja"], archivos)
                 except Exception as e:
                     st.error(f"No se pudo armar el Excel por lote de {cfg['etiqueta']}: {e}")
