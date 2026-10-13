@@ -28,6 +28,16 @@ FUENTES = {
         "nota": "Arenas/gravas hasta ~15-20 %; arena suelta saturada 25-30 %, densa 12-16 %; arcilla dura ~20 %, blanda 30-50 %; "
                 "suelos finos naturales hasta 50-80 %; arcilla orgánica blanda 80-130 %; turbas y suelos muy orgánicos hasta ~500 %.",
         "estado": "secundaria"},
+    "agua_minima": {
+        "titulo": "Humedad mínima razonable: el agua higroscópica de un suelo SECADO AL AIRE ya es ≈0.3–6.3 % (más alta en suelos arcillosos); "
+                  "una arcilla natural no puede tener menos que eso",
+        "url": "https://publications.goettingen-research-online.de/ID-26373",
+        "nota": "Estudio de suelos europeos (agua de muestras secadas al aire 2.8–63.3 g/kg y relación lineal con el contenido de arcilla). "
+                "En arenas secas al aire la humedad es <0.1 % (apunte de enseñanza hallado en la búsqueda, no se pudo fijar la página exacta). "
+                "Además, bajo el límite de contracción (≈12–25 % en arcillas, ver 'limite_contraccion') el suelo ya está seco. "
+                "Los umbrales de la app (arcilla <6 % revisar, <2 % improbable; limo <5 % y <1.5 %; arena/grava <0.1 %; roca <0.01 %) "
+                "son la lectura práctica de esos rangos, no valores publicados tal cual.",
+        "estado": "secundaria"},
     "porosidad_roca": {
         "titulo": "Porosidad / absorción típica de roca intacta (granito 0.1-0.5 %, basalto 0.1-1 %, arenisca 5-25 %, caliza 5-20 %, lutita ~8 %)",
         "url": "https://lbas.lboro.ac.uk/chart/porosity-ratings-natural-stone-chart.html",
@@ -137,6 +147,15 @@ HUMEDAD_MAX = {
     "grava": (20.0, 35.0, "agua_suelos"),
     "organico": (500.0, 800.0, "agua_suelos"),
 }
+# Humedad natural MÍNIMA (%): (revisar si <, improbable si <). Un suelo natural no puede tener menos agua que la higroscópica de uno
+# secado al aire (fuente agua_minima); 0.01 % en una arcilla es casi seguro un error de pesada.
+HUMEDAD_MIN = {
+    "arcilla": (6.0, 2.0, "agua_minima"),
+    "limo": (5.0, 1.5, "agua_minima"),
+    "arena": (0.1, None, "agua_minima"),
+    "grava": (0.1, None, "agua_minima"),
+    "roca": (0.01, None, "agua_minima"),
+}
 # Gravedad específica Gs: (mín típico, máx típico) para "revisar"; fuera de (GS_ABSOLUTO) -> "alto".
 GS_TIPICO = {"arena": (2.55, 2.80), "grava": (2.55, 2.85), "limo": (2.55, 2.90), "arcilla": (2.55, 2.95),
              "organico": (1.2, 2.55), "roca": (2.2, 3.1)}
@@ -196,6 +215,21 @@ def alertas_humedad(w, material, ctx=None, etiqueta="Humedad"):
         return out
     if w < 0:
         return [_a("alto", f"{etiqueta} negativa ({_f(w, 2)} %): la masa seca es mayor que la húmeda. Revisa las pesadas y los recipientes.", "fisica")]
+    piso = HUMEDAD_MIN.get(material)
+    if piso:
+        rev_min, alto_min, fuente_min = piso
+        if alto_min is not None and w < alto_min:
+            out.append(_a("alto", f"{etiqueta} = {_f(w, 2)} % es demasiado baja para {_nombre(material)}: un suelo natural no baja de ≈{_f(alto_min, 0)} % "
+                                  "(eso es un suelo secado al horno). Revisa que la masa seca y la húmeda no sean casi iguales o que no se haya "
+                                  "digitado la misma pesada.", fuente_min))
+        elif w < rev_min:
+            out.append(_a("revisar", f"{etiqueta} = {_f(w, 2)} % es baja para {_nombre(material)} (lo habitual es más de ≈{_f(rev_min, 1)} %).", fuente_min))
+    elif w == 0:
+        out.append(_a("revisar", f"{etiqueta} = 0 %: no hay pérdida de masa al secar. Revisa las pesadas.", "agua_minima"))
+    lc = (ctx or {}).get("lc")
+    if material in FINOS and _num(lc) and 0 < w < lc and not out:
+        out.append(_a("revisar", f"{etiqueta} ({_f(w, 1)} %) está por debajo del límite de contracción ({_f(lc, 1)} %): el suelo estaría más seco que su estado de máxima contracción.",
+                      "limite_contraccion"))
     tope = HUMEDAD_MAX.get(material)
     if tope:
         rev, alto, fuente = tope
@@ -263,6 +297,9 @@ def _limites(v, material, ctx):
     if ll > 16 and _num(ip) and ip > 0.9 * (ll - 8) + 1:
         out.append(_a("alto", f"LL = {_f(ll, 0)}, IP = {_f(ip, 0)} cae por encima de la línea U de Casagrande (IP máx. ≈ {_f(0.9 * (ll - 8), 0)}): "
                               "ningún suelo natural suele ubicarse ahí. Verifica el método del LL y el rodillo del LP.", "linea_u"))
+    if material == "arcilla" and _num(ip) and 0 <= ip < 4:
+        out.append(_a("revisar", f"La muestra se trata como arcilla pero IP = {_f(ip, 0)} (<4): esa plasticidad es la de un limo o un suelo no plástico "
+                                 "(en la carta de Casagrande una arcilla tiene IP > 7). Revisa el límite plástico o la descripción visual.", "linea_u"))
     if material == "roca":
         out.append(_a("revisar", "Esta muestra se trata como roca, pero tiene Límites de Atterberg (aplican a suelos finos). Verifica el tipo de muestra.", "linea_u"))
     return out
@@ -353,6 +390,12 @@ def _cbr(v, material, ctx):
     if _num(exp) and exp < 0:
         out.append(_a("revisar", f"Expansión negativa ({_f(exp, 2)} %): el dial final es menor que el inicial (contracción). Verifica las lecturas del extensómetro.", "fisica"))
     out += alertas_humedad(v.get("w_antes"), material, ctx, "Humedad antes de inmersión")
+    wa, wd = v.get("w_antes"), v.get("w_despues")
+    if _num(wd):
+        out += alertas_humedad(wd, material, ctx, "Humedad después de inmersión")
+        if _num(wa) and wd < wa - 0.5:
+            out.append(_a("revisar", f"La humedad después de la inmersión ({_f(wd, 1)} %) es menor que la de antes ({_f(wa, 1)} %): la muestra sumergida "
+                                     "debería ganar agua, no perderla. Revisa las masas de humedad.", "fisica"))
     return out
 
 

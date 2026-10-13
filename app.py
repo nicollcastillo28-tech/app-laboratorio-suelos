@@ -10785,6 +10785,11 @@ def _contexto_alertas(muestra, uscs):
         ll, lp, ip = _calcular_limites_atterberg(lim["data"])
         if ll is not None and not calcular_limites(lim["data"])["nl"]:
             ctx.update(ll=ll, lp=lp, ip=ip)
+    lc = get_assay(mid, "limite-contraccion")
+    if lc and lc.get("data"):
+        v = _fila_num(resultados_limite_contraccion(lc["data"]), "Límite de contracción, LC (%)")
+        if v is not None:
+            ctx["lc"] = v
     cp = get_assay(mid, "carga-puntual")
     if cp and cp.get("data"):
         vals = [r[4] for r in (_cp_resultado_fila(cp["data"], i) for i in range(1, CP_MAX_ENSAYOS + 1)) if r]
@@ -10828,7 +10833,9 @@ def _valores_alertas(tipo, data, muestra):
         _cm, exp = _expansion_pct(data.get("cbr_exp_lectura_inicial"), data.get("cbr_exp_lectura_final"), data.get("cbr_altura"))
         # El CBR de diseño es el de la muestra sumergida; si todavía no se digita, se evalúa el de antes de inmersión.
         valor = cbr["despues"]["cbr"] if cbr["despues"]["cbr"] is not None else cbr["antes"]["cbr"]
-        return [{"cbr": valor, "exp_pct": exp, "w_antes": calcular_humedad_pct(hum["data"]) if hum and hum.get("data") else None}]
+        w_despues = _humedad_pct_masas(data.get("cbr_desp_masa_humedo"), data.get("cbr_desp_masa_seco"), data.get("cbr_desp_masa_recipiente"))
+        return [{"cbr": valor, "exp_pct": exp, "w_antes": calcular_humedad_pct(hum["data"]) if hum and hum.get("data") else None,
+                 "w_despues": w_despues}]
     if tipo == "corte-directo":
         r, e = calcular_corte_directo(data), calcular_corte_esfuerzo(data)
         return [{"phi": e["phi"], "c_kpa": e["cohesion"] * 98.0665 if e["cohesion"] is not None else None, "modo": data.get("corte_tipo"),
