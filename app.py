@@ -5597,6 +5597,13 @@ def generar_excel_bitacora_orden(project, filas, tipos_usados):
 # GENERAR EXCEL DE GRANULOMETRÍA Y HUMEDAD (plantillas reales del laboratorio,
 # ambas comparten el mismo diseño de encabezado — filas 1 a 13)
 # ════════════════════════════════════════════════════════════════════
+def _fecha_recepcion_perf(codigo, perf_codigo, project):
+    """Fecha de recepción para el encabezado de los informes (ISO): la fecha de ingreso propia de la perforación
+    si se registró (cada sondeo/apique puede llegar un día distinto); si no, la fecha de recepción del proyecto."""
+    perf = next((p for p in st.session_state.perforaciones.get(codigo, []) if p["codigo"] == perf_codigo), None)
+    return (perf or {}).get("fecha_ingreso") or (project or {}).get("fecha_recepcion", "")
+
+
 def _fecha_ddmmaaaa(iso_str):
     """Convierte una fecha guardada en formato ISO ("AAAA-MM-DD") a DD/MM/AAAA para que
     se vea igual que en la app al pasarla al Excel."""
@@ -5612,7 +5619,7 @@ def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observ
     ws["D8"] = project.get("correo_cliente", "") if project else ""  # Correo electrónico
     ws["D9"] = project.get("localizacion", "") if project else ""  # Localización
     ws["D10"] = project.get("muestra_tomada_por", "") if project else ""  # Muestra tomada por
-    ws["K6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""  # Fecha de recepción
+    ws["K6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""  # Fecha de recepción
     ws["K7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""  # Fecha de ejecución
     ws["K8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""  # Fecha de emisión
     ws["L9"] = project.get("numero", "") if project else ""  # Código interno — número (K9 ya trae "GDA")
@@ -6507,7 +6514,7 @@ def _llenar_encabezado_masa_unitaria(ws, codigo, perf_codigo, muestra, project, 
     ws["C8"] = project.get("correo_cliente", "") if project else ""  # Correo electrónico
     ws["C9"] = project.get("localizacion", "") if project else ""  # Localización
     ws["C10"] = project.get("muestra_tomada_por", "") if project else ""  # Muestra tomada por
-    ws["I6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""  # Fecha de recepción
+    ws["I6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""  # Fecha de recepción
     ws["I7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""  # Fecha de ejecución
     ws["I8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""  # Fecha de emisión
     ws["J9"] = project.get("numero", "") if project else ""  # Código interno — número (I9 ya trae "GDA")
@@ -6557,7 +6564,7 @@ def _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observacio
     ws["C8"] = project.get("correo_cliente", "") if project else ""  # Correo electrónico
     ws["C9"] = project.get("localizacion", "") if project else ""  # Localización
     ws["C10"] = project.get("muestra_tomada_por", "") if project else ""  # Muestra tomada por
-    ws["J6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""  # Fecha de recepción
+    ws["J6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""  # Fecha de recepción
     ws["J7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""  # Fecha de ejecución
     ws["J8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""  # Fecha de emisión
     ws["K9"] = project.get("numero", "") if project else ""  # Código interno — número (J9 ya trae "GDA")
@@ -6659,7 +6666,7 @@ def _generar_excel_gravedad(template, hoja, celdas, codigo, perf_codigo, muestra
     ws["C9"] = project.get("localizacion", "") if project else ""
     if project and project.get("muestra_tomada_por"):
         ws["C10"] = project["muestra_tomada_por"]
-    ws["I6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    ws["I6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
     ws["I7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
     ws["I8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
     ws["J9"] = project.get("numero", "") if project else ""
@@ -6698,7 +6705,7 @@ def generar_excel_limite_contraccion(codigo, perf_codigo, muestra, project, data
     ws["D9"] = project.get("localizacion", "") if project else ""
     if project and project.get("muestra_tomada_por"):
         ws["D10"] = project["muestra_tomada_por"]
-    ws["L6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    ws["L6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
     ws["L7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
     ws["L8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
     ws["M9"] = project.get("numero", "") if project else ""
@@ -6737,7 +6744,7 @@ def generar_excel_materia_organica(codigo, perf_codigo, muestra, project, data, 
     ws["D9"] = project.get("localizacion", "") if project else ""
     if project and project.get("muestra_tomada_por"):
         ws["D10"] = project["muestra_tomada_por"]
-    ws["K6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    ws["K6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
     ws["K7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
     ws["K8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
     ws["L9"] = project.get("numero", "") if project else ""
@@ -6773,7 +6780,7 @@ def generar_excel_proctor(codigo, perf_codigo, muestra, project, data, observaci
     ws["D9"] = project.get("localizacion", "") if project else ""
     if project and project.get("muestra_tomada_por"):
         ws["D10"] = project["muestra_tomada_por"]
-    ws["K6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    ws["K6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
     ws["K7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
     ws["K8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
     ws["L9"] = project.get("numero", "") if project else ""
@@ -6991,7 +6998,7 @@ def generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, obs
     ws["C9"] = project.get("localizacion", "") if project else ""
     if project and project.get("muestra_tomada_por"):
         ws["C10"] = project["muestra_tomada_por"]
-    ws["J6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    ws["J6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
     ws["J7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
     ws["J8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
     ws["K9"] = project.get("numero", "") if project else ""
@@ -7566,7 +7573,7 @@ def generar_excel_masa_unitaria_b(codigo, perf_codigo, muestra, project, data, o
     c["C9"] = project.get("localizacion", "") if project else ""
     if project and project.get("muestra_tomada_por"):
         c["C10"] = project["muestra_tomada_por"]
-    c["I6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    c["I6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
     c["I7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
     c["I8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
     c["J9"] = project.get("numero", "") if project else ""
@@ -8272,7 +8279,7 @@ def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, obs
     ws["D9"] = project.get("localizacion", "") if project else ""
     if project and project.get("muestra_tomada_por"):
         ws["D10"] = project["muestra_tomada_por"]
-    ws["M6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    ws["M6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
     ws["M7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
     ws["M8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
     ws["N9"] = project.get("numero", "") if project else ""
@@ -8815,7 +8822,7 @@ def generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, 
     c["C9"] = project.get("localizacion", "") if project else ""
     if project and project.get("muestra_tomada_por"):
         c["C10"] = project["muestra_tomada_por"]
-    c["K6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    c["K6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
     c["K7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
     c["K8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
     c["L9"] = project.get("numero", "") if project else ""
@@ -9070,7 +9077,7 @@ def generar_excel_compresion_roca(codigo, perf_codigo, muestra, project, data, o
     c["C9"] = project.get("localizacion", "") if project else ""
     if project and project.get("muestra_tomada_por"):
         c["C10"] = project["muestra_tomada_por"]
-    c["K6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    c["K6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
     c["K7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
     c["K8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
     c["L9"] = project.get("numero", "") if project else ""
@@ -9571,7 +9578,7 @@ def generar_excel_carga_puntual(codigo, perf_codigo, muestra, project, data, obs
     c["D9"] = project.get("localizacion", "") if project else ""
     if project and project.get("muestra_tomada_por"):
         c["D10"] = project["muestra_tomada_por"]
-    c["L6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    c["L6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
     c["L7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
     c["L8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
     c["M9"] = project.get("numero", "") if project else ""
@@ -9802,7 +9809,7 @@ def generar_excel_solidez_sulfatos(codigo, perf_codigo, muestra, project, data, 
     c["C9"] = project.get("localizacion", "") if project else ""
     if project and project.get("muestra_tomada_por"):
         c["C10"] = project["muestra_tomada_por"]
-    c["I6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    c["I6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
     c["I7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
     c["I8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
     c["J9"] = project.get("numero", "") if project else ""
@@ -9967,7 +9974,7 @@ def generar_excel_terrones_arcilla(codigo, perf_codigo, muestra, project, data, 
     c["C9"] = project.get("localizacion", "") if project else ""
     if project and project.get("muestra_tomada_por"):
         c["C10"] = project["muestra_tomada_por"]
-    c["H6"] = _fecha_ddmmaaaa(project.get("fecha_recepcion", "")) if project else ""
+    c["H6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
     c["H7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
     c["H8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
     c["I9"] = project.get("numero", "") if project else ""
