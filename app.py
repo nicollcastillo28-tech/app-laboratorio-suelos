@@ -24,6 +24,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from openpyxl import load_workbook
 
+import alertas_resultados as alertas_res
 import db
 
 
@@ -5385,6 +5386,12 @@ def render_muestra_detail():
                         st.markdown(f'<div class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(existing["lastModified"])} · {existing["laboratorist"]}</div>', unsafe_allow_html=True)
                     elif existing:
                         st.markdown(f'<div class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(existing["lastModified"])}</div>', unsafe_allow_html=True)
+                    if existing and tipo_interno:
+                        alertas_card, _mat = alertas_de_ensayo(tipo_interno, existing.get("data") or {}, muestra)
+                        if alertas_card:
+                            clase = "badge-danger" if any(a["nivel"] == "alto" for a in alertas_card) else "badge-warning"
+                            st.markdown(f'<span class="badge {clase}" title="Abre el ensayo para ver el detalle">'
+                                        f'{icon("fact_check", size=13)} Consultar resultados ({len(alertas_card)})</span>', unsafe_allow_html=True)
 
                 if not tipo_interno:
                     cols[2].markdown('<span class="badge badge-muted">Sin formulario aún</span>', unsafe_allow_html=True)
@@ -10722,6 +10729,211 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             st.markdown(equipos_readonly_html(equipos), unsafe_allow_html=True)
 
 
+# ════════════════════════════════════════════════════════════════════
+# ALERTAS DE RESULTADOS "FUERA DE LO ESPERADO" (reglas y fuentes en alertas_resultados.py): según el material de la
+# muestra (roca, arcilla, arena...) cada ensayo se compara con los rangos típicos de la literatura y, si el resultado se
+# sale del rango o es raro, se le pide a quien lo ve que consulte/revise los resultados. Solo avisan -- nunca bloquean
+# el guardado ni el envío a revisión.
+# ════════════════════════════════════════════════════════════════════
+_DESC_A_MATERIAL = {"GRAVA": "grava", "ARENA": "arena", "LIMO": "limo", "ARCILLA": "arcilla", "ORGÁNICO": "organico"}
+_USCS_A_MATERIAL = {"G": "grava", "S": "arena", "M": "limo", "C": "arcilla", "O": "organico"}
+
+
+def _material_de_muestra(muestra):
+    """(material, símbolo USCS o None) de la muestra, para saber con qué rangos comparar sus resultados. Prioridad: ensayos
+    de roca asignados -> descripción visual 'ORGÁNICO' -> clasificación USCS calculada (la que sale de los datos) ->
+    tipo de grano de la descripción visual -> tipo de muestra NQ (núcleo de roca). None si no hay de dónde deducirlo."""
+    mid = muestra["id_unico"]
+    if get_assay(mid, "compresion-roca") or get_assay(mid, "carga-puntual"):
+        return "roca", None
+    desc = (muestra.get("desc_tipo_suelo") or "").upper()
+    if desc == "ORGÁNICO":
+        return "organico", None
+    uscs = None
+    gran, lim = get_assay(mid, "granulometria"), get_assay(mid, "limites")
+    if gran and gran.get("data"):
+        try:
+            uscs = clasificar_uscs(gran["data"], lim["data"] if lim else None).get("simbolo")
+        except Exception:
+            uscs = None
+    if uscs:
+        return _USCS_A_MATERIAL.get(uscs[0]), uscs
+    if desc in _DESC_A_MATERIAL:
+        return _DESC_A_MATERIAL[desc], None
+    if muestra.get("tipo_muestra") == "NQ":
+        return "roca", None
+    return None, None
+
+
+def _fila_num(filas, etiqueta):
+    """Valor numérico de la fila `etiqueta` de una lista [(etiqueta, valor)] de resultados (None si no está)."""
+    for e, v in filas or []:
+        if e == etiqueta:
+            return to_float(v)
+    return None
+
+
+def _contexto_alertas(muestra, uscs):
+    """Datos de OTROS ensayos de la misma muestra que las reglas cruzan con el ensayo actual."""
+    mid = muestra["id_unico"]
+    ctx = {"uscs": uscs}
+    desc = (muestra.get("desc_tipo_suelo") or "").upper()
+    if desc in _DESC_A_MATERIAL:
+        ctx["desc_tipo"] = _DESC_A_MATERIAL[desc]
+    lim = get_assay(mid, "limites")
+    if lim and lim.get("data"):
+        ll, lp, ip = _calcular_limites_atterberg(lim["data"])
+        if ll is not None and not calcular_limites(lim["data"])["nl"]:
+            ctx.update(ll=ll, lp=lp, ip=ip)
+    cp = get_assay(mid, "carga-puntual")
+    if cp and cp.get("data"):
+        vals = [r[4] for r in (_cp_resultado_fila(cp["data"], i) for i in range(1, CP_MAX_ENSAYOS + 1)) if r]
+        if vals:
+            ctx["is50"] = sum(vals) / len(vals)
+    roca = get_assay(mid, "compresion-roca")
+    if roca and roca.get("data"):
+        qu = _fila_num(resultados_compresion_roca(roca["data"]), "Resistencia a la compresión qu (kPa)")
+        if qu is not None:
+            ctx["ucs_mpa"] = qu / 1000
+    return ctx
+
+
+def _valores_alertas(tipo, data, muestra):
+    """Lista de dicts con las magnitudes calculadas del ensayo (lo que consumen las reglas de alertas_resultados.evaluar).
+    Reutiliza los mismos cálculos que ya muestran los resultados de cada formulario."""
+    mid = muestra["id_unico"]
+    if tipo == "humedad":
+        return [{"w": calcular_humedad_pct(data)}]
+    if tipo == "limites":
+        r = calcular_limites(data)
+        if r["nl"]:
+            return []
+        ll, lp, ip = _calcular_limites_atterberg(data)
+        return [{"ll": ll, "lp": lp, "ip": ip}]
+    if tipo in ("granulometria", "pasa200"):
+        curva = _calcular_curva_granulometrica(data)
+        if curva is None:
+            return []
+        masa_ini = to_float(data.get("p200_seco_mas_recipiente_antes")) - to_float(data.get("p200_masa_recipiente_antes"))
+        retenido = sum(to_float(data.get(k)) or 0.0 for k, *_ in SIEVES) / masa_ini * 100
+        d10, d60 = _interpolar_diametro(curva["puntos"], 10), _interpolar_diametro(curva["puntos"], 60)
+        return [{"finos": curva["pct_finos"], "grava": curva["pct_grava"], "arena": curva["pct_arena"],
+                 "cu": d60 / d10 if d10 and d60 else None, "retenido_pct": retenido}]
+    if tipo == "proctor":
+        r = calcular_proctor(data)
+        return [{"opt_w": r["opt_w"], "max_d": r["max_d"], "puntos": r["puntos"]}]
+    if tipo == "cbr":
+        hum = get_assay(mid, "humedad")
+        cbr = {suf: _cbr_valores(data.get(f"cbr_pen_{suf}_5"), data.get(f"cbr_pen_{suf}_9"), True) for suf in ("antes", "despues")}
+        _cm, exp = _expansion_pct(data.get("cbr_exp_lectura_inicial"), data.get("cbr_exp_lectura_final"), data.get("cbr_altura"))
+        # El CBR de diseño es el de la muestra sumergida; si todavía no se digita, se evalúa el de antes de inmersión.
+        valor = cbr["despues"]["cbr"] if cbr["despues"]["cbr"] is not None else cbr["antes"]["cbr"]
+        return [{"cbr": valor, "exp_pct": exp, "w_antes": calcular_humedad_pct(hum["data"]) if hum and hum.get("data") else None}]
+    if tipo == "corte-directo":
+        r, e = calcular_corte_directo(data), calcular_corte_esfuerzo(data)
+        return [{"phi": e["phi"], "c_kpa": e["cohesion"] * 98.0665 if e["cohesion"] is not None else None, "modo": data.get("corte_tipo"),
+                 "gs": r["gs"], "probetas": r["probetas"]}]
+    if tipo == "masa-unitaria":
+        if data.get("mu_metodo", "Parafinado") == "Parafinado":
+            filas, w, _fuente = resultados_masa_unitaria_parafinado(data, mid)
+        else:
+            filas, w = resultados_masa_unitaria_b(data), _mub_humedad(data)
+        return [{"dens_h": _fila_num(filas, "Densidad húmeda (g/cm³)"), "dens_s": _fila_num(filas, "Densidad seca (g/cm³)"), "w": w}]
+    if tipo == "gravedad-especifica":
+        sel = data.get("gesp_sel", GESP_OPCIONES[0])
+        out = []
+        if sel in (GESP_OPCIONES[0], GESP_OPCIONES[2]):
+            f = resultados_gravedad(data, "fino")
+            out.append({"gs": _fila_num(f, "Densidad relativa aparente"), "absorcion": _fila_num(f, "Absorción (%)")})
+        if sel in (GESP_OPCIONES[1], GESP_OPCIONES[2]):
+            f = resultados_gravedad(data, "grueso")
+            out.append({"gs": _fila_num(f, "Densidad relativa aparente"), "absorcion": _fila_num(f, "Absorción (%)")})
+        if sel == GESP_OPCIONES[3]:
+            out.append({"gs": _fila_num(resultados_gravedad(data, "arcilla"), "Gravedad específica")})
+        return out
+    if tipo == "materia-organica":
+        return [{"mo": _fila_num(resultados_materia_organica(data), "Contenido de materia orgánica (%)")}]
+    if tipo == "limite-contraccion":
+        f = resultados_limite_contraccion(data)
+        return [{"lc": _fila_num(f, "Límite de contracción, LC (%)"), "r": _fila_num(f, "Relación de contracción, R")}]
+    if tipo == "consolidacion":
+        f = resultados_consolidacion(data)
+        return [{"gs": _fila_num(f, "Gravedad específica, Gs"), "w_i": _fila_num(f, "Humedad inicial de la muestra (%)"),
+                 "dens_h": _fila_num(f, "Peso unitario total inicial (g/cm³)"), "e0": _fila_num(f, "Relación de vacíos inicial, e₀"),
+                 "sr": _fila_num(f, "Saturación inicial (%)")}]
+    if tipo == "compresion-inconfinada":
+        f = resultados_compresion_inconfinada(data)
+        return [{"qu_kpa": _fila_num(f, "Resistencia a la compresión inconfinada qu (kPa)"), "w": _fila_num(f, "Humedad (%)"),
+                 "dens_h": _fila_num(f, "Densidad húmeda ρh (g/cm³)")}]
+    if tipo == "compresion-roca":
+        f = resultados_compresion_roca(data)
+        qu = _fila_num(f, "Resistencia a la compresión qu (kPa)")
+        return [{"ucs_mpa": qu / 1000 if qu is not None else None, "w": _fila_num(f, "Humedad (%)"),
+                 "dens_h": _fila_num(f, "Densidad húmeda ρh (g/cm³)")}]
+    if tipo == "carga-puntual":
+        f = resultados_carga_puntual(data)
+        return [{"is50_prom": _fila_num(f, "Is50 promedio (MPa)"), "w": _fila_num(f, "Humedad (%)")}]
+    if tipo == "solidez-sulfatos":
+        f = resultados_solidez_sulfatos(data)
+        return [{"perdida_grueso": _fila_num(f, "% de pérdida ponderada — grueso"), "perdida_fino": _fila_num(f, "% de pérdida ponderada — fino")}]
+    if tipo == "terrones-arcilla":
+        return [{"ponderado": _fila_num(resultados_terrones_arcilla(data), "% de pérdida ponderada")}]
+    return []
+
+
+def alertas_de_ensayo(tipo, data, muestra):
+    """(alertas, info_material) de un ensayo ya digitado. Nunca lanza: si algo falla devuelve ([], None) para no
+    tumbar la pantalla del ensayo por un aviso."""
+    if not muestra or not data or data.get("_no_realizado"):
+        return [], None
+    try:
+        if tipo == "pasa200":
+            gran = get_assay(muestra["id_unico"], "granulometria")
+            data = gran["data"] if gran and gran.get("data") else data
+        material, uscs = _material_de_muestra(muestra)
+        ctx = _contexto_alertas(muestra, uscs)
+        alertas = []
+        for valores in _valores_alertas(tipo, data, muestra):
+            alertas += alertas_res.evaluar(tipo, valores, material, ctx)
+        vistos, unicas = set(), []
+        for a in sorted(alertas, key=lambda a: 0 if a["nivel"] == "alto" else 1):
+            if a["mensaje"] not in vistos:
+                vistos.add(a["mensaje"])
+                unicas.append(a)
+        return unicas, {"material": material, "uscs": uscs}
+    except Exception:
+        return [], None
+
+
+def render_alertas_resultados(alertas, info_material):
+    """Tarjeta 'Consultar resultados' con las alertas del ensayo, el material con que se compararon y las fuentes."""
+    if not alertas:
+        return
+    hay_alto = any(a["nivel"] == "alto" for a in alertas)
+    fondo, tono, ico = (DANGER_LIGHT, DANGER, "report") if hay_alto else (WARNING_LIGHT, WARNING, "fact_check")
+    material = (info_material or {}).get("material")
+    uscs = (info_material or {}).get("uscs")
+    comparado = (f"Se compararon con los rangos típicos de <b>{html.escape(alertas_res.MATERIAL_NOMBRE.get(material, ''))}</b>"
+                 + (f" (USCS {html.escape(uscs)})" if uscs else "") + ".") if material else \
+                "No se pudo deducir el material de la muestra: solo se aplicaron los rangos generales."
+    items = "".join(
+        f'<li style="margin-bottom:6px;"><b>{html.escape(alertas_res.NIVEL_ETIQUETA[a["nivel"]])}:</b> {html.escape(a["mensaje"])}</li>'
+        for a in alertas)
+    st.markdown(
+        f'<div class="alert-resultados" style="background:{fondo};color:{tono};border-radius:12px;padding:14px 18px;margin-bottom:12px;">'
+        f'<div style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:16px;">{icon(ico, size=20)} '
+        f'Consultar resultados — {len(alertas)} alerta(s)</div>'
+        f'<div style="font-size:13px;margin:4px 0 10px;">Estos resultados se salen de lo esperado. No significa que estén mal: '
+        f'revisa los datos digitados y, si hace falta, repite el ensayo. {comparado}</div>'
+        f'<ul style="margin:0;padding-left:20px;font-size:14px;">{items}</ul></div>', unsafe_allow_html=True)
+    with st.expander("Ver rangos aplicados y fuentes", icon=":material/menu_book:"):
+        st.caption("Rangos típicos de la literatura geotécnica, no criterios de aceptación: una alerta pide una segunda mirada, no invalida el ensayo.")
+        for _id, f in alertas_res.fuentes_de(alertas):
+            enlace = f"[{f['titulo']}]({f['url']})" if f["url"] else f["titulo"]
+            etiqueta = {"verificada": "fuente leída", "secundaria": "fuente secundaria — contrastar con la norma/libro", "criterio": "criterio físico"}[f["estado"]]
+            st.markdown(f"- {enlace} _({etiqueta})_" + (f"  \n  {f['nota']}" if f.get("nota") else ""))
+
+
 def render_assay_form():
     assay_id = st.session_state.selected_assay_id
     assay = next((a for a in st.session_state.assays if a["id"] == assay_id), None)
@@ -10746,6 +10958,9 @@ def render_assay_form():
                 f'<span class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(assay["lastModified"])}'
                 + (f' · {html.escape(assay["laboratorist"])}' if assay.get("laboratorist") else "") + '</span></div>',
                 unsafe_allow_html=True)
+    # Se llena más abajo, cuando ya están calculados los resultados (en edición, DESPUÉS de dibujar el formulario, para
+    # que la alerta siga lo que se acaba de digitar); el contenedor lo deja arriba, donde se ve de una vez.
+    slot_alertas = st.container()
 
     with st.container(border=True):
         st.markdown(card_header_html("info", "Información General"), unsafe_allow_html=True)
@@ -10822,6 +11037,8 @@ def render_assay_form():
         else:
             st.info("Este proyecto ya fue ejecutado. Estás en modo consulta — no puedes editar estos datos.")
         render_read_only_summary(assay["tipo"], data, assay.get("laboratorist") or "—", muestra_id=muestra_id)
+        with slot_alertas:
+            render_alertas_resultados(*alertas_de_ensayo(assay["tipo"], data, muestra))
         with st.container(border=True):
             st.markdown(card_header_html("notes", "Observaciones"), unsafe_allow_html=True)
             st.markdown(f'<div>{html.escape(assay.get("observations") or "—")}</div>', unsafe_allow_html=True)
@@ -10886,6 +11103,9 @@ def render_assay_form():
             render_solidez_sulfatos_form(data, assay_id)
         elif assay["tipo"] == "terrones-arcilla":
             render_terrones_arcilla_form(data, assay_id)
+
+        with slot_alertas:
+            render_alertas_resultados(*alertas_de_ensayo(assay["tipo"], data, muestra))
 
         with st.expander("Observaciones (opcional)", icon=":material/notes:", expanded=bool(assay.get("observations"))):
             observations = st.text_area("Observaciones", value=assay.get("observations", ""), label_visibility="collapsed",
