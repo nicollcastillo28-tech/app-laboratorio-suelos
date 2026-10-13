@@ -5220,7 +5220,7 @@ def render_muestra_detail():
             descripcion_calc = descripcion_visual_calculada(muestra)
             if descripcion_calc:
                 st.markdown(f'<div style="display:flex;gap:10px;align-items:flex-start;background:{SECONDARY_CONTAINER};'
-                             f'border-radius:10px;padding:12px 14px;margin-top:8px;">'
+                             f'border-radius:10px;padding:12px 14px;margin-top:8px;margin-bottom:16px;">'
                              f'<span style="margin-top:2px;">{icon("science", size=18)}</span>'
                              f'<div><div class="cell-muted" style="margin-bottom:2px;">Según la clasificación USCS calculada</div>'
                              f'<div style="font-weight:600;line-height:1.5;color:{PRIMARY};">{html.escape(descripcion_calc)}</div></div></div>',
