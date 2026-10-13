@@ -1398,6 +1398,15 @@ def _celda_marcada(valor):
     return valor is not None and str(valor).strip() != ""
 
 
+def _codigo_de_celda_tipo(valor):
+    """Código de perforación escrito en la celda de SONDEO/APIQUE/FUENTE (ej. "S-2"), o None si lo que hay
+    es solo una marca (X, un visto, "si"...)."""
+    s = str(valor).strip() if valor is not None else ""
+    if len(s) <= 1 or s.lower() in ("si", "sí", "ok", "true", "check", "marcado"):
+        return None
+    return s
+
+
 def _normalizar_numero_muestra(valor):
     """El cliente a veces ya escribe 'M1'/'m-1' en la columna NRO. DE MUESTRA — como la app le
     antepone su propia 'M-' en toda pantalla donde se muestra el número de una muestra (ej. la
@@ -1458,13 +1467,20 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
                 "numero_anio": ws["AG8"].value or "",
             }
 
-        tipo_hoja = next((t for t, celda in BITACORA_XLSX_TIPO_CELL.items() if _celda_marcada(ws[celda].value)), None)
+        celda_tipo = next((celda for t, celda in BITACORA_XLSX_TIPO_CELL.items() if _celda_marcada(ws[celda].value)), None)
+        tipo_hoja = next((t for t, celda in BITACORA_XLSX_TIPO_CELL.items() if celda == celda_tipo), None)
+        # Muchos clientes no ponen una "X" en la casilla de SONDEO/APIQUE/FUENTE sino que escriben ahí el código
+        # de la perforación (ej. "S-2" junto a la palabra SONDEO): esa celda es entonces el código de todas las
+        # filas que no traigan uno propio en la columna N.° DE PERFORACIÓN (antes se ignoraba y la perforación
+        # quedaba con el nombre de la hoja).
+        codigo_encabezado = _codigo_de_celda_tipo(ws[celda_tipo].value) if celda_tipo else None
 
         # Se agrupa por el código que trae CADA fila en la columna N.° DE PERFORACIÓN, no por un
         # solo código "dominante" para toda la hoja — algunos clientes usan una sola hoja para
         # listar varias perforaciones distintas, una por fila (ej. apiques AP-1, AP-2, AP-3...),
         # no solo el uso "de fábrica" de una hoja = un sondeo con varias muestras de profundidad.
         filas_por_codigo, sin_codigo, sin_ensayo = {}, [], 0
+        sin_ensayo_nums = []
         ultimo_codigo = None
         # La plantilla trae 14 filas (18-31) pero el cliente puede insertar más: se lee hasta el "*" del pie
         # (columna B) o hasta BITACORA_XLSX_LECTURA_MAX filas si lo borró.
@@ -1482,7 +1498,7 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
             if perf_r:
                 ultimo_codigo = perf_r
             else:
-                perf_r = ultimo_codigo
+                perf_r = ultimo_codigo or codigo_encabezado
             if numero is None or str(numero).strip() == "":
                 continue
             fila = {
@@ -1498,12 +1514,13 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
             # Una muestra sin ningún ensayo marcado no se importa — no hay nada que digitar.
             if _fila_sin_ensayos(fila):
                 sin_ensayo += 1
+                sin_ensayo_nums.append(fila["Número"])
                 continue
             (filas_por_codigo.setdefault(perf_r, []) if perf_r else sin_codigo).append(fila)
 
         if sin_ensayo:
             advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': {sin_ensayo} muestra(s) sin ningún "
-                                 "ensayo marcado no se importaron.")
+                                 f"ensayo marcado no se importaron (muestras {', '.join(sin_ensayo_nums)}).")
 
         if not filas_por_codigo and not sin_codigo:
             if not sin_ensayo:
