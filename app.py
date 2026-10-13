@@ -1503,8 +1503,8 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
                 continue
             fila = {
                 "Número": _normalizar_numero_muestra(numero),
-                "Prof. De": to_float(ws[f"D{r}"].value, 0.0),
-                "Prof. A": to_float(ws[f"E{r}"].value, 0.0),
+                "Prof. De": round(to_float(ws[f"D{r}"].value, 0.0), 3),
+                "Prof. A": round(to_float(ws[f"E{r}"].value, 0.0), 3),
                 "Tipo de muestra": (str(ws[f"C{r}"].value).strip() if _celda_marcada(ws[f"C{r}"].value)
                                     else TIPO_MUESTRA_OPTIONS[0]),
             }
@@ -1874,6 +1874,15 @@ def fmt_num(v, decimals=3):
         return None
     s = f"{v:.{decimals}f}".rstrip("0").rstrip(".")
     return s if s not in ("", "-") else "0"
+
+
+def fmt_prof(v):
+    """Profundidad de una muestra para mostrar: sin los ceros/decimales de ruido de punto flotante que dejan
+    las sumas del Excel (2.7500000000000004 -> 2.75), y sin ceros de más (0.9, no 0.900)."""
+    try:
+        return fmt_num(round(float(v or 0), 3), 3)
+    except (TypeError, ValueError):
+        return str(v)
 
 
 def calcular_humedad_pct(data):
@@ -2875,6 +2884,9 @@ def render_bottomnav():
 # ════════════════════════════════════════════════════════════════════
 # INICIO
 # ════════════════════════════════════════════════════════════════════
+HOME_PENDIENTES_LIMITE = 6  # filas de "Ensayos pendientes" visibles en el Inicio del laboratorista antes de "Ver todos"
+
+
 def _ensayos_pendientes_dt():
     """Ensayos ya finalizados por el laboratorista, confirmados por el Jefe y esperando el
     visto bueno del Director Técnico (aprobación por ensayo individual). Devuelve tuplas
@@ -3082,7 +3094,11 @@ def render_home():
                 headers = st.columns(col_ratios)
                 for col, label in zip(headers, ["ID ensayo", "Proyecto", "Tipo de ensayo", "Última actualización", "Estado", "Acción"]):
                     col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
-                for i, a in enumerate(pendientes):
+                # Solo los más recientes: con muchos proyectos la lista se hacía interminable y obligaba a bajar
+                # y bajar para llegar al resto de la pantalla. "Ver todos" la despliega completa.
+                ver_todos = st.session_state.get("home_pendientes_todos", False)
+                visibles = pendientes if ver_todos else pendientes[:HOME_PENDIENTES_LIMITE]
+                for i, a in enumerate(visibles):
                     if i:
                         st.markdown(f'<hr style="margin:8px 0;border-color:{BORDER};">', unsafe_allow_html=True)
                     proyecto = get_project(a["codigo_interno"])
@@ -3112,6 +3128,15 @@ def render_home():
                             st.session_state.selected_muestra_id = a["muestra_id"]
                             st.session_state.selected_assay_type = a["tipo"]
                             navigate("assay-form")
+                pie1, pie2 = st.columns([3, 1], vertical_alignment="center")
+                pie1.markdown(f'<div class="activity-footer">Mostrando {len(visibles)} de {len(pendientes)} ensayo(s)</div>',
+                              unsafe_allow_html=True)
+                if len(pendientes) > HOME_PENDIENTES_LIMITE:
+                    with pie2:
+                        if st.button("Ver menos" if ver_todos else f"Ver todos ({len(pendientes)})",
+                                     key="home_pendientes_toggle", use_container_width=True):
+                            st.session_state["home_pendientes_todos"] = not ver_todos
+                            st.rerun()
 
 
 def _render_project_list(codes, empty_msg, allow_delete, mark_read_only=False, allow_unarchive=False):
@@ -3948,7 +3973,7 @@ def render_new_project():
                     filas_perf_preview.append({
                         "perf_codigo": perf["codigo"], "numero": numero_m,
                         "tipo_muestra": row.get("Tipo de muestra") or TIPO_MUESTRA_OPTIONS[0],
-                        "profundidad_de": row.get("Prof. De") or 0.0, "profundidad_hasta": row.get("Prof. A") or 0.0,
+                        "profundidad_de": round(row.get("Prof. De") or 0.0, 3), "profundidad_hasta": round(row.get("Prof. A") or 0.0, 3),
                         "ensayos": {e: bool(row.get(e, False)) for e in BITACORA_ENSAYOS},
                         "observaciones": row.get("Observaciones") or "",
                     })
@@ -4004,7 +4029,7 @@ def render_new_project():
                     id_unico = f"{codigo_interno}-{perf['codigo']}-M{numero_m}"
                     nuevas.append({
                         "numero": numero_m, "id_unico": id_unico,
-                        "profundidad_de": row.get("Prof. De") or 0.0, "profundidad_hasta": row.get("Prof. A") or 0.0,
+                        "profundidad_de": round(row.get("Prof. De") or 0.0, 3), "profundidad_hasta": round(row.get("Prof. A") or 0.0, 3),
                         "tipo_muestra": row.get("Tipo de muestra") or TIPO_MUESTRA_OPTIONS[0],
                         "ensayos": {e: bool(row.get(e, False)) for e in BITACORA_ENSAYOS},
                         "observaciones": row.get("Observaciones") or "",
@@ -4241,7 +4266,8 @@ def render_project_detail():
             # exportar el perfil completo, o que el Jefe agregue una muestra nueva.
             if muestras:
                 with st.expander(f"Ver muestras ({len(muestras)})", icon=":material/visibility:"):
-                    _render_tabla_muestras_con_semaforo(sorted(muestras, key=lambda m: clave_numero_muestra(m["numero"])))
+                    _render_tabla_muestras_con_semaforo(sorted(muestras, key=lambda m: clave_numero_muestra(m["numero"])),
+                                                        codigo, perf["codigo"])
 
             bc1, bc2 = st.columns(2)
             with bc1:
@@ -4409,7 +4435,7 @@ def _perforacion_ensayos_progress(codigo, perf_codigo):
     return completados, total_ensayos
 
 
-def _render_tabla_muestras_con_semaforo(muestras):
+def _render_tabla_muestras_con_semaforo(muestras, codigo, perf_codigo):
     """Tabla de muestras con chips de color por ensayo (semáforo: rojo sin iniciar/amarillo en
     proceso/verde finalizado, ver STATUS_BADGE) y un botón "Abrir" que va directo al detalle de
     esa muestra — usada tanto en "Orden de Laboratorio" (Perforación) como en el desplegable
@@ -4428,7 +4454,7 @@ def _render_tabla_muestras_con_semaforo(muestras):
         cols = st.columns(col_ratios, vertical_alignment="center")
         cols[0].markdown(f'<span class="cell-id">M-{html.escape(str(m["numero"]))}</span>', unsafe_allow_html=True)
         cols[1].markdown(f'<span class="cell-muted">{html.escape(m["tipo_muestra"])}</span>', unsafe_allow_html=True)
-        cols[2].markdown(f'<span class="cell-muted">{m["profundidad_de"]}–{m["profundidad_hasta"]} m</span>', unsafe_allow_html=True)
+        cols[2].markdown(f'<span class="cell-muted">{fmt_prof(m["profundidad_de"])}–{fmt_prof(m["profundidad_hasta"])} m</span>', unsafe_allow_html=True)
         ensayos_sol = unificar_ensayos([e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS])
         chip_parts = []
         for e in ensayos_sol:
@@ -4442,6 +4468,10 @@ def _render_tabla_muestras_con_semaforo(muestras):
         cols[3].markdown(chips, unsafe_allow_html=True)
         with cols[4]:
             if st.button("Abrir", key=f"open_muestra_{m['id_unico']}", use_container_width=True):
+                # También proyecto y perforación: desde el desplegable de Detalle de Proyecto la perforación
+                # seleccionada era otra (o ninguna) y el detalle de muestra no encontraba la muestra -> volvía al Inicio.
+                st.session_state.selected_codigo = codigo
+                st.session_state.selected_perforacion = perf_codigo
                 st.session_state.selected_muestra_id = m["id_unico"]
                 navigate("muestra-detail")
 
@@ -4512,7 +4542,7 @@ def render_perforacion_detail():
         st.info("Esta perforación todavía no tiene muestras. Usa la Bitácora para agregarlas.")
     else:
         with st.container(border=True):
-            _render_tabla_muestras_con_semaforo(muestras)
+            _render_tabla_muestras_con_semaforo(muestras, codigo, perf_codigo)
         if st.session_state.role in ("jefe", "ingeniero"):
             render_descarga_por_lote(codigo, perf_codigo, project, muestras)
 
@@ -4714,7 +4744,7 @@ def render_bitacora():
                 filas_perf.append({
                     "perf_codigo": perf["codigo"], "numero": numero_m,
                     "tipo_muestra": row.get("Tipo de muestra") or TIPO_MUESTRA_OPTIONS[0],
-                    "profundidad_de": row.get("Prof. De") or 0.0, "profundidad_hasta": row.get("Prof. A") or 0.0,
+                    "profundidad_de": round(row.get("Prof. De") or 0.0, 3), "profundidad_hasta": round(row.get("Prof. A") or 0.0, 3),
                     "ensayos": {e: bool(row.get(e, False)) for e in BITACORA_ENSAYOS},
                     "observaciones": row.get("Observaciones") or "",
                 })
@@ -4748,7 +4778,7 @@ def render_bitacora():
                     id_unico = f"{codigo}-{perf['codigo']}-M{numero}"
                     nuevas.append({
                         "numero": numero, "id_unico": id_unico,
-                        "profundidad_de": row.get("Prof. De") or 0.0, "profundidad_hasta": row.get("Prof. A") or 0.0,
+                        "profundidad_de": round(row.get("Prof. De") or 0.0, 3), "profundidad_hasta": round(row.get("Prof. A") or 0.0, 3),
                         "tipo_muestra": row.get("Tipo de muestra") or TIPO_MUESTRA_OPTIONS[0],
                         "ensayos": {e: bool(row.get(e, False)) for e in BITACORA_ENSAYOS},
                         "observaciones": row.get("Observaciones") or "",
@@ -5002,7 +5032,7 @@ def render_muestra_detail():
         c1.markdown(f'<div class="cell-muted">Identificador</div><div style="font-weight:600;">{html.escape(muestra["id_unico"])}</div>',
                     unsafe_allow_html=True)
         c2.markdown(f'<div class="cell-muted">Profundidad</div><div style="font-weight:600;">'
-                    f'{muestra["profundidad_de"]}–{muestra["profundidad_hasta"]} m</div>', unsafe_allow_html=True)
+                    f'{fmt_prof(muestra["profundidad_de"])}–{fmt_prof(muestra["profundidad_hasta"])} m</div>', unsafe_allow_html=True)
         c3.markdown(f'<div class="cell-muted">Perforación</div><div style="font-weight:600;">{html.escape(perf_codigo)}</div>',
                     unsafe_allow_html=True)
 
