@@ -365,6 +365,17 @@ st.markdown(f"""
     .timeline-titulo {{ font-weight: 700; font-size: 14px; color: {TEXT}; }}
     .timeline-actor {{ font-size: 13px; color: {PRIMARY}; margin-top: 1px; }}
     .timeline-fecha {{ font-size: 12px; color: {MUTED}; margin-top: 4px; }}
+    .timeline-nota {{ font-size: 12px; color: {MUTED}; margin-top: 6px; font-style: italic; }}
+    .timeline-cambios {{ margin-top: 8px; }}
+    .timeline-cambios summary {{ cursor: pointer; font-size: 13px; font-weight: 700; color: {WARNING}; }}
+    .timeline-cambios table {{ width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12.5px; }}
+    .timeline-cambios th {{ text-align: left; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: {MUTED};
+                            padding: 4px 8px; border-bottom: 1px solid {BORDER}; }}
+    .timeline-cambios td {{ padding: 6px 8px; border-bottom: 1px solid {BORDER}; vertical-align: top; }}
+    .timeline-cambios .tl-clave {{ font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: {MUTED}; }}
+    .timeline-cambios .tl-antes {{ color: {DANGER}; text-decoration: line-through; }}
+    .timeline-cambios .tl-flecha {{ color: {MUTED}; text-align: center; }}
+    .timeline-cambios .tl-despues {{ color: {SUCCESS}; font-weight: 700; }}
 
     /* Tarjeta con acento a la izquierda, para encabezados de detalle (ej. Detalle de Muestra) */
     .st-key-muestra-header-card {{ border-left: 4px solid {PRIMARY} !important; }}
@@ -2625,6 +2636,188 @@ def add_historial(obj, titulo, subtitulo="", icono="history", tono="muted"):
     db.add_historial(obj["id"], titulo, subtitulo, icono, tono)
 
 
+# ── Detalle de QUÉ valores cambió un ensayo ───────────────────────────────────────────────────────
+# El historial de un ensayo guarda, además de los eventos del flujo (enviado, devuelto, confirmado...), el diff de valores
+# entre un envío a revisión y el siguiente: cada entrada de reenvío lleva "cambios" = [{campo, etiqueta, antes, despues}] y la
+# del último envío guarda "snapshot" (los datos tal como se enviaron) como base del próximo diff. Mientras el laboratorista
+# corrige un ensayo ya enviado, una entrada viva "Modificado después del envío" (en_curso) muestra el diff acumulado
+# (db.set_edicion_en_curso) -- así queda registrado aunque nunca vuelva a enviarlo.
+@st.cache_resource
+def _etiquetas_campos():
+    """{clave del dato: etiqueta del formulario}, leída del propio código fuente (las mismas parejas ("clave", "Etiqueta") con que se
+    dibujan los formularios) -- para mostrar "Masa del recipiente (g)" en el historial en vez de "hum_masa_recipiente"."""
+    with open(__file__, encoding="utf-8") as f:
+        src = f.read()
+    pares = {}
+    for patron in (r'_campo\w*\(\s*f?"([a-z][a-z0-9_]*)"\s*,\s*"([^"\n]{2,90})"',
+                   r'\(\s*f?"([a-z][a-z0-9_]*)"\s*,\s*"([^"\n]{2,90})"'):
+        for m in re.finditer(patron, src):
+            if re.fullmatch(r"[a-z0-9_]+", m.group(2)):   # la "etiqueta" es otra clave (ej. pares de claves), no un texto legible
+                continue
+            pares.setdefault(m.group(1), m.group(2))
+    return pares
+
+
+def _etiqueta_familia(clave):
+    """Etiquetas de los campos que se generan en bucle (tamices, penetraciones, lecturas, ensayos numerados) y que por eso no
+    aparecen como pareja ("clave", "Etiqueta") en el código. None si la clave no es de esas familias."""
+    tamiz = {k: label for k, label, *_ in SIEVES}
+    if clave in tamiz:
+        return f"Masa retenida en el tamiz {tamiz[clave]} (g)"
+    m = re.fullmatch(r"(p200_[a-z_]+?)_(antes|despues)", clave)
+    if m:
+        base = dict(PASA_200_FILAS).get(m.group(1))
+        if base:
+            return f"Pasa No. 200 — {base} ({'antes' if m.group(2) == 'antes' else 'después'} del lavado)"
+    m = re.fullmatch(r"cbr_pen_(antes|despues)_(\d+)", clave)
+    if m and 1 <= int(m.group(2)) <= len(CBR_PENETRACION_FILAS):
+        return f'CBR — fuerza a {CBR_PENETRACION_FILAS[int(m.group(2)) - 1][0]}" de penetración ({"antes" if m.group(1) == "antes" else "después"} de inmersión) (kN)'
+    m = re.fullmatch(r"(ci|roca)_(carga|d|h)_(\d+)", clave)
+    if m:
+        ens = "Compresión inconfinada" if m.group(1) == "ci" else "Compresión en roca"
+        que = {"carga": "carga (kN) de la lectura", "d": "diámetro (cm) de la medida", "h": "altura (cm) de la medida"}[m.group(2)]
+        return f"{ens} — {que} {m.group(3)}"
+    m = re.fullmatch(r"cp_(\d+)_(carga|d|l1|w2|sentido)", clave)
+    if m:
+        que = {"carga": "carga P (kN)", "d": "diámetro D (mm)", "l1": "L / W1 (mm)", "w2": "W2 (mm)", "sentido": "sentido de la falla"}[m.group(2)]
+        return f"Carga puntual — ensayo {m.group(1)}: {que}"
+    return None
+
+
+def etiqueta_campo(clave):
+    """Etiqueta legible de una clave de datos de ensayo. Si no se conoce exacta, prueba sin los números (lim_ll_humedo_2 ->
+    "… (2)") y con sufijos de la clave (corte_ge_masa_pic -> masa_pic); como último recurso, la clave "humanizada"."""
+    et = _etiquetas_campos()
+    especial = _etiqueta_familia(clave)
+    if especial:
+        return especial
+    if clave in et:
+        return et[clave]
+    partes = clave.split("_")
+    nums = [p for p in partes if p.isdigit()]
+    base = [p for p in partes if not p.isdigit()]
+    sufijo = f" ({', '.join(nums)})" if nums else ""
+    if "_".join(base) in et:
+        return et["_".join(base)] + sufijo
+    for i in range(1, len(base) - 1):
+        if "_".join(base[i:]) in et:
+            return et["_".join(base[i:])] + sufijo
+    return " ".join(base).capitalize() + sufijo
+
+
+def snapshot_ensayo(data, observaciones=""):
+    """Copia de los datos del ensayo para comparar después: sin claves internas (_...) y con las fotos reducidas a una huella
+    (el base64 de una foto pesa cientos de KB y no tiene sentido guardarlo otra vez en el historial)."""
+    import hashlib
+    datos = {}
+    for k, v in (data or {}).items():
+        if k.startswith("_"):
+            continue
+        if isinstance(v, dict) and "b64" in v:
+            v = "foto:" + hashlib.sha1(str(v["b64"]).encode()).hexdigest()[:10]
+        datos[k] = v
+    return {"datos": datos, "obs": observaciones or ""}
+
+
+def _valor_historial(v):
+    if v is None or v == "" or v == []:
+        return "—"
+    if isinstance(v, bool):
+        return "Sí" if v else "No"
+    if isinstance(v, str) and v.startswith("foto:"):
+        return "foto"
+    if isinstance(v, list):
+        if all(isinstance(x, (str, int, float)) for x in v):
+            return ", ".join(str(x) for x in v)
+        return f"{len(v)} filas"
+    return str(v)
+
+
+def _mismo_valor(a, b):
+    if a in (None, "", []) and b in (None, "", []):
+        return True
+    fa, fb = to_float(a), to_float(b)
+    if isinstance(a, str) and isinstance(b, str) and fa is not None and fb is not None:
+        return fa == fb      # "12.5" y "12.50" son el mismo dato
+    return a == b
+
+
+def diff_snapshots(antes, despues):
+    """[{campo, etiqueta, antes, despues}] con lo que cambió entre dos snapshots (datos y observaciones)."""
+    cambios = []
+    da, dd = (antes or {}).get("datos", {}), (despues or {}).get("datos", {})
+    cambiadas = {k for k in set(da) | set(dd) if not _mismo_valor(da.get(k), dd.get(k))}
+    for k in sorted(cambiadas):
+        # Claves de control de la propia app (…_lastsync) y las casillas de "masa seca a las 14/15/16 h" que el formulario copia solas
+        # de la masa seca digitada: la persona cambió UN valor, no varios -- se muestra solo ese.
+        if k.endswith("_lastsync"):
+            continue
+        hora = re.match(r"^(.*_)\d+h$", k)
+        if hora and any(c != k and c.startswith(hora.group(1)) and not re.match(r"^.*_\d+h$", c)
+                        and _mismo_valor(da.get(c), da.get(k)) and _mismo_valor(dd.get(c), dd.get(k)) for c in cambiadas):
+            continue
+        a, d = da.get(k), dd.get(k)
+        if isinstance(a, list) and isinstance(d, list) and a and d and not all(isinstance(x, (str, int, float)) for x in a + d):
+            detalle_a, detalle_d = f"{len(a)} filas", f"{len(d)} filas" + (" (modificadas)" if len(a) == len(d) else "")
+        else:
+            detalle_a, detalle_d = _valor_historial(a), _valor_historial(d)
+        cambios.append({"campo": k, "etiqueta": etiqueta_campo(k), "antes": detalle_a, "despues": detalle_d})
+    oa, od = (antes or {}).get("obs", ""), (despues or {}).get("obs", "")
+    if (oa or "").strip() != (od or "").strip():
+        cambios.append({"campo": "observaciones", "etiqueta": "Observaciones del ensayo", "antes": oa.strip() or "—", "despues": od.strip() or "—"})
+    return cambios
+
+
+def ultimo_snapshot(historial):
+    """El snapshot guardado en la entrada de envío más reciente (None si el ensayo nunca se envió con este registro)."""
+    for h in sorted(historial or [], key=lambda h: h.get("fecha", ""), reverse=True):
+        if h.get("snapshot"):
+            return h["snapshot"]
+    return None
+
+
+def registrar_envio_ensayo(assay, data, observaciones, titulo, actor, icono="science", tono="primary"):
+    """Anota en el historial el envío a revisión (o el 'no realizado') con el diff de valores contra el envío anterior.
+    Primer envío: entrada normal + snapshot. Reenvío: título 'Reenviado a revisión' y la lista de valores cambiados (o
+    'sin cambios'). Si el ensayo ya se había enviado pero no hay snapshot (envíos de antes de este registro), se avisa que no
+    hay versión anterior para comparar."""
+    historial = assay.get("historial") or []
+    previo = ultimo_snapshot(historial)
+    snap = snapshot_ensayo(data, observaciones)
+    cambios = nota = None
+    ya_enviado = any((h.get("titulo") or "").startswith(("Enviado a Revisión", "Reenviado")) for h in historial)
+    if previo is not None:
+        cambios = diff_snapshots(previo, snap)
+    elif ya_enviado:
+        nota = "No hay una versión anterior guardada para comparar (envío previo a este registro de cambios)."
+    if titulo == "Enviado a Revisión" and (previo is not None or ya_enviado):
+        titulo = "Reenviado a revisión"
+    db.add_historial(assay["id"], titulo, actor, icono, tono, cambios=cambios, snapshot=snap, nota=nota)
+
+
+def registrar_edicion_en_curso(assay, data, observaciones, actor):
+    """Autoguardado de un ensayo ya enviado: deja viva la entrada con los valores que se han cambiado desde el último envío.
+    No hace nada si el ensayo nunca se envió (es un borrador: ahí todo cambia y no hay nada que auditar todavía)."""
+    previo = ultimo_snapshot(assay.get("historial"))
+    if previo is None:
+        return
+    cambios = diff_snapshots(previo, snapshot_ensayo(data, observaciones))
+    try:
+        db.set_edicion_en_curso(assay["id"], cambios, actor)
+    except Exception:
+        pass   # el registro de cambios nunca debe impedir guardar el ensayo
+
+
+def _tabla_cambios_html(cambios):
+    filas = "".join(
+        f'<tr><td class="tl-campo">{html.escape(c["etiqueta"])}<div class="tl-clave">{html.escape(c["campo"])}</div></td>'
+        f'<td class="tl-antes">{html.escape(str(c["antes"]))}</td><td class="tl-flecha">→</td>'
+        f'<td class="tl-despues">{html.escape(str(c["despues"]))}</td></tr>'
+        for c in cambios)
+    return (f'<details class="timeline-cambios"><summary>{len(cambios)} valor(es) modificado(s) — ver detalle</summary>'
+            f'<table><thead><tr><th>Campo</th><th>Antes</th><th></th><th>Después</th></tr></thead><tbody>{filas}</tbody></table></details>')
+
+
 def historial_timeline_html(historial):
     items = sorted(historial, key=lambda h: h["fecha"], reverse=True)
     filas = []
@@ -2638,10 +2831,20 @@ def historial_timeline_html(historial):
         titulo = h.get("titulo") or h.get("texto") or "Cambio registrado"
         actor_html = (f'<div class="timeline-actor">{html.escape(h["subtitulo"])}</div>'
                       if h.get("subtitulo") else "")
+        cambios = h.get("cambios")
+        if cambios:
+            detalle_html = _tabla_cambios_html(cambios)
+        elif cambios is not None:
+            detalle_html = '<div class="timeline-nota">Sin cambios en los valores respecto al envío anterior.</div>'
+        elif h.get("nota"):
+            detalle_html = f'<div class="timeline-nota">{html.escape(h["nota"])}</div>'
+        else:
+            detalle_html = ""
+        en_curso = '<div class="timeline-nota">En curso: se actualiza mientras se corrige y se cierra al reenviar.</div>' if h.get("en_curso") else ""
         filas.append(
             f'<div class="timeline-item">{marcador}'
             f'<div class="timeline-content"><div class="timeline-titulo">{html.escape(titulo)}</div>'
-            f'{actor_html}<div class="timeline-fecha">{format_dt(h["fecha"])}</div></div></div>'
+            f'{actor_html}<div class="timeline-fecha">{format_dt(h["fecha"])}</div>{detalle_html}{en_curso}</div></div>'
         )
     return "".join(filas)
 
@@ -11057,6 +11260,9 @@ def render_assay_form():
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("Habilitar edición para el laboratorista", icon=":material/lock_open:", use_container_width=True):
                 db.update_assay_data(assay["id"], status="en-proceso")
+                add_historial(assay, "Edición habilitada para el laboratorista",
+                              f"{(st.session_state.profile or {}).get('full_name') or 'Jefe de Laboratorio'} (Jefe de Laboratorio)",
+                              icono="lock_open", tono="warning")
                 st.success("Ensayo habilitado — el laboratorista ya puede volver a digitar los datos.")
                 st.rerun()
     else:
@@ -11148,6 +11354,8 @@ def render_assay_form():
                 assay["observations"] = observations
                 assay["laboratorist"] = laboratorist
                 assay["status"] = nuevo_status
+                # Si el ensayo ya se había enviado a revisión, lo que se cambia desde entonces queda registrado en el historial.
+                registrar_edicion_en_curso(assay, data, observations, f"{laboratorist} (Laboratorista)" if laboratorist else "Laboratorista")
             except Exception:
                 st.error("No se pudo guardar el último cambio (revisa tu conexión). Sigue en pantalla — vuelve a intentarlo "
                           "digitando algo más o dale a \"Guardar borrador\".")
@@ -11182,7 +11390,7 @@ def render_assay_form():
                         db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
                     if muestra:
                         actor_lab = f"{laboratorist} (Laboratorista)" if laboratorist else "Laboratorista"
-                        add_historial(assay, "Enviado a Revisión", actor_lab, icono="science", tono="primary")
+                        registrar_envio_ensayo(assay, data, observations, "Enviado a Revisión", actor_lab)
                         # Cada ensayo que el laboratorista termina se avisa al Jefe (nunca al Director Técnico,
                         # que solo entra en juego cuando el Jefe confirma ese ensayo individual).
                         if not ya_estaba_finalizado:
@@ -11228,7 +11436,7 @@ def render_assay_form():
                         st.session_state.pop(no_realizado_key, None)
                         if muestra:
                             actor_lab = f"{laboratorist} (Laboratorista)" if laboratorist else "Laboratorista"
-                            add_historial(assay, "Marcado como no realizado", actor_lab, icono="block", tono="danger")
+                            registrar_envio_ensayo(assay, data, observations, "Marcado como no realizado", actor_lab, "block", "danger")
                             if not ya_estaba_finalizado:
                                 add_notification("jefe", f"El laboratorista marcó {ASSAY_LABELS[assay['tipo']]} de la Muestra "
                                                           f"{muestra['numero']} de {codigo} como NO REALIZADO: {data['_motivo_no_realizado']}",

@@ -315,14 +315,47 @@ def update_assay_shared_data(muestra_id: str, tipos: list[str], data: dict) -> N
     get_client().table("assays").update({"data": data}).eq("muestra_id", muestra_id).in_("tipo", tipos).execute()
 
 
-def add_historial(assay_id: str, titulo: str, subtitulo: str = "", icono: str = "history", tono: str = "neutral"):
+def add_historial(assay_id: str, titulo: str, subtitulo: str = "", icono: str = "history", tono: str = "neutral",
+                  cambios: list | None = None, snapshot: dict | None = None, nota: str | None = None):
+    """Agrega una entrada al historial del ensayo (jsonb, sin migración: las claves nuevas son opcionales).
+      cambios:  [{campo, etiqueta, antes, despues}] -- qué valores cambiaron respecto al envío anterior.
+      snapshot: copia de los datos en este envío; sirve de base para el próximo diff. Solo se conserva la del ÚLTIMO envío
+                (se borra de las entradas anteriores) para que el historial no crezca con una copia de los datos por envío.
+      nota:     texto corto (ej. "no hay versión anterior para comparar").
+    Un envío nuevo (snapshot) reemplaza la entrada "en curso" de ediciones posteriores al envío (ver set_edicion_en_curso):
+    ese mismo diff queda ahora dentro de la entrada del reenvío."""
     from datetime import datetime
     client = get_client()
     assay = client.table("assays").select("historial").eq("id", assay_id).execute().data[0]
-    entry = {"titulo": titulo, "subtitulo": subtitulo, "icono": icono, "tono": tono,
-              "fecha": datetime.now().isoformat()}
-    nuevo_historial = (assay["historial"] or []) + [entry]
-    client.table("assays").update({"historial": nuevo_historial}).eq("id", assay_id).execute()
+    previo = list(assay["historial"] or [])
+    if snapshot is not None:
+        previo = [{k: v for k, v in h.items() if k != "snapshot"} for h in previo if not h.get("en_curso")]
+    entry = {"titulo": titulo, "subtitulo": subtitulo, "icono": icono, "tono": tono, "fecha": datetime.now().isoformat()}
+    if cambios is not None:
+        entry["cambios"] = cambios
+    if snapshot is not None:
+        entry["snapshot"] = snapshot
+    if nota:
+        entry["nota"] = nota
+    client.table("assays").update({"historial": previo + [entry]}).eq("id", assay_id).execute()
+
+
+def set_edicion_en_curso(assay_id: str, cambios: list, actor: str = ""):
+    """Mantiene UNA entrada viva "Modificado después del envío" con el diff acumulado contra el último envío -- se actualiza
+    sola mientras el laboratorista corrige (autoguardado) y desaparece si deja los valores como estaban. Así queda
+    registrado lo que se cambió aunque nunca vuelva a darle "Enviar a revisión"."""
+    from datetime import datetime
+    client = get_client()
+    assay = client.table("assays").select("historial").eq("id", assay_id).execute().data[0]
+    historial = list(assay["historial"] or [])
+    actual = next((h for h in historial if h.get("en_curso")), None)
+    resto = [h for h in historial if not h.get("en_curso")]
+    if (not cambios and actual is None) or (actual is not None and actual.get("cambios") == cambios):
+        return   # nada que escribir: sin cambios y sin entrada viva, o el diff sigue igual
+    if cambios:
+        resto.append({"titulo": "Modificado después del envío", "subtitulo": actor, "icono": "edit_note", "tono": "warning",
+                      "fecha": datetime.now().isoformat(), "cambios": cambios, "en_curso": True})
+    client.table("assays").update({"historial": resto}).eq("id", assay_id).execute()
 
 
 def _require_role(profile: dict, *roles: str):
