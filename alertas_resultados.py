@@ -77,9 +77,7 @@ FUENTES = {
     "peso_unitario": {
         "titulo": "Pesos unitarios naturales: grava 19-22, arena 17-20, limo 17-20, arcilla 15-22 kN/m³; roca: granito 2.6-2.7, caliza 2.3-2.7, arenisca 2.2-2.8, lutita 2.4-2.8 g/cm³",
         "url": "https://ocw.ehu.eus/pluginfile.php/39477/mod_resource/content/7/OCW%20Lesson2%20Theory%20v2.pdf",
-        "nota": "Roca: https://finesoftware.eu/help/geo5/en/unit-weight-of-rocks-01/ y https://literature.wolkersdorfer.info/literature/Density%20of%20Rocks.pdf. "
-                "Los límites que aplica la app son el criterio del laboratorio: suelos ≤ 2.0 g/cm³ y roca 2.0–3.1 g/cm³ "
-                "(más estricto que la literatura en suelos, que llega a ≈2.2).",
+        "nota": "Roca: https://finesoftware.eu/help/geo5/en/unit-weight-of-rocks-01/ y https://literature.wolkersdorfer.info/literature/Density%20of%20Rocks.pdf",
         "estado": "secundaria"},
     "phi_suelos": {
         "titulo": "Ángulo de fricción de arenas y gravas: arenas 26-45° (suelta 28-30, media 30-36, densa 36-41), gravas 36-42°, SM 32-35°, SC 30-40°, cohesión efectiva ≈ 0",
@@ -144,10 +142,8 @@ GS_TIPICO = {"arena": (2.55, 2.80), "grava": (2.55, 2.85), "limo": (2.55, 2.90),
              "organico": (1.2, 2.55), "roca": (2.2, 3.1)}
 GS_ABSOLUTO = (1.0, 3.6)
 # Densidad natural (húmeda, g/cm³): (mín, máx) típicos para "revisar"; "alto" fuera de DENS_ABSOLUTA.
-#   Criterio del laboratorio (Jefe de Laboratorio): suelos (arena, grava, arcilla, limo) no superiores a 2.0 g/cm³ y roca entre 2.0 y
-#   3.1 g/cm³. Es más estricto que la literatura, que llega a ≈2.2 g/cm³ en gravas y suelos muy densos.
-DENS_HUMEDA_TIPICA = {"roca": (2.0, 3.1), "arcilla": (1.4, 2.0), "limo": (1.4, 2.0), "arena": (1.5, 2.0),
-                      "grava": (1.7, 2.0), "organico": (0.9, 1.9)}
+DENS_HUMEDA_TIPICA = {"roca": (2.0, 3.0), "arcilla": (1.4, 2.25), "limo": (1.5, 2.25), "arena": (1.5, 2.3),
+                      "grava": (1.7, 2.4), "organico": (0.9, 1.9)}
 DENS_HUMEDA_ABSOLUTA = {"roca": (1.2, 3.6)}
 DENS_SUELO_ABSOLUTA = (0.8, 2.9)
 # CBR (%) por clase USCS: (mín, máx). Fuente cbr_uscs.
