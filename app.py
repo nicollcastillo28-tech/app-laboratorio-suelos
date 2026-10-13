@@ -365,6 +365,22 @@ st.markdown(f"""
     .timeline-titulo {{ font-weight: 700; font-size: 14px; color: {TEXT}; }}
     .timeline-actor {{ font-size: 13px; color: {PRIMARY}; margin-top: 1px; }}
     .timeline-fecha {{ font-size: 12px; color: {MUTED}; margin-top: 4px; }}
+    /* Tarjeta de cada ensayo en el detalle de la muestra: título (+ chip) y fecha pegados, sin la separación de elementos sueltos. */
+    .ens-info {{ display: flex; flex-direction: column; gap: 4px; min-width: 0; }}
+    /* (selector repetido a propósito: tiene que ganarle en especificidad a la regla de arriba que protege toda columna con .badge
+       -- el chip "Consultar resultados" es un .badge y dejaba esta columna sin poder encogerse, empujando "Abrir" fuera de la tarjeta) */
+    [class*="st-key-ensayo-card-"][class*="st-key-ensayo-card-"][class*="st-key-ensayo-card-"] div[data-testid="stColumn"][data-testid="stColumn"][data-testid="stColumn"]:has(.ens-info) {{
+        min-width: 0 !important; flex-shrink: 1 !important; }}
+    div[data-testid="stColumn"]:has(.ens-info) [data-testid="stElementContainer"],
+    div[data-testid="stColumn"]:has(.ens-info) [data-testid="stMarkdown"],
+    div[data-testid="stColumn"]:has(.ens-info) [data-testid="stMarkdownContainer"] {{ width: 100% !important; min-width: 0 !important; }}
+    /* El círculo de estado no se encoge (en pantallas angostas se montaba sobre el título). */
+    [class*="st-key-ensayo-card-"][class*="st-key-ensayo-card-"][class*="st-key-ensayo-card-"] div[data-testid="stColumn"][data-testid="stColumn"][data-testid="stColumn"]:has(.status-circle) {{
+        min-width: fit-content !important; flex-shrink: 0 !important; }}
+    .ens-titulo-fila {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }}
+    .ens-titulo {{ font-weight: 700; font-size: 17px; line-height: 1.25; color: {TEXT}; }}
+    .ens-meta {{ font-size: 12px; color: {MUTED}; line-height: 1.35; }}
+    .ens-meta .material-symbols-outlined {{ vertical-align: -2px; }}
     .timeline-nota {{ font-size: 12px; color: {MUTED}; margin-top: 6px; font-style: italic; }}
     .timeline-cambios {{ margin-top: 8px; }}
     .timeline-cambios summary {{ cursor: pointer; font-size: 13px; font-weight: 700; color: {WARNING}; }}
@@ -5668,20 +5684,27 @@ def render_muestra_detail():
             slug = re.sub(r"[^a-z0-9]+", "-", ensayo_label.lower())
 
             with st.container(border=True, key=f"ensayo-card-{slug}"):
-                cols = st.columns([0.5, 2.0, 1.3, 0.9], vertical_alignment="center")
+                cols = st.columns([0.45, 3.2, 1.35, 0.95], vertical_alignment="center")
                 cols[0].markdown(status_circle_html(estado_mostrado), unsafe_allow_html=True)
                 with cols[1]:
-                    st.markdown(f"**{ensayo_label}**")
-                    if existing and existing.get("laboratorist"):
-                        st.markdown(f'<div class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(existing["lastModified"])} · {existing["laboratorist"]}</div>', unsafe_allow_html=True)
-                    elif existing:
-                        st.markdown(f'<div class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(existing["lastModified"])}</div>', unsafe_allow_html=True)
+                    # Título + chip de alerta + última actualización en UN solo bloque HTML: como elementos de Streamlit sueltos cada uno
+                    # llevaba su separación vertical, y cuando aparecía el chip "Consultar resultados" la tarjeta quedaba más alta y las
+                    # columnas (badge y "Abrir") se desalineaban respecto a las otras tarjetas. Así la altura es predecible y el chip
+                    # va junto al título (baja a otra línea solo si no cabe).
+                    chip = ""
                     if existing and tipo_interno:
                         alertas_card, _mat = alertas_de_ensayo(tipo_interno, existing.get("data") or {}, muestra)
                         if alertas_card:
                             clase = "badge-danger" if any(a["nivel"] == "alto" for a in alertas_card) else "badge-warning"
-                            st.markdown(f'<span class="badge {clase}" title="Abre el ensayo para ver el detalle">'
-                                        f'{icon("fact_check", size=13)} Consultar resultados ({len(alertas_card)})</span>', unsafe_allow_html=True)
+                            chip = (f'<span class="badge {clase}" title="Abre el ensayo para ver el detalle">'
+                                    f'{icon("fact_check", size=13)} Consultar resultados ({len(alertas_card)})</span>')
+                    meta = ""
+                    if existing:
+                        quien = f' · {html.escape(existing["laboratorist"])}' if existing.get("laboratorist") else ""
+                        meta = (f'<div class="ens-meta">{icon("history", size=13)} Última actualización: '
+                                f'{format_dt(existing["lastModified"])}{quien}</div>')
+                    st.markdown(f'<div class="ens-info"><div class="ens-titulo-fila"><span class="ens-titulo">{html.escape(ensayo_label)}</span>{chip}</div>'
+                                f'{meta}</div>', unsafe_allow_html=True)
 
                 if not tipo_interno:
                     cols[2].markdown('<span class="badge badge-muted">Sin formulario aún</span>', unsafe_allow_html=True)
