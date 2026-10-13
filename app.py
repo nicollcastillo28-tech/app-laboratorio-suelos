@@ -2754,11 +2754,19 @@ def render_login():
             st.markdown("#### Bienvenido de nuevo")
             st.caption("Ingresa tu código de usuario y tu clave para acceder al sistema.")
             codigo_recordado = cookie_manager.get("gdl_user") or ""
-            codigo = st.text_input("Código de usuario", value=codigo_recordado, placeholder="ej. jperez", autocomplete="off")
-            password = st.text_input("Clave de acceso", type="password", placeholder="••••••••")
-            recordar = st.checkbox("Recordar mi usuario", value=True)
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("INGRESAR", type="primary", use_container_width=True):
+            # Dentro de un st.form (un <form> real, con Enter para ingresar) y con los atributos autocomplete
+            # estándar: con autocomplete="off" en el usuario y el valor por defecto de Streamlit en la clave
+            # ("new-password", pensado para crear una clave nueva), el navegador no ofrecía guardar ni
+            # autocompletar el usuario y la contraseña.
+            with st.form("login-form", border=False):
+                codigo = st.text_input("Código de usuario", value=codigo_recordado, placeholder="ej. jperez",
+                                       autocomplete="username")
+                password = st.text_input("Clave de acceso", type="password", placeholder="••••••••",
+                                         autocomplete="current-password")
+                recordar = st.checkbox("Recordar mi usuario", value=True)
+                st.markdown("<br>", unsafe_allow_html=True)
+                ingresar = st.form_submit_button("INGRESAR", type="primary", use_container_width=True)
+            if ingresar:
                 if not codigo or not password:
                     st.error("Ingresa tu código de usuario y tu clave.")
                 else:
