@@ -5040,7 +5040,15 @@ def render_muestra_detail():
         st.markdown('<div class="section-title">Descripción visual de la muestra</div>', unsafe_allow_html=True)
         st.caption("Cómo se ve la muestra a ojo — para comparar con la clasificación USCS calculada de "
                    "los datos de laboratorio, justo abajo.")
-        if st.session_state.role == "laboratorista":
+        descripcion_val = descripcion_visual_para_excel(muestra)
+        desc_edit_key = f"desc_editando_{muestra_id}"
+        # Con la descripción ya guardada se ve como texto (igual que la ven el Jefe y el Director Técnico), no con
+        # los menús abiertos para editar -- se ve mucho más ordenado; "Editar descripción" vuelve a abrir los menús.
+        editando_desc = st.session_state.get(desc_edit_key, False)
+        if st.session_state.role == "laboratorista" and (editando_desc or not descripcion_val):
+            if descripcion_val and st.button("Cancelar edición", icon=":material/close:", key=f"desc_cancelar_{muestra_id}"):
+                st.session_state[desc_edit_key] = False
+                st.rerun()
             # Modo de digitación: con menús (estructurado, permite armar la comparación contra
             # la clasificación calculada — ver descripcion_visual_calculada) o texto libre, para
             # cuando la muestra no encaja bien en las opciones de los menús. No hace falta una
@@ -5069,7 +5077,8 @@ def render_muestra_detail():
                         desc_forma=None, desc_angulosidad=None, desc_cementacion=None, desc_consistencia=None,
                         desc_humedad=None,
                     )
-                    st.success("Descripción visual guardada.")
+                    st.session_state[desc_edit_key] = False
+                    st.toast("Descripción visual guardada.", icon=":material/check_circle:")
                     st.rerun()
             else:
                 # .upper() al comparar: datos de antes de este cambio (migración 0015) se
@@ -5136,10 +5145,10 @@ def render_muestra_detail():
                     for campo_db in ("desc_forma", "desc_angulosidad", "desc_cementacion", "desc_consistencia"):
                         guardar.setdefault(campo_db, None)
                     db.update_muestra(muestra["id"], **guardar)
-                    st.success("Descripción visual guardada.")
+                    st.session_state[desc_edit_key] = False
+                    st.toast("Descripción visual guardada.", icon=":material/check_circle:")
                     st.rerun()
         else:
-            descripcion_val = descripcion_visual_para_excel(muestra)
             if descripcion_val:
                 st.markdown(f'<div style="display:flex;gap:10px;align-items:flex-start;background:{BG};'
                              f'border-radius:10px;padding:12px 14px;margin-bottom:4px;">'
@@ -5161,6 +5170,10 @@ def render_muestra_detail():
                              f'<div><div class="cell-muted" style="margin-bottom:2px;">Según la clasificación USCS calculada</div>'
                              f'<div style="font-weight:600;line-height:1.5;color:{PRIMARY};">{html.escape(descripcion_calc)}</div></div></div>',
                              unsafe_allow_html=True)
+            if st.session_state.role == "laboratorista" and descripcion_val:
+                if st.button("Editar descripción", icon=":material/edit:", key=f"desc_editar_{muestra_id}"):
+                    st.session_state[desc_edit_key] = True
+                    st.rerun()
 
     if muestra["ensayos"].get("Granulometría"):
         with st.container(border=True):
