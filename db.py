@@ -184,6 +184,19 @@ def create_perforacion(project_id: str, tipo: str, consecutivo: int, codigo: str
     return res.data[0]
 
 
+def set_perforacion_fecha_ingreso(perforacion_id: str, fecha: str | None) -> dict:
+    """Fecha de ingreso de las muestras de ESTA perforación ('YYYY-MM-DD', o None para volver a la del proyecto).
+    Requiere la migración 0033 (columna perforaciones.fecha_ingreso)."""
+    res = get_client().table("perforaciones").update({"fecha_ingreso": fecha or None}).eq("id", perforacion_id).execute()
+    return res.data[0]
+
+
+def set_perforacion_fecha_ingreso_por_codigo(project_id: str, codigo: str, fecha: str | None):
+    """Igual que set_perforacion_fecha_ingreso pero buscando la perforación por (proyecto, código) -- para justo
+    después de crear el proyecto, cuando todavía no se conocen los ids de sus perforaciones."""
+    get_client().table("perforaciones").update({"fecha_ingreso": fecha or None}).eq("project_id", project_id).eq("codigo", codigo).execute()
+
+
 def restore_or_create_perforacion(project_id: str, tipo: str, consecutivo: int, codigo: str) -> dict:
     """Crea la perforación, o la reactiva si ya existe archivada con ese mismo código: el índice único
     (project_id, codigo) cuenta también las archivadas, así que borrar una perforación y volver a

@@ -1876,6 +1876,21 @@ def fmt_num(v, decimals=3):
     return s if s not in ("", "-") else "0"
 
 
+def fecha_ingreso_perf(perf, project):
+    """Fecha de ingreso (ISO) de las muestras de una perforación: la propia si ya se registró -- un mismo
+    proyecto puede recibir las muestras de cada sondeo/apique en días distintos --, si no la del proyecto."""
+    return (perf or {}).get("fecha_ingreso") or (project or {}).get("fecha_ingreso_muestra") or ""
+
+
+def fecha_ingreso_perf_txt(perf, project):
+    """La fecha de ingreso de la perforación como DD/MM/AAAA ('—' si no hay ninguna)."""
+    f = fecha_ingreso_perf(perf, project)
+    try:
+        return date.fromisoformat(f).strftime("%d/%m/%Y")
+    except (TypeError, ValueError):
+        return "—"
+
+
 def fmt_prof(v):
     """Profundidad de una muestra para mostrar: sin los ceros/decimales de ruido de punto flotante que dejan
     las sumas del Excel (2.7500000000000004 -> 2.75), y sin ceros de más (0.9, no 0.900)."""
@@ -3922,6 +3937,7 @@ def render_new_project():
     # se recargan desde Supabase en cada rerun y no existen todavía para un proyecto sin crear).
     perforaciones = st.session_state.setdefault("draft_perforaciones", [])
     edited_frames = {}
+    fechas_ingreso_perf = {}
     if codigo_valido and nombre:
         st.markdown('<div class="section-title">Perforación</div>', unsafe_allow_html=True)
         pc1, pc2 = st.columns([2, 1])
@@ -3943,6 +3959,11 @@ def render_new_project():
             key = f"{codigo_interno}::{perf['codigo']}"
             muestras = st.session_state.draft_muestras.setdefault(perf["codigo"], [])
             with st.expander(f"**{perf['codigo']}** — {perf['tipo']}  ·  {len(muestras)} muestra(s)", expanded=True):
+                # Cada perforación puede llegar al laboratorio un día distinto aunque sea del mismo proyecto;
+                # arranca con la fecha de ingreso del proyecto y se cambia aquí si esta llegó otro día.
+                fechas_ingreso_perf[perf["codigo"]] = st.date_input(
+                    "Fecha de ingreso de las muestras", value=fecha_ingreso, format="DD/MM/YYYY",
+                    key=f"newperf_fecha_{key}", help="Día en que llegaron al laboratorio las muestras de esta perforación.")
                 df_source = _bitacora_draft_df(key, muestras)
 
                 column_config = {
@@ -4036,7 +4057,7 @@ def render_new_project():
                     })
                 perforaciones_payload.append({**perf, "muestras": nuevas})
 
-            db.commit_new_project({
+            project_id = db.commit_new_project({
                 "codigo_interno": codigo_interno, "numero": numero, "anio": anio, "nombre": nombre,
                 "localizacion": localizacion, "norma": norma,
                 "fecha_bitacora": str(fecha_bitacora), "fecha_ingreso_muestra": str(fecha_ingreso),
@@ -4047,6 +4068,15 @@ def render_new_project():
                 "fecha_final_real": str(fecha_final_real) if fecha_final_real else "",
                 "fecha_recepcion": str(fecha_recepcion), "fecha_ejecucion": str(fecha_ejecucion), "fecha_emision": str(fecha_emision),
             }, perforaciones_payload)
+            # La fecha de ingreso de cada perforación se guarda aparte: commit_new_project (RPC) no la conoce.
+            for perf in perforaciones:
+                fecha_perf = fechas_ingreso_perf.get(perf["codigo"])
+                if fecha_perf:
+                    try:
+                        db.set_perforacion_fecha_ingreso_por_codigo(project_id, perf["codigo"], str(fecha_perf))
+                    except Exception:
+                        st.toast(f"No se pudo guardar la fecha de ingreso de {perf['codigo']}: falta aplicar la migración "
+                                 "0033 en Supabase. Puedes ponerla luego desde la Orden de ensayos.", icon=":material/warning:")
             _limpiar_borrador()
             st.session_state.selected_codigo = codigo_interno
             navigate("project-detail")
@@ -4250,6 +4280,8 @@ def render_project_detail():
                             unsafe_allow_html=True)
             st.markdown(f'<div class="cell-muted"><strong>Profundidad</strong> {prof_txt} · {len(muestras)} muestra(s)</div>',
                         unsafe_allow_html=True)
+            st.markdown(f'<div class="cell-muted">{icon("move_to_inbox", size=13)} <strong>Ingreso</strong> '
+                        f'{fecha_ingreso_perf_txt(perf, project)}</div>', unsafe_allow_html=True)
             # Avance por ENSAYO (no por muestra completa) — antes solo se veía entrando a la
             # perforación ("Avance del sondeo"); se trae acá para no tener que entrar solo para
             # ver esto.
@@ -4506,7 +4538,8 @@ def render_perforacion_detail():
                         unsafe_allow_html=True)
             st.markdown(f'<div class="cell-muted" style="margin-top:10px;">'
                         f'{icon("location_on", size=13)} {html.escape(project.get("localizacion") or "—")}'
-                        f'&nbsp;&nbsp;&nbsp;{icon("calendar_month", size=13)} {html.escape(project.get("fecha_bitacora") or "—")}</div>',
+                        f'&nbsp;&nbsp;&nbsp;{icon("calendar_month", size=13)} {html.escape(project.get("fecha_bitacora") or "—")}'
+                        f'&nbsp;&nbsp;&nbsp;{icon("move_to_inbox", size=13)} Ingreso {fecha_ingreso_perf_txt(perf, project)}</div>',
                         unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         with c1:
@@ -4698,6 +4731,27 @@ def render_bitacora():
         muestras = st.session_state.muestras.setdefault(key, [])
 
         with st.expander(f"**{perf['codigo']}** — {perf['tipo']}  ·  {len(muestras)} muestra(s)", expanded=True):
+            # Fecha de ingreso propia de la perforación (un mismo proyecto puede recibirlas en días distintos).
+            # Se guarda sola al cambiarla -- no depende del botón "Guardar bitácora" de abajo.
+            fecha_actual_perf = fecha_ingreso_perf(perf, project)
+            if es_jefe:
+                try:
+                    fecha_valor = date.fromisoformat(fecha_actual_perf)
+                except ValueError:
+                    fecha_valor = date.today()
+                fecha_nueva = st.date_input(
+                    "Fecha de ingreso de las muestras", value=fecha_valor, format="DD/MM/YYYY",
+                    key=f"fecha_ingreso_{perf['id']}", help="Día en que llegaron al laboratorio las muestras de esta perforación.")
+                if fecha_nueva and str(fecha_nueva) != fecha_actual_perf:
+                    try:
+                        db.set_perforacion_fecha_ingreso(perf["id"], str(fecha_nueva))
+                        perf["fecha_ingreso"] = str(fecha_nueva)
+                        st.toast(f"Fecha de ingreso de {perf['codigo']} guardada.", icon=":material/check_circle:")
+                    except Exception:
+                        st.error("No se pudo guardar la fecha de ingreso de esta perforación. Falta aplicar la migración "
+                                 "0033 (perforaciones.fecha_ingreso) en Supabase.")
+            else:
+                st.caption(f"Fecha de ingreso de las muestras: {fecha_ingreso_perf_txt(perf, project)}")
             # OJO: el DataFrame se crea UNA sola vez y se reutiliza el mismo objeto en cada rerun.
             # Reconstruirlo desde cero (dict -> DataFrame) en cada actualización es lo que causaba
             # que la primera edición se perdiera y tocara escribir dos veces.
