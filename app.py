@@ -5171,6 +5171,7 @@ def render_muestra_detail():
                              f'<div style="font-weight:600;line-height:1.5;color:{PRIMARY};">{html.escape(descripcion_calc)}</div></div></div>',
                              unsafe_allow_html=True)
             if st.session_state.role == "laboratorista" and descripcion_val:
+                st.markdown('<div style="height:14px;"></div>', unsafe_allow_html=True)
                 if st.button("Editar descripción", icon=":material/edit:", key=f"desc_editar_{muestra_id}"):
                     st.session_state[desc_edit_key] = True
                     st.rerun()
