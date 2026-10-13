@@ -242,7 +242,7 @@ st.markdown(f"""
     estuviera bien. Se excluyen los mismos contenedores de "no son una tarjeta" que ya excluía la
     regla del acento izquierdo, más "logout-btn" (el ícono de cerrar sesión, invisible cuando su
     contenedor quedaba con este fondo blanco por detrás). */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]) {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]):not([role="dialog"] *) {{
         border-radius: 12px !important; border: 1px solid {BORDER} !important;
         box-shadow: 0 1px 4px rgba(11,28,48,0.08) !important; background: {SURFACE} !important;
     }}
@@ -323,7 +323,7 @@ st.markdown(f"""
        borde tapando el grupo entero en vez de resaltar una sola tarjeta. bell-alert/bell-quiet
        (el botón-contenedor de la campana en el topbar) tampoco: es un ícono, no una tarjeta —
        se veía como una rayita verde suelta pegada a la campana. */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]) {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]):not([role="dialog"] *) {{
         border-left: 4px solid {PRIMARY} !important;
     }}
     /* Tarjetas de "Ensayos asignados" (una por ensayo): más separación entre sí y sombra
@@ -380,14 +380,26 @@ st.markdown(f"""
     /* Tarjeta con acento a la izquierda, para encabezados de detalle (ej. Detalle de Muestra) */
     .st-key-muestra-header-card {{ border-left: 4px solid {PRIMARY} !important; }}
     .st-key-muestra-obs-box .stTextArea textarea {{ background-color: {SECONDARY_CONTAINER} !important; }}
-    /* Botones dentro de la campana de notificaciones — por defecto salen blancos/planos y se
-       pierden contra el fondo del popover. */
-    .st-key-notif-popover-body .stButton button {{
-        background-color: {SECONDARY_CONTAINER}; color: {PRIMARY}; border-color: {SECONDARY_CONTAINER};
+    /* Panel de notificaciones (diálogo de la campana): tarjetas verde claro si están sin leer, blancas si ya se leyeron; ícono a
+       la izquierda, mensaje con lo importante en negrita, línea mono con proyecto · perforación · muestra · hace cuánto, y botón
+       de contorno verde alineado a la izquierda. */
+    [class*="st-key-notif-card-unread-"], [class*="st-key-notif-card-read-"] {{
+        border-radius: 14px !important; padding: 14px 16px !important; margin-bottom: 8px; border: none !important; box-shadow: none !important;
     }}
-    .st-key-notif-popover-body .stButton button:hover {{
-        background-color: {PRIMARY}; color: {SURFACE}; border-color: {PRIMARY};
+    [class*="st-key-notif-card-unread-"] {{ background: #EAF3EC !important; }}
+    [class*="st-key-notif-card-read-"] {{ background: {SURFACE} !important; border: 1px solid {BORDER} !important; }}
+    .notif-fila {{ display: flex; gap: 12px; align-items: flex-start; }}
+    .notif-ico {{ margin-top: 1px; line-height: 0; }}
+    .notif-texto {{ font-size: 15px; line-height: 1.45; color: {TEXT}; }}
+    .notif-texto b {{ font-weight: 800; }}
+    .notif-meta {{ font-family: 'JetBrains Mono', monospace; font-size: 12px; color: {MUTED}; margin-top: 6px; }}
+    [class*="st-key-notif-card-"] .stButton button {{
+        background: {SURFACE} !important; color: {PRIMARY} !important; border: 1.5px solid {PRIMARY} !important;
+        border-radius: 10px; font-weight: 700; padding: 0.35rem 1.2rem; margin-top: 4px; min-height: 2.5rem;
     }}
+    [class*="st-key-notif-card-"] .stButton button:hover {{ background: {PRIMARY} !important; color: {SURFACE} !important; }}
+    .st-key-notif-card-head .stButton button {{ padding: 0.3rem 0.6rem; font-size: 14px; margin-top: 0; }}
+    .st-key-notif-card-head [data-testid="stMarkdownContainer"] p, .st-key-notif-card-head .cell-muted {{ margin: 0; }}
     /* Campana: roja mientras haya notificaciones sin leer, para que se note de un vistazo. */
     .st-key-bell-alert button {{
         background-color: {DANGER} !important; color: {SURFACE} !important; border-color: {DANGER} !important;
@@ -3035,6 +3047,95 @@ ACTIVE_MAP = {
 }
 
 
+def _tiempo_relativo(iso_str):
+    """'ahora', 'hace 12 min', 'hace 1 h', 'ayer' o la fecha -- como se ve en las notificaciones."""
+    try:
+        f = datetime.fromisoformat(iso_str)
+    except (ValueError, TypeError):
+        return ""
+    ahora = datetime.now(f.tzinfo) if f.tzinfo else datetime.now()
+    seg = (ahora - f).total_seconds()
+    if seg < 60:
+        return "ahora"
+    if seg < 3600:
+        return f"hace {int(seg // 60)} min"
+    if seg < 86400 and f.date() == ahora.date():
+        return f"hace {int(seg // 3600)} h"
+    if (ahora.date() - f.date()).days == 1:
+        return "ayer"
+    return f.strftime("%d/%m/%Y")
+
+
+def _notificacion_visual(n):
+    """(html del mensaje, ícono, color) de una notificación. El texto guardado es plano ("El laboratorista terminó Humedad de la
+    Muestra 3 de GDA-041-26."): se resaltan quién y qué ensayo, se quita lo que ya dice la línea de código/perforación/muestra
+    de abajo y el motivo de una devolución se muestra entre «comillas»."""
+    texto = n["mensaje"]
+    texto = re.sub(r" de la Muestra \S+ de [A-Z0-9][A-Z0-9-]*", "", texto)
+    motivo = ""
+    if ": " in texto:
+        texto, motivo = texto.split(": ", 1)
+    texto = html.escape(texto)
+    for actor in ("El laboratorista", "El Director Técnico", "El Jefe de Laboratorio"):
+        if texto.startswith(actor):
+            texto = f"<b>{actor}</b>" + texto[len(actor):]
+            break
+    for etiqueta in sorted(set(ASSAY_LABELS.values()) | set(BITACORA_ENSAYOS), key=len, reverse=True):
+        if html.escape(etiqueta) in texto:
+            texto = texto.replace(html.escape(etiqueta), f"<b>{html.escape(etiqueta)}</b>", 1)
+            break
+    if motivo:
+        texto += f": «{html.escape(motivo.strip())}»"
+    bajo = n["mensaje"].lower()
+    if "devolvió" in bajo or "desconfirm" in bajo:
+        ico, color = "undo", DANGER
+    elif "no realizado" in bajo:
+        ico, color = "block", DANGER
+    elif "aprobó" in bajo:
+        ico, color = "verified", PRIMARY
+    elif any(p in bajo for p in ("terminó", "envió", "completó", "confirm")):
+        ico, color = "task_alt", PRIMARY
+    else:
+        ico, color = "notifications", PRIMARY
+    return texto, ico, (color if not n["leida"] else MUTED)
+
+
+_dialog = getattr(st, "dialog", None) or getattr(st, "experimental_dialog")
+
+
+@_dialog("Notificaciones", width="small")
+def dialogo_notificaciones(mis_notifs, no_leidas):
+    if not mis_notifs:
+        st.caption("No tienes notificaciones.")
+        return
+    with st.container(key="notif-card-head"):
+        c_txt, c_btn = st.columns([1, 1.6], vertical_alignment="center")
+        c_txt.markdown(f'<div class="cell-muted">{no_leidas} sin leer</div>' if no_leidas else
+                       '<div class="cell-muted">Todo al día</div>', unsafe_allow_html=True)
+        if no_leidas and c_btn.button("Marcar todas como leídas", key="notif_marcar_todas", icon=":material/done_all:",
+                                      use_container_width=True):
+            db.mark_all_notifications_read(st.session_state.role)
+            st.rerun()
+    for n in mis_notifs[:15]:
+        texto, ico, color = _notificacion_visual(n)
+        partes = [n.get("codigo_interno"), n.get("perforacion_codigo")]
+        if n.get("muestra_id") and "-M" in n["muestra_id"]:
+            partes.append("M-" + n["muestra_id"].rsplit("-M", 1)[1])
+        meta = " · ".join([p for p in partes if p] + [_tiempo_relativo(n["fecha"])])
+        peso = "600" if not n["leida"] else "500"
+        with st.container(key=f"notif-card-{'unread' if not n['leida'] else 'read'}-{n['id']}"):
+            st.markdown(
+                f'<div class="notif-fila"><span class="notif-ico" style="color:{color};">{icon(ico, size=22)}</span>'
+                f'<div><div class="notif-texto" style="font-weight:{peso};">{texto}</div>'
+                f'<div class="notif-meta">{html.escape(meta)}</div></div></div>', unsafe_allow_html=True)
+            if n.get("muestra_id") and st.button("Ir a la muestra →", key=f"notif_go_{n['id']}"):
+                db.mark_notification_read(n["id"])
+                st.session_state.selected_codigo = n["codigo_interno"]
+                st.session_state.selected_perforacion = n["perforacion_codigo"]
+                st.session_state.selected_muestra_id = n["muestra_id"]
+                navigate("muestra-detail")
+
+
 def render_topbar():
     active = ACTIVE_MAP.get(st.session_state.screen)
     with st.container(key="topbar"):
@@ -3055,27 +3156,13 @@ def render_topbar():
                 (n for n in st.session_state.notifications if n["role"] == st.session_state.role),
                 key=lambda n: n["fecha"], reverse=True)
             no_leidas = sum(1 for n in mis_notifs if not n["leida"])
+            # La campana abre un diálogo (modal), no un st.popover: el popover se posiciona respecto al botón y, con la campana en
+            # una columna angosta, en una tableta en vertical se detectaba el toque pero el panel no llegaba a mostrarse (solo
+            # aparecía al girarla a horizontal). El diálogo se centra y se ajusta solo al ancho de cualquier pantalla.
             with st.container(key="bell-alert" if no_leidas else "bell-quiet"):
-                with st.popover(str(no_leidas) if no_leidas else "", icon=":material/notifications:", use_container_width=True):
-                    st.markdown("**Notificaciones**")
-                    if not mis_notifs:
-                        st.caption("No tienes notificaciones.")
-                    else:
-                        with st.container(key="notif-popover-body"):
-                            if no_leidas and st.button("Marcar todas como leídas", key="notif_marcar_todas", use_container_width=True):
-                                db.mark_all_notifications_read(st.session_state.role)
-                                st.rerun()
-                            for n in mis_notifs[:15]:
-                                with st.container(border=True, key=f"notif-card-{n['id']}"):
-                                    estilo_msg = "font-weight:700;" if not n["leida"] else f"font-weight:400;font-size:13px;color:{MUTED};"
-                                    st.markdown(f'<div style="{estilo_msg}">{html.escape(n["mensaje"])}</div>'
-                                                f'<div class="timestamp-caption">{format_dt(n["fecha"])}</div>', unsafe_allow_html=True)
-                                    if n.get("muestra_id") and st.button("Ir a la muestra →", key=f"notif_go_{n['id']}", use_container_width=True):
-                                        db.mark_notification_read(n["id"])
-                                        st.session_state.selected_codigo = n["codigo_interno"]
-                                        st.session_state.selected_perforacion = n["perforacion_codigo"]
-                                        st.session_state.selected_muestra_id = n["muestra_id"]
-                                        navigate("muestra-detail")
+                if st.button(str(no_leidas) if no_leidas else "", key="bell_btn", icon=":material/notifications:",
+                             use_container_width=True, help="Notificaciones"):
+                    dialogo_notificaciones(mis_notifs, no_leidas)
         with c_avatar:
             iniciales = ROLE_INICIALES.get(st.session_state.role, "LB")
             st.markdown(f'<div class="topbar-avatar">{iniciales}</div>', unsafe_allow_html=True)
