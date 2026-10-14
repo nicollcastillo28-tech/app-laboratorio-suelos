@@ -14,7 +14,7 @@ import os
 import re
 import time
 import zipfile
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 
 import extra_streamlit_components as stx
@@ -1213,14 +1213,44 @@ def descripcion_visual_calculada(muestra):
     if not simbolo:
         return None
     nombre = USCS_NOMBRES.get(simbolo, simbolo).upper()
+    libre = (muestra.get("descripcion_visual") or "").strip().upper()
+    if libre and not muestra.get("desc_tipo_suelo"):
+        # La descripción se escribió como texto libre (no con menús): no se puede "cambiar solo el tipo de suelo" campo por campo, así
+        # que se conserva todo lo que escribió el laboratorista salvo el tipo de grano del comienzo, que lo pone la clasificación.
+        return _fusionar_clasificacion_y_texto(nombre, libre)
     return descripcion_visual_estructurada(muestra, tipo_override=nombre)
+
+
+_MARCAS_DESCRIPCION = re.compile(r"\b(DE COLOR|COLOR|CON CEMENTACI[ÓO]N|CEMENTAD[AO]|D[ÉE]BILMENTE|DE CONSISTENCIA|CONSISTENCIA|EN CONDICI[ÓO]N)\b")
+# Palabras con que suele empezar el texto libre nombrando el tipo de suelo ("grava arcillosa", "arena con algo de limo"): se descartan
+# del comienzo porque ese dato lo da la clasificación.
+_PALABRAS_TIPO_SUELO = {"GRAVA", "ARENA", "LIMO", "ARCILLA", "ORGÁNICO", "ORGANICO", "GRAVOSA", "ARENOSA", "LIMOSA", "ARCILLOSA", "MAL", "BIEN",
+                        "GRADADA", "GRADADO", "CON", "ALGO", "DE", "Y", "FINA", "FINO", "GRUESA", "GRUESO", "MEDIA", "MEDIO", "SUELO"}
+
+
+def _fusionar_clasificacion_y_texto(nombre_uscs, texto):
+    """'GRAVA MAL GRADADA' + 'GRAVA ARCILLOSA DE COLOR GRIS OSCURO, DÉBILMENTE CEMENTADA, EN CONDICIÓN HÚMEDA' ->
+    'GRAVA MAL GRADADA DE COLOR GRIS OSCURO, DÉBILMENTE CEMENTADA, EN CONDICIÓN HÚMEDA'. El texto libre empieza casi siempre
+    nombrando el tipo de suelo: eso se reemplaza por la clasificación y se conserva el resto (color, cementación, humedad...),
+    sin perder nada de lo que escribió el laboratorista."""
+    m = _MARCAS_DESCRIPCION.search(texto)
+    if m:
+        resto = texto[m.start():]
+        if resto.startswith("COLOR"):
+            resto = "DE " + resto
+        return f"{nombre_uscs} {resto}"
+    palabras = texto.split()
+    while palabras and palabras[0].strip(",;.").upper() in _PALABRAS_TIPO_SUELO:
+        palabras.pop(0)
+    resto = " ".join(palabras).strip(" ,;.")
+    return f"{nombre_uscs}, {resto}" if resto else nombre_uscs
 
 
 def descripcion_para_informe(muestra):
     """Lo que se escribe en "DESCRIPCIÓN VISUAL" de TODOS los Excel descargables:
       1. si la muestra tiene clasificación (Granulometría ya digitada y calculada, USCS), la descripción SEGÚN esa clasificación
-         (descripcion_visual_calculada: el tipo de suelo sale de la clasificación y el resto -- color, consistencia, humedad --
-         de lo que anotó el laboratorista);
+         (descripcion_visual_calculada): el tipo de suelo sale de la clasificación y TODO lo demás que anotó el laboratorista (color,
+         intensidad, consistencia, humedad, componentes secundarios; o su texto libre) se conserva;
       2. si no hay clasificación, la descripción que digitó A MANO el laboratorista (menús o texto);
       3. si tampoco hay, queda EN BLANCO -- no se inventa nada (antes caía a las observaciones del ensayo o a "Tipo de muestra: ...",
          que en el informe se leían como si fueran la descripción)."""
@@ -1229,6 +1259,7 @@ def descripcion_para_informe(muestra):
     except Exception:
         calculada = None
     return calculada or descripcion_visual_para_excel(muestra) or ""
+
 
 # Filas de Límite Líquido (INV. E-125-13) y Límite Plástico (INV. E-126-13), con las celdas
 # reales de la plantilla CLASIFICACION_DE_SUELOS.xlsm (sección "LIMITES DE ATTERBERG", a la
@@ -1971,6 +2002,65 @@ def fecha_ingreso_perf_txt(perf, project):
         return date.fromisoformat(f).strftime("%d/%m/%Y")
     except (TypeError, ValueError):
         return "—"
+
+
+# ── Fechas de los informes Excel ────────────────────────────────────────────────────────────────────
+# Las tres fechas del encabezado se calculan solas (ya no se toman de los campos del proyecto):
+#   RECEPCIÓN: cuándo llegó la perforación -- la fecha de ingreso que se registró para ella (por defecto, el día en que se subió su
+#              bitácora de orden); si no hay, el día en que se creó la perforación en la app.
+#   EJECUCIÓN: el día en que el laboratorista digitó el PRIMER dato del ensayo (se guarda en data["_fecha_primer_dato"]).
+#   EMISIÓN:   el día en que se descarga el Excel.
+# Todo en hora de Colombia (UTC-5, sin horario de verano): el servidor de la app corre en UTC y de noche el "hoy" caería en el día siguiente.
+_TZ_COLOMBIA = timezone(timedelta(hours=-5))
+
+
+def hoy_colombia():
+    return datetime.now(_TZ_COLOMBIA).date()
+
+
+def fecha_colombia(valor):
+    """Fecha (date) en hora de Colombia de un 'AAAA-MM-DD' o de un timestamp ISO (con o sin zona); None si no se puede leer."""
+    if not valor:
+        return None
+    try:
+        if len(str(valor)) <= 10:
+            return date.fromisoformat(str(valor))
+        f = datetime.fromisoformat(str(valor).replace("Z", "+00:00"))
+        return (f.astimezone(_TZ_COLOMBIA) if f.tzinfo else f).date()
+    except (ValueError, TypeError):
+        return None
+
+
+def tiene_datos_digitados(data):
+    """True si ya hay algún dato REAL digitado (un número, lecturas de la máquina o una foto). No cuentan los menús con valor por
+    defecto (método, tipo de corte...) ni los textos como el número de recipiente: eso no es "ingresar el primer dato"."""
+    for k, v in (data or {}).items():
+        if k.startswith("_"):
+            continue
+        if isinstance(v, list) and v:
+            return True
+        if isinstance(v, dict) and "b64" in v:
+            return True
+        if isinstance(v, str) and to_float(v) is not None:
+            return True
+    return False
+
+
+def fecha_ejecucion_informe(muestra, datas):
+    """'AAAA-MM-DD' de la ejecución: la más temprana entre los ensayos que alimentan el Excel (Granulometría y Límites van en un
+    mismo archivo). Ensayos anteriores a este registro no traen la marca: se usa el día en que se abrió el primer ensayo de la muestra."""
+    marcas = [fecha_colombia(d.get("_fecha_primer_dato")) for d in datas if d]
+    marcas = [m for m in marcas if m]
+    if marcas:
+        return min(marcas).isoformat()
+    creados = [fecha_colombia(a.get("createdAt")) for a in st.session_state.get("assays", [])
+               if muestra and a.get("muestra_id") == muestra.get("id_unico")]
+    creados = [c for c in creados if c]
+    return min(creados).isoformat() if creados else ""
+
+
+def fecha_emision_hoy():
+    return hoy_colombia().isoformat()
 
 
 def fmt_prof(v):
@@ -5981,10 +6071,16 @@ def generar_excel_bitacora_orden(project, filas, tipos_usados):
 # ambas comparten el mismo diseño de encabezado — filas 1 a 13)
 # ════════════════════════════════════════════════════════════════════
 def _fecha_recepcion_perf(codigo, perf_codigo, project):
-    """Fecha de recepción para el encabezado de los informes (ISO): la fecha de ingreso propia de la perforación
-    si se registró (cada sondeo/apique puede llegar un día distinto); si no, la fecha de recepción del proyecto."""
+    """Fecha de recepción para el encabezado de los informes (ISO): la fecha de ingreso registrada para la perforación; si no hay, el día
+    en que se creó la perforación (cuando se subió su bitácora de orden); y solo como último recurso la del proyecto."""
     perf = next((p for p in st.session_state.perforaciones.get(codigo, []) if p["codigo"] == perf_codigo), None)
-    return (perf or {}).get("fecha_ingreso") or (project or {}).get("fecha_recepcion", "")
+    propia = (perf or {}).get("fecha_ingreso")
+    if propia:
+        return propia
+    creada = fecha_colombia((perf or {}).get("created_at"))
+    if creada:
+        return creada.isoformat()
+    return (project or {}).get("fecha_recepcion", "")
 
 
 def _fecha_ddmmaaaa(iso_str):
@@ -5996,15 +6092,15 @@ def _fecha_ddmmaaaa(iso_str):
         return iso_str or ""
 
 
-def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo="", perf_numero_cell="F12"):
+def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo="", perf_numero_cell="F12", datas=()):
     ws["D6"] = project.get("cliente", "") if project else ""  # Cliente
     ws["D7"] = project["nombre"] if project else codigo          # Proyecto
     ws["D8"] = project.get("correo_cliente", "") if project else ""  # Correo electrónico
     ws["D9"] = project.get("localizacion", "") if project else ""  # Localización
     ws["D10"] = project.get("muestra_tomada_por", "") if project else ""  # Muestra tomada por
     ws["K6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""  # Fecha de recepción
-    ws["K7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""  # Fecha de ejecución
-    ws["K8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""  # Fecha de emisión
+    ws["K7"] = _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, datas)) if project else ""  # Fecha de ejecución
+    ws["K8"] = _fecha_ddmmaaaa(fecha_emision_hoy()) if project else ""  # Fecha de emisión
     ws["L9"] = project.get("numero", "") if project else ""  # Código interno — número (K9 ya trae "GDA")
     ws["M9"] = project.get("anio", "") if project else ""  # Código interno — año
 
@@ -6814,7 +6910,7 @@ def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_dat
     Granulometría o desde el de Límites."""
     wb = load_workbook(TEMPLATE_GRANULOMETRIA, keep_vba=True)
     ws = wb["GUIA"]
-    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo, perf_numero_cell="E12")
+    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo, perf_numero_cell="E12", datas=[gran_data, lim_data])
 
     if gran_data is not None:
         masa_inicial_seca = to_float(gran_data.get("masa_inicial_seca"))
@@ -6864,7 +6960,7 @@ def generar_excel_humedad(codigo, perf_codigo, muestra, project, data, observaci
     wb = load_workbook(TEMPLATE_HUMEDAD)
     ws = wb["GUIA"]
 
-    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo)
+    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo, datas=[data])
     ws["I19"] = data.get("hum_recipiente", "")
     ws["I20"] = to_float(data.get("hum_masa_humedo_mas_recipiente"))
     ws["I21"] = to_float(data.get("hum_seco_mas_recipiente"))
@@ -6889,7 +6985,7 @@ def generar_excel_limites(codigo, perf_codigo, muestra, project, data, observaci
                                          observaciones_ensayo=observaciones_ensayo)
 
 
-def _llenar_encabezado_masa_unitaria(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo=""):
+def _llenar_encabezado_masa_unitaria(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo="", datas=()):
     """La plantilla de Peso Unitario Parafinado (GDA-FLC-004) usa una distribución de celdas
     de encabezado propia, distinta a la de Granulometría/Límites/Humedad."""
     ws["C6"] = project.get("cliente", "") if project else ""  # Cliente
@@ -6898,8 +6994,8 @@ def _llenar_encabezado_masa_unitaria(ws, codigo, perf_codigo, muestra, project, 
     ws["C9"] = project.get("localizacion", "") if project else ""  # Localización
     ws["C10"] = project.get("muestra_tomada_por", "") if project else ""  # Muestra tomada por
     ws["I6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""  # Fecha de recepción
-    ws["I7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""  # Fecha de ejecución
-    ws["I8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""  # Fecha de emisión
+    ws["I7"] = _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, datas)) if project else ""  # Fecha de ejecución
+    ws["I8"] = _fecha_ddmmaaaa(fecha_emision_hoy()) if project else ""  # Fecha de emisión
     ws["J9"] = project.get("numero", "") if project else ""  # Código interno — número (I9 ya trae "GDA")
     ws["K9"] = project.get("anio", "") if project else ""  # Código interno — año
 
@@ -6915,7 +7011,7 @@ def _llenar_encabezado_masa_unitaria(ws, codigo, perf_codigo, muestra, project, 
 def generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     wb = load_workbook(TEMPLATE_MASA_UNITARIA)
     ws = wb["GUIA"]
-    _llenar_encabezado_masa_unitaria(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo)
+    _llenar_encabezado_masa_unitaria(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo, datas=[data])
 
     ws["E20"] = to_float(data.get("mu_peso_aire"))  # B = masa en el aire
     ws["F20"] = to_float(data.get("mu_peso_aire_par"))  # C = masa en el aire parafinado
@@ -6938,7 +7034,7 @@ def generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, obs
     return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_MASA_UNITARIA)
 
 
-def _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo=""):
+def _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo="", datas=()):
     """La plantilla oficial de CBR (GDA-FLC-013) usa una distribución de encabezado propia,
     distinta a la de Granulometría/Límites/Humedad/Masa Unitaria: etiquetas en B/H, valores en
     C/J en vez de D/K (ver hoja "GUIA" de GDA-FLC-013 CBR INALTERADO.xlsx)."""
@@ -6948,8 +7044,8 @@ def _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observacio
     ws["C9"] = project.get("localizacion", "") if project else ""  # Localización
     ws["C10"] = project.get("muestra_tomada_por", "") if project else ""  # Muestra tomada por
     ws["J6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""  # Fecha de recepción
-    ws["J7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""  # Fecha de ejecución
-    ws["J8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""  # Fecha de emisión
+    ws["J7"] = _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, datas)) if project else ""  # Fecha de ejecución
+    ws["J8"] = _fecha_ddmmaaaa(fecha_emision_hoy()) if project else ""  # Fecha de emisión
     ws["K9"] = project.get("numero", "") if project else ""  # Código interno — número (J9 ya trae "GDA")
     ws["L9"] = project.get("anio", "") if project else ""  # Código interno — año
 
@@ -6972,7 +7068,7 @@ def generar_excel_cbr(codigo, perf_codigo, muestra, project, data, observaciones
         if nombre != "GUIA":
             del wb[nombre]
     ws = wb["GUIA"]
-    _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo)
+    _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo, datas=[data])
 
     ws["D20"] = data.get("cbr_molde", "")
     ws["D21"] = to_float(data.get("cbr_diametro"))
@@ -7050,8 +7146,8 @@ def _generar_excel_gravedad(template, hoja, celdas, codigo, perf_codigo, muestra
     if project and project.get("muestra_tomada_por"):
         ws["C10"] = project["muestra_tomada_por"]
     ws["I6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
-    ws["I7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
-    ws["I8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    ws["I7"] = _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, [data])) if project else ""
+    ws["I8"] = _fecha_ddmmaaaa(fecha_emision_hoy()) if project else ""
     ws["J9"] = project.get("numero", "") if project else ""
     ws["K9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
@@ -7089,8 +7185,8 @@ def generar_excel_limite_contraccion(codigo, perf_codigo, muestra, project, data
     if project and project.get("muestra_tomada_por"):
         ws["D10"] = project["muestra_tomada_por"]
     ws["L6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
-    ws["L7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
-    ws["L8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    ws["L7"] = _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, [data])) if project else ""
+    ws["L8"] = _fecha_ddmmaaaa(fecha_emision_hoy()) if project else ""
     ws["M9"] = project.get("numero", "") if project else ""
     ws["N9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
@@ -7128,8 +7224,8 @@ def generar_excel_materia_organica(codigo, perf_codigo, muestra, project, data, 
     if project and project.get("muestra_tomada_por"):
         ws["D10"] = project["muestra_tomada_por"]
     ws["K6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
-    ws["K7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
-    ws["K8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    ws["K7"] = _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, [data])) if project else ""
+    ws["K8"] = _fecha_ddmmaaaa(fecha_emision_hoy()) if project else ""
     ws["L9"] = project.get("numero", "") if project else ""
     ws["M9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
@@ -7164,8 +7260,8 @@ def generar_excel_proctor(codigo, perf_codigo, muestra, project, data, observaci
     if project and project.get("muestra_tomada_por"):
         ws["D10"] = project["muestra_tomada_por"]
     ws["K6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
-    ws["K7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
-    ws["K8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    ws["K7"] = _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, [data])) if project else ""
+    ws["K8"] = _fecha_ddmmaaaa(fecha_emision_hoy()) if project else ""
     ws["L9"] = project.get("numero", "") if project else ""
     ws["M9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
@@ -7382,8 +7478,8 @@ def generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, obs
     if project and project.get("muestra_tomada_por"):
         ws["C10"] = project["muestra_tomada_por"]
     ws["J6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
-    ws["J7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
-    ws["J8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    ws["J7"] = _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, [data])) if project else ""
+    ws["J8"] = _fecha_ddmmaaaa(fecha_emision_hoy()) if project else ""
     ws["K9"] = project.get("numero", "") if project else ""
     ws["L9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
@@ -7957,8 +8053,8 @@ def generar_excel_masa_unitaria_b(codigo, perf_codigo, muestra, project, data, o
     if project and project.get("muestra_tomada_por"):
         c["C10"] = project["muestra_tomada_por"]
     c["I6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
-    c["I7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
-    c["I8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    c["I7"] = _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, [data])) if project else ""
+    c["I8"] = _fecha_ddmmaaaa(fecha_emision_hoy()) if project else ""
     c["J9"] = project.get("numero", "") if project else ""
     c["K9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
@@ -8663,8 +8759,8 @@ def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, obs
     if project and project.get("muestra_tomada_por"):
         ws["D10"] = project["muestra_tomada_por"]
     ws["M6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
-    ws["M7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
-    ws["M8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    ws["M7"] = _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, [data])) if project else ""
+    ws["M8"] = _fecha_ddmmaaaa(fecha_emision_hoy()) if project else ""
     ws["N9"] = project.get("numero", "") if project else ""
     ws["P9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
@@ -9206,8 +9302,8 @@ def generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, 
     if project and project.get("muestra_tomada_por"):
         c["C10"] = project["muestra_tomada_por"]
     c["K6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
-    c["K7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
-    c["K8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    c["K7"] = _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, [data])) if project else ""
+    c["K8"] = _fecha_ddmmaaaa(fecha_emision_hoy()) if project else ""
     c["L9"] = project.get("numero", "") if project else ""
     c["N9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
@@ -9461,8 +9557,8 @@ def generar_excel_compresion_roca(codigo, perf_codigo, muestra, project, data, o
     if project and project.get("muestra_tomada_por"):
         c["C10"] = project["muestra_tomada_por"]
     c["K6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
-    c["K7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
-    c["K8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    c["K7"] = _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, [data])) if project else ""
+    c["K8"] = _fecha_ddmmaaaa(fecha_emision_hoy()) if project else ""
     c["L9"] = project.get("numero", "") if project else ""
     c["N9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
@@ -9962,8 +10058,8 @@ def generar_excel_carga_puntual(codigo, perf_codigo, muestra, project, data, obs
     if project and project.get("muestra_tomada_por"):
         c["D10"] = project["muestra_tomada_por"]
     c["L6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
-    c["L7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
-    c["L8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    c["L7"] = _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, [data])) if project else ""
+    c["L8"] = _fecha_ddmmaaaa(fecha_emision_hoy()) if project else ""
     c["M9"] = project.get("numero", "") if project else ""
     c["N9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
@@ -10193,8 +10289,8 @@ def generar_excel_solidez_sulfatos(codigo, perf_codigo, muestra, project, data, 
     if project and project.get("muestra_tomada_por"):
         c["C10"] = project["muestra_tomada_por"]
     c["I6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
-    c["I7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
-    c["I8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    c["I7"] = _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, [data])) if project else ""
+    c["I8"] = _fecha_ddmmaaaa(fecha_emision_hoy()) if project else ""
     c["J9"] = project.get("numero", "") if project else ""
     c["K9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
@@ -10358,8 +10454,8 @@ def generar_excel_terrones_arcilla(codigo, perf_codigo, muestra, project, data, 
     if project and project.get("muestra_tomada_por"):
         c["C10"] = project["muestra_tomada_por"]
     c["H6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
-    c["H7"] = _fecha_ddmmaaaa(project.get("fecha_ejecucion", "")) if project else ""
-    c["H8"] = _fecha_ddmmaaaa(project.get("fecha_emision", "")) if project else ""
+    c["H7"] = _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, [data])) if project else ""
+    c["H8"] = _fecha_ddmmaaaa(fecha_emision_hoy()) if project else ""
     c["I9"] = project.get("numero", "") if project else ""
     c["J9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
@@ -11509,6 +11605,11 @@ def render_assay_form():
         # Autoguardado: si el laboratorista digita y se le olvida darle a "Guardar borrador"
         # antes de salir, los datos no se pierden — se persisten solos en cada rerun (cada vez
         # que se completa un campo), sin necesidad de un clic explícito.
+        # Día en que el laboratorista digita el PRIMER dato del ensayo: es la "fecha de ejecución" de los informes Excel. Solo se marca
+        # cuando el ensayo pasa de no tener ningún dato a tener uno (así un ensayo ya empezado antes de este registro no se
+        # re-fecha con el día en que alguien lo edite).
+        if "_fecha_primer_dato" not in data and tiene_datos_digitados(data) and not tiene_datos_digitados(assay.get("data")):
+            data["_fecha_primer_dato"] = hoy_colombia().isoformat()
         if (data != assay.get("data", {}) or observations != assay.get("observations", "")
                 or laboratorist != assay.get("laboratorist", "")):
             nuevo_status = "en-proceso" if assay["status"] == "sin-iniciar" else assay["status"]
