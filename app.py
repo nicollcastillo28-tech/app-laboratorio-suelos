@@ -5707,11 +5707,11 @@ def render_muestra_detail():
                 opciones_sec = [o for o in DESC_TIPO_SECUNDARIO_OPTIONS if o != desc_tipo]
                 con_act, adj_act = _secundarios_por_nivel(muestra, desc_tipo)
                 sel_con = _seleccion_multiple(
-                    "Lo acompaña con 15 a 25 % de… (se dice «con arena», «con grava»)", opciones_sec,
+                    "Con un poco de… (se dice «con arena», «con grava»)", opciones_sec,
                     [x for x in con_act if x in opciones_sec], key=f"desc_sec_con_{muestra_id}_{desc_tipo}")
                 opciones_adj = [o for o in opciones_sec if o in _ADJETIVO_SUELO]
                 sel_adj = _seleccion_multiple(
-                    "Lo acompaña con 30 % o más de… (se dice «arenoso», «gravoso»)", opciones_adj,
+                    "Con bastante… (se dice «arenoso», «gravoso»)", opciones_adj,
                     [x for x in adj_act if x in opciones_adj], key=f"desc_sec_adj_{muestra_id}_{desc_tipo}")
                 desc_secundarios = [x for x in sel_con if x not in sel_adj] + [f"{x}*" for x in sel_adj]
 
