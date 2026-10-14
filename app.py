@@ -368,7 +368,7 @@ st.markdown(f"""
     /* Tarjeta de cada ensayo en el detalle de la muestra: título (+ chip) y fecha pegados, sin la separación de elementos sueltos. */
     .ens-info {{ display: flex; flex-direction: column; gap: 4px; min-width: 0; }}
     /* (selector repetido a propósito: tiene que ganarle en especificidad a la regla de arriba que protege toda columna con .badge
-       -- el chip "Consultar resultados" es un .badge y dejaba esta columna sin poder encogerse, empujando "Abrir" fuera de la tarjeta) */
+       -- el chip de alerta es un .badge y dejaba esta columna sin poder encogerse, empujando "Abrir" fuera de la tarjeta) */
     [class*="st-key-ensayo-card-"][class*="st-key-ensayo-card-"][class*="st-key-ensayo-card-"] div[data-testid="stColumn"][data-testid="stColumn"][data-testid="stColumn"]:has(.ens-info) {{
         min-width: 0 !important; flex-shrink: 1 !important; }}
     div[data-testid="stColumn"]:has(.ens-info) [data-testid="stElementContainer"],
@@ -1084,7 +1084,10 @@ DESC_TIPO_SECUNDARIO_OPTIONS = ["GRAVA", "ARENA", "LIMO", "ARCILLA", "ORGÁNICO"
 # ROJIZO", "GRIS AMARILLENTO") — así se puede combinar cualquier color con cualquier matiz en vez
 # de tener que enumerar cada combinación como una opción aparte.
 DESC_COLOR_OPTIONS = ["", "GRIS", "MARRÓN", "AMARILLO", "ROJO", "NEGRO", "BLANCO", "BEIGE", "NARANJA", "VERDE"]
-DESC_SUBTONALIDAD_OPTIONS = ["", "CLARO", "OSCURO", "ROJIZO", "AMARILLENTO", "VERDOSO", "GRISÁCEO", "BLANQUECINO"]
+DESC_SUBTONALIDAD_OPTIONS = ["", "ROJIZO", "AMARILLENTO", "VERDOSO", "GRISÁCEO", "BLANQUECINO"]
+# Intensidad del color (claro / oscuro), aparte de la subtonalidad: "MARRÓN ROJIZO CLARO" lleva las dos. Antes CLARO y OSCURO
+# eran opciones de la subtonalidad y no se podían combinar con un matiz (ver _partes_color, que sigue leyendo esos datos viejos).
+DESC_INTENSIDAD_OPTIONS = ["", "CLARO", "OSCURO"]
 # Suelos gruesos (grava/arena) se describen por cementación; suelos finos (limo/arcilla/orgánico)
 # por consistencia — son dos propiedades distintas, no dos escalas de lo mismo, por eso solo se
 # despliega una u otra según el tipo de grano elegido (ver _es_grueso).
@@ -1101,6 +1104,31 @@ def _es_grueso(tipo_suelo):
     """Grava/Arena = grano grueso (cementación, angulosidad); Limo/Arcilla/Orgánico = grano fino
     (consistencia). Ver INV E-102."""
     return tipo_suelo in ("GRAVA", "ARENA")
+
+
+def _partes_color(muestra):
+    """(color, subtonalidad, intensidad) en mayúscula. Datos de antes de existir la intensidad guardaban "CLARO"/"OSCURO" como
+    subtonalidad: se leen como intensidad para que sigan saliendo igual en la frase (y preseleccionados en el menú nuevo)."""
+    color = (muestra.get("desc_color") or "").upper() or None
+    subton = (muestra.get("desc_subtonalidad") or "").upper() or None
+    intensidad = (muestra.get("desc_intensidad") or "").upper() or None
+    if subton in ("CLARO", "OSCURO"):
+        intensidad = intensidad or subton
+        subton = None
+    return color, subton, intensidad
+
+
+def _tipos_secundarios(muestra, principal=None):
+    """Lista de los componentes secundarios de la muestra ("arcilla CON ALGO DE grava Y arena" -> ["GRAVA", "ARENA"]). Se guardan
+    separados por coma en la misma columna de siempre (desc_tipo_secundario), así los datos de un solo componente siguen valiendo."""
+    crudo = (muestra.get("desc_tipo_secundario") or "").upper()
+    lista = [p.strip() for p in crudo.split(",") if p.strip()]
+    return [p for p in dict.fromkeys(lista) if p != principal]
+
+
+def _lista_y(items):
+    """['GRAVA'] -> 'GRAVA'; ['GRAVA', 'ARENA'] -> 'GRAVA Y ARENA'; ['A', 'B', 'C'] -> 'A, B Y C'."""
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " Y " + items[-1]
 
 
 def descripcion_visual_estructurada(muestra, tipo_override=None):
@@ -1123,9 +1151,11 @@ def descripcion_visual_estructurada(muestra, tipo_override=None):
 
     # Componente secundario (ej. "GRAVA CON ALGO DE ARENA", "ARCILLA CON ALGO DE ARENA") — un
     # segundo tipo de grano que también está presente en la muestra, sin ser el dominante.
-    secundario = (muestra.get("desc_tipo_secundario") or "").upper() or None
-    if secundario:
-        partes.append(f"CON ALGO DE {secundario}")
+    secundarios = _tipos_secundarios(muestra, tipo)
+    if tipo_override:   # no repetir un grano que ya nombra la clasificación ("GRAVA MAL GRADADA CON ALGO DE GRAVA" no tiene sentido)
+        secundarios = [x for x in secundarios if x not in tipo_override]
+    if secundarios:
+        partes.append(f"CON ALGO DE {_lista_y(secundarios)}")
 
     angulosidad = (muestra.get("desc_angulosidad") or "").upper() if _es_grueso(tipo) else None
     if angulosidad:
@@ -1134,12 +1164,9 @@ def descripcion_visual_estructurada(muestra, tipo_override=None):
     if forma:
         partes.append(f"DE FORMA {forma}")
 
-    color = (muestra.get("desc_color") or "").upper() or None
-    subtonalidad = (muestra.get("desc_subtonalidad") or "").upper() or None
-    if color:
-        partes.append(f"DE COLOR {color}" + (f" {subtonalidad}" if subtonalidad else ""))
-    elif subtonalidad:
-        partes.append(f"DE COLOR {subtonalidad}")
+    color, subtonalidad, intensidad = _partes_color(muestra)
+    if color or subtonalidad or intensidad:
+        partes.append("DE COLOR " + " ".join(p for p in (color, subtonalidad, intensidad) if p))
 
     if _es_grueso(tipo):
         cementacion = (muestra.get("desc_cementacion") or "").upper() or None
@@ -1187,6 +1214,21 @@ def descripcion_visual_calculada(muestra):
         return None
     nombre = USCS_NOMBRES.get(simbolo, simbolo).upper()
     return descripcion_visual_estructurada(muestra, tipo_override=nombre)
+
+
+def descripcion_para_informe(muestra):
+    """Lo que se escribe en "DESCRIPCIÓN VISUAL" de TODOS los Excel descargables:
+      1. si la muestra tiene clasificación (Granulometría ya digitada y calculada, USCS), la descripción SEGÚN esa clasificación
+         (descripcion_visual_calculada: el tipo de suelo sale de la clasificación y el resto -- color, consistencia, humedad --
+         de lo que anotó el laboratorista);
+      2. si no hay clasificación, la descripción que digitó A MANO el laboratorista (menús o texto);
+      3. si tampoco hay, queda EN BLANCO -- no se inventa nada (antes caía a las observaciones del ensayo o a "Tipo de muestra: ...",
+         que en el informe se leían como si fueran la descripción)."""
+    try:
+        calculada = descripcion_visual_calculada(muestra)
+    except Exception:
+        calculada = None
+    return calculada or descripcion_visual_para_excel(muestra) or ""
 
 # Filas de Límite Líquido (INV. E-125-13) y Límite Plástico (INV. E-126-13), con las celdas
 # reales de la plantilla CLASIFICACION_DE_SUELOS.xlsm (sección "LIMITES DE ATTERBERG", a la
@@ -5365,6 +5407,13 @@ def clasificar_aashto(gran_data, lim_data):
 # ════════════════════════════════════════════════════════════════════
 # DETALLE DE MUESTRA → LISTA DE ENSAYOS SOLICITADOS
 # ════════════════════════════════════════════════════════════════════
+def _seleccion_multiple(label, opciones, actuales, key):
+    """Varias opciones a la vez como etiquetas tocables (st.pills, Streamlit >= 1.40); en versiones viejas, un multiselect."""
+    if hasattr(st, "pills"):
+        return list(st.pills(label, opciones, selection_mode="multi", default=actuales, key=key) or [])
+    return st.multiselect(label, opciones, default=actuales, key=key)
+
+
 def render_muestra_detail():
     codigo = st.session_state.selected_codigo
     perf_codigo = st.session_state.selected_perforacion
@@ -5434,7 +5483,7 @@ def render_muestra_detail():
                 if st.button("Guardar descripción visual", icon=":material/save:", key=f"desc_visual_save_texto_{muestra_id}"):
                     db.update_muestra(
                         muestra["id"], descripcion_visual=texto.strip().upper(),
-                        desc_tipo_suelo=None, desc_tipo_secundario=None, desc_color=None, desc_subtonalidad=None,
+                        desc_tipo_suelo=None, desc_tipo_secundario=None, desc_color=None, desc_subtonalidad=None, desc_intensidad=None,
                         desc_forma=None, desc_angulosidad=None, desc_cementacion=None, desc_consistencia=None,
                         desc_humedad=None,
                     )
@@ -5448,64 +5497,78 @@ def render_muestra_detail():
                 # opciones nuevas.
                 tipo_actual = (muestra.get("desc_tipo_suelo") or "").upper()
                 tipo_idx = DESC_TIPO_SUELO_OPTIONS.index(tipo_actual) if tipo_actual in DESC_TIPO_SUELO_OPTIONS else 0
-                desc_tipo = st.selectbox("Tipo de grano", DESC_TIPO_SUELO_OPTIONS, index=tipo_idx,
+                desc_tipo = st.selectbox("Tipo de grano principal", DESC_TIPO_SUELO_OPTIONS, index=tipo_idx,
                                           key=f"desc_tipo_{muestra_id}", format_func=lambda v: v or "— Seleccionar —")
                 grueso = _es_grueso(desc_tipo)
 
-                # Componente secundario (ej. "grava con algo de arena", "arcilla con algo de
-                # arena") — opcional, se oculta el selectbox si la casilla no está marcada en vez
-                # de forzar a elegir "— Seleccionar —" cada vez. Se excluye el tipo principal de
-                # la lista para no dejar armar "grava con algo de grava".
-                secundario_actual = (muestra.get("desc_tipo_secundario") or "").upper()
-                tiene_secundario = st.checkbox(
-                    "¿Tiene un componente secundario? (ej. grava con algo de arena, arcilla con algo de arena)",
-                    value=bool(secundario_actual), key=f"desc_tiene_sec_{muestra_id}")
-                desc_secundario = None
-                if tiene_secundario:
-                    opciones_sec = [o for o in DESC_TIPO_SECUNDARIO_OPTIONS if o != desc_tipo]
-                    sec_idx = opciones_sec.index(secundario_actual) if secundario_actual in opciones_sec else 0
-                    desc_secundario = st.selectbox("Componente secundario", opciones_sec, index=sec_idx,
-                                                    key=f"desc_sec_{muestra_id}")
+                # Componentes secundarios: una muestra puede venir acompañada de más de un grano a la vez (ej. "arcilla con algo de
+                # grava y arena"), por eso se marcan como etiquetas (varias a la vez) en vez de un solo menú. El tipo principal
+                # no se ofrece (no existe "grava con algo de grava"). Se guardan separados por coma en desc_tipo_secundario.
+                opciones_sec = [o for o in DESC_TIPO_SECUNDARIO_OPTIONS if o != desc_tipo]
+                sec_actuales = [x for x in _tipos_secundarios(muestra, desc_tipo) if x in opciones_sec]
+                desc_secundarios = _seleccion_multiple(
+                    "Con algo de… (opcional, puedes marcar varios)", opciones_sec, sec_actuales,
+                    key=f"desc_sec_{muestra_id}_{desc_tipo}")
 
-                # Qué campos aparecen después depende del tipo de grano elegido arriba — grueso
-                # (grava/arena) se describe por angulosidad y cementación, fino (limo/arcilla/
-                # orgánico) por consistencia, y forma solo aplica a grava específicamente. Se
-                # arman como lista en vez de columnas fijas porque cuáles aparecen cambia, y se
-                # van dibujando en parejas de 2 columnas.
+                # Color en tres pasos que se combinan: color base + matiz + intensidad ("MARRÓN ROJIZO CLARO").
+                color_act, subton_act, intens_act = _partes_color(muestra)
+                st.markdown('<div class="cell-muted" style="margin:6px 0 -6px;font-weight:700;">Color</div>', unsafe_allow_html=True)
+                valores = {}
+                for col, (label, opciones, campo_db, campo_key, actual) in zip(st.columns(3), [
+                        ("Color base", DESC_COLOR_OPTIONS, "desc_color", "color", color_act),
+                        ("Matiz (rojizo, verdoso…)", DESC_SUBTONALIDAD_OPTIONS, "desc_subtonalidad", "subton", subton_act),
+                        ("Intensidad (claro / oscuro)", DESC_INTENSIDAD_OPTIONS, "desc_intensidad", "intens", intens_act)]):
+                    with col:
+                        # La key incluye si el grano es grueso/fino, para forzar un widget nuevo si la persona cambia de escala.
+                        valores[campo_db] = st.selectbox(
+                            label, opciones, index=opciones.index(actual) if actual in opciones else 0,
+                            key=f"{campo_key}_{muestra_id}_{grueso}", format_func=lambda v: v or "— Seleccionar —")
+
+                # El resto depende del tipo de grano — grueso (grava/arena): angulosidad y cementación; fino
+                # (limo/arcilla/orgánico): consistencia; forma solo en grava. Van en parejas de 2 columnas.
                 campos = []
                 if desc_tipo == "GRAVA":
                     campos.append(("Forma", DESC_FORMA_OPTIONS, "desc_forma", "forma"))
                 if grueso:
                     campos.append(("Angulosidad", DESC_ANGULOSIDAD_OPTIONS, "desc_angulosidad", "angulosidad"))
-                campos.append(("Color", DESC_COLOR_OPTIONS, "desc_color", "color"))
-                campos.append(("Subtonalidad", DESC_SUBTONALIDAD_OPTIONS, "desc_subtonalidad", "subton"))
                 campos.append(("Cementación", DESC_CEMENTACION_OPTIONS, "desc_cementacion", "cem") if grueso
                                else ("Consistencia", DESC_CONSISTENCIA_OPTIONS, "desc_consistencia", "cons"))
                 campos.append(("Condición de humedad", DESC_HUMEDAD_OPTIONS, "desc_humedad", "hum"))
-
-                valores = {}
                 for i in range(0, len(campos), 2):
                     for col, (label, opciones, campo_db, campo_key) in zip(st.columns(2), campos[i:i + 2]):
                         with col:
                             actual = (muestra.get(campo_db) or "").upper()
-                            idx = opciones.index(actual) if actual in opciones else 0
-                            # La key incluye si el grano es grueso/fino, para forzar un widget
-                            # nuevo si la persona cambia de escala — evita arrastrar en pantalla
-                            # un valor que ya no aplica (ej. una cementación al pasar de grava a
-                            # limo).
                             valores[campo_db] = st.selectbox(
-                                label, opciones, index=idx, key=f"{campo_key}_{muestra_id}_{grueso}",
-                                format_func=lambda v: v or "— Seleccionar —")
+                                label, opciones, index=opciones.index(actual) if actual in opciones else 0,
+                                key=f"{campo_key}_{muestra_id}_{grueso}", format_func=lambda v: v or "— Seleccionar —")
+
+                # Vista previa: la frase tal como saldrá en la pantalla y en el Excel, para entender de una vez qué se está armando.
+                previa = descripcion_visual_estructurada({"desc_tipo_suelo": desc_tipo, "desc_tipo_secundario": ",".join(desc_secundarios), **valores})
+                st.markdown(
+                    f'<div style="background:{SECONDARY_CONTAINER};border-radius:10px;padding:12px 14px;margin:6px 0 10px;">'
+                    f'<div class="cell-muted" style="margin-bottom:2px;">Así quedará la descripción</div>'
+                    f'<div style="font-weight:700;color:{PRIMARY};line-height:1.45;">{html.escape(previa) if previa else "— elige el tipo de grano —"}</div></div>',
+                    unsafe_allow_html=True)
 
                 if st.button("Guardar descripción visual", icon=":material/save:", key=f"desc_visual_save_{muestra_id}"):
-                    guardar = {"desc_tipo_suelo": desc_tipo, "desc_tipo_secundario": desc_secundario,
+                    guardar = {"desc_tipo_suelo": desc_tipo, "desc_tipo_secundario": ",".join(desc_secundarios) or None,
                                "descripcion_visual": None, **valores}
                     # Los campos que no aparecieron arriba para este tipo de grano (ej. forma si
                     # no es grava) se limpian en vez de dejar guardado un valor viejo que ya no
                     # se ve.
                     for campo_db in ("desc_forma", "desc_angulosidad", "desc_cementacion", "desc_consistencia"):
                         guardar.setdefault(campo_db, None)
-                    db.update_muestra(muestra["id"], **guardar)
+                    try:
+                        db.update_muestra(muestra["id"], **guardar)
+                    except Exception:
+                        # Falta la migración 0034 (columna desc_intensidad): se guarda todo lo demás y se avisa. La intensidad
+                        # que se eligió se funde en la subtonalidad (como se guardaba antes) para no perderla.
+                        inten = guardar.pop("desc_intensidad", None)
+                        if inten and not guardar.get("desc_subtonalidad"):
+                            guardar["desc_subtonalidad"] = inten
+                        db.update_muestra(muestra["id"], **guardar)
+                        st.toast("Guardado, pero falta aplicar la migración 0034 en Supabase para guardar la intensidad por separado.",
+                                 icon=":material/warning:")
                     st.session_state[desc_edit_key] = False
                     st.toast("Descripción visual guardada.", icon=":material/check_circle:")
                     st.rerun()
@@ -5957,7 +6020,7 @@ def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observ
     # adicionales si hay, ver descripcion_visual_para_excel) — independiente de las
     # Observaciones—, si no hay nada de eso, lo que el laboratorista escribió en "Observaciones"
     # del propio ensayo, y solo si ninguna de las dos existe, el tipo de muestra como último recurso.
-    ws["D13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or f"Tipo de muestra: {muestra.get('tipo_muestra','')}"
+    ws["D13"] = descripcion_para_informe(muestra)
 
 
 def _escribir_limites(ws, data):
@@ -6846,7 +6909,7 @@ def _llenar_encabezado_masa_unitaria(ws, codigo, perf_codigo, muestra, project, 
     ws["F12"] = muestra["numero"]  # Muestra No.
     ws["I12"] = to_float(muestra.get("profundidad_de"))
     ws["K12"] = to_float(muestra.get("profundidad_hasta"))
-    ws["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or f"Tipo de muestra: {muestra.get('tipo_muestra','')}"
+    ws["C13"] = descripcion_para_informe(muestra)
 
 
 def generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
@@ -6896,7 +6959,7 @@ def _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observacio
     ws["H12"] = muestra["numero"]  # Muestra No.
     prof_de, prof_hasta = to_float(muestra.get("profundidad_de")), to_float(muestra.get("profundidad_hasta"))
     ws["K12"] = f"{prof_de}-{prof_hasta}" if prof_de is not None and prof_hasta is not None else ""
-    ws["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or f"Tipo de muestra: {muestra.get('tipo_muestra','')}"
+    ws["C13"] = descripcion_para_informe(muestra)
 
 
 def generar_excel_cbr(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
@@ -6997,7 +7060,7 @@ def _generar_excel_gravedad(template, hoja, celdas, codigo, perf_codigo, muestra
     ws["F12"] = muestra["numero"]
     ws["I12"] = to_float(muestra.get("profundidad_de"))
     ws["K12"] = to_float(muestra.get("profundidad_hasta"))
-    ws["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+    ws["C13"] = descripcion_para_informe(muestra)
     for celda, valor in celdas.items():
         ws[celda] = to_float(valor)
     bio = BytesIO()
@@ -7036,7 +7099,7 @@ def generar_excel_limite_contraccion(codigo, perf_codigo, muestra, project, data
     ws["I12"] = muestra["numero"]
     ws["L12"] = to_float(muestra.get("profundidad_de"))
     ws["N12"] = to_float(muestra.get("profundidad_hasta"))
-    ws["D13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+    ws["D13"] = descripcion_para_informe(muestra)
     ws["F20"] = data.get("lc_recipiente") or None
     ws["F21"] = to_float(data.get("lc_volumen"))
     ws["F22"] = to_float(data.get("lc_masa_recipiente"))
@@ -7075,7 +7138,7 @@ def generar_excel_materia_organica(codigo, perf_codigo, muestra, project, data, 
     ws["H12"] = muestra["numero"]
     ws["K12"] = to_float(muestra.get("profundidad_de"))
     ws["M12"] = to_float(muestra.get("profundidad_hasta"))
-    ws["D13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+    ws["D13"] = descripcion_para_informe(muestra)
     ws["I18"] = data.get("mo_recipiente") or None
     ws["I19"] = to_float(data.get("mo_masa_crisol_seco"))
     ws["I20"] = to_float(data.get("mo_masa_crisol_ignicion"))
@@ -7111,7 +7174,7 @@ def generar_excel_proctor(codigo, perf_codigo, muestra, project, data, observaci
     ws["H12"] = muestra["numero"]
     ws["K12"] = to_float(muestra.get("profundidad_de"))
     ws["M12"] = to_float(muestra.get("profundidad_hasta"))
-    ws["D13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+    ws["D13"] = descripcion_para_informe(muestra)
 
     for i, col in enumerate("EFGH", start=1):
         def v(campo):
@@ -7329,7 +7392,7 @@ def generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, obs
     ws["G12"] = muestra["numero"]
     ws["J12"] = to_float(muestra.get("profundidad_de"))
     ws["L12"] = to_float(muestra.get("profundidad_hasta"))
-    ws["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+    ws["C13"] = descripcion_para_informe(muestra)
 
     # Dimensiones del anillo: la hoja trae una sola casilla (el mismo anillo para las 3 probetas),
     # se toma la de la probeta 1.
@@ -7904,7 +7967,7 @@ def generar_excel_masa_unitaria_b(codigo, perf_codigo, muestra, project, data, o
     c["F12"] = muestra["numero"]
     c["I12"] = to_float(muestra.get("profundidad_de"))
     c["K12"] = to_float(muestra.get("profundidad_hasta"))
-    c["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+    c["C13"] = descripcion_para_informe(muestra)
 
     c["D20"] = to_float(data.get("mub_altura"))
     c["E20"] = to_float(data.get("mub_diametro"))
@@ -8610,7 +8673,7 @@ def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, obs
     ws["I12"] = muestra["numero"]
     ws["M12"] = to_float(muestra.get("profundidad_de"))
     ws["O12"] = to_float(muestra.get("profundidad_hasta"))
-    ws["D13"] = descripcion_visual_para_excel(muestra) or ""
+    ws["D13"] = descripcion_para_informe(muestra)
     ws["D14"] = observaciones_ensayo or ""
 
     diametro, altura = to_float(data.get("cons_diametro")), to_float(data.get("cons_altura"))
@@ -9153,7 +9216,7 @@ def generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, 
     c["F12"] = muestra["numero"]
     c["H12"] = to_float(muestra.get("profundidad_de"))
     c["J12"] = to_float(muestra.get("profundidad_hasta"))
-    c["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+    c["C13"] = descripcion_para_informe(muestra)
 
     c["C18"] = _ci_promedio(data, "ci_d")
     c["C19"] = _ci_promedio(data, "ci_h")
@@ -9408,7 +9471,7 @@ def generar_excel_compresion_roca(codigo, perf_codigo, muestra, project, data, o
     c["F12"] = muestra["numero"]
     c["H12"] = to_float(muestra.get("profundidad_de"))
     c["J12"] = to_float(muestra.get("profundidad_hasta"))
-    c["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+    c["C13"] = descripcion_para_informe(muestra)
 
     c["C18"] = _roca_promedio(data, "roca_d")
     c["C19"] = _roca_promedio(data, "roca_h")
@@ -9909,7 +9972,7 @@ def generar_excel_carga_puntual(codigo, perf_codigo, muestra, project, data, obs
     c["I12"] = muestra["numero"]
     c["L12"] = to_float(muestra.get("profundidad_de"))
     c["N12"] = to_float(muestra.get("profundidad_hasta"))
-    c["D13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+    c["D13"] = descripcion_para_informe(muestra)
 
     valores_is50 = []
     for i, fila in enumerate(CP_FILAS_EXCEL, start=1):
@@ -10140,7 +10203,7 @@ def generar_excel_solidez_sulfatos(codigo, perf_codigo, muestra, project, data, 
     c["F12"] = muestra["numero"]
     c["I12"] = to_float(muestra.get("profundidad_de"))
     c["K12"] = to_float(muestra.get("profundidad_hasta"))
-    c["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+    c["C13"] = descripcion_para_informe(muestra)
 
     c["O18"] = to_float(data.get("sulf_masa_total"))
     for _label, fila in SULF_TAMICES:
@@ -10305,7 +10368,7 @@ def generar_excel_terrones_arcilla(codigo, perf_codigo, muestra, project, data, 
     c["F12"] = muestra["numero"]
     c["H12"] = to_float(muestra.get("profundidad_de"))
     c["J12"] = to_float(muestra.get("profundidad_hasta"))
-    c["C13"] = descripcion_visual_para_excel(muestra) or observaciones_ensayo or ""
+    c["C13"] = descripcion_para_informe(muestra)
 
     c["O15"] = to_float(data.get("ter_masa_total"))
     for _label, fila in TER_TAMICES:
