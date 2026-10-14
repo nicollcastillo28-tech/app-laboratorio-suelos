@@ -242,7 +242,7 @@ st.markdown(f"""
     estuviera bien. Se excluyen los mismos contenedores de "no son una tarjeta" que ya excluía la
     regla del acento izquierdo, más "logout-btn" (el ícono de cerrar sesión, invisible cuando su
     contenedor quedaba con este fondo blanco por detrás). */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]):not([role="dialog"] *) {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
         border-radius: 12px !important; border: 1px solid {BORDER} !important;
         box-shadow: 0 1px 4px rgba(11,28,48,0.08) !important; background: {SURFACE} !important;
     }}
@@ -323,7 +323,7 @@ st.markdown(f"""
        borde tapando el grupo entero en vez de resaltar una sola tarjeta. bell-alert/bell-quiet
        (el botón-contenedor de la campana en el topbar) tampoco: es un ícono, no una tarjeta —
        se veía como una rayita verde suelta pegada a la campana. */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]):not([role="dialog"] *) {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
         border-left: 4px solid {PRIMARY} !important;
     }}
     /* Tarjetas de "Ensayos asignados" (una por ensayo): más separación entre sí y sombra
@@ -655,6 +655,21 @@ st.markdown(f"""
        "Tipo"/"Profundidad" al lado para no partirse en varias líneas. */
     .assigned-chip-sm {{ font-size: 10px; padding: 2px 6px; white-space: nowrap; }}
     .assigned-chip-row {{ display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }}
+    .assigned-chip-muted {{ background: #EEF1F5; border-color: {BORDER}; color: {MUTED}; }}
+    /* Chips de "Ensayos asignados" que ABREN el ensayo al tocarlos: son st.button disfrazados del mismo cuadrito de color (no un botón aparte
+       al lado). El color sale del estado del ensayo (la clave del contenedor lleva success/warning/danger/muted). */
+    [class*="st-key-chips-"] {{ gap: 4px !important; align-items: flex-start; }}
+    [class*="st-key-chips-"] [data-testid="stElementContainer"], [class*="st-key-chipens-"] .stButton {{ width: auto !important; }}
+    [class*="st-key-chipens-"] button {{
+        min-height: 0 !important; height: auto !important; width: auto !important; padding: 5px 10px !important; border-radius: 6px !important;
+        border-width: 1px !important; border-style: solid !important; box-shadow: none !important; cursor: pointer;
+    }}
+    [class*="st-key-chipens-"] button p {{ font-size: 11.5px !important; font-weight: 700 !important; line-height: 1.2 !important; white-space: nowrap; }}
+    [class*="st-key-chipens-"] button:hover {{ filter: brightness(0.95); box-shadow: 0 1px 4px rgba(0,0,0,0.18) !important; }}
+    [class*="st-key-chipens-success"] button {{ background: {SUCCESS_LIGHT} !important; border-color: {SUCCESS} !important; color: {SUCCESS} !important; }}
+    [class*="st-key-chipens-warning"] button {{ background: {WARNING_LIGHT} !important; border-color: {WARNING} !important; color: {WARNING} !important; }}
+    [class*="st-key-chipens-danger"] button {{ background: {DANGER_LIGHT} !important; border-color: {DANGER} !important; color: {DANGER} !important; }}
+    [class*="st-key-chipens-muted"] button {{ background: #EEF1F5 !important; border-color: {BORDER} !important; color: {MUTED} !important; }}
 
     /* ---- TARJETAS DE PROYECTO (Proyectos en ejecución) ---- */
     .code-badge {{
@@ -5193,16 +5208,32 @@ def _render_tabla_muestras_con_semaforo(muestras, codigo, perf_codigo):
         cols[1].markdown(f'<span class="cell-muted">{html.escape(m["tipo_muestra"])}</span>', unsafe_allow_html=True)
         cols[2].markdown(f'<span class="cell-muted">{fmt_prof(m["profundidad_de"])}–{fmt_prof(m["profundidad_hasta"])} m</span>', unsafe_allow_html=True)
         ensayos_sol = unificar_ensayos([e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS])
-        chip_parts = []
-        for e in ensayos_sol:
-            tipo_interno = SUPPORTED_ASSAY_MAP.get(e)
-            existing = get_assay(m["id_unico"], tipo_interno) if tipo_interno else None
-            status = existing["status"] if existing else "sin-iniciar"
-            chip_class = "assigned-chip assigned-chip-sm " + STATUS_BADGE[status].replace("badge-", "assigned-chip-")
-            chip_parts.append(f'<span class="{chip_class}">{html.escape(e)}</span>')
-        chips = (f'<div class="assigned-chip-row">{"".join(chip_parts)}</div>' if chip_parts
-                 else '<span class="cell-muted">—</span>')
-        cols[3].markdown(chips, unsafe_allow_html=True)
+        with cols[3]:
+            if not ensayos_sol:
+                st.markdown('<span class="cell-muted">—</span>', unsafe_allow_html=True)
+            # Cada ensayo es un chip de color (estado de ESE ensayo) que, al tocarlo, abre directamente el ensayo: así no hace falta entrar
+            # primero a la muestra ni abrir pestañas aparte. Los que todavía no tienen formulario en la app quedan como chip fijo.
+            with st.container(key=f"chips-{m['id_unico']}"):
+                for e in ensayos_sol:
+                    tipo_interno = SUPPORTED_ASSAY_MAP.get(e)
+                    existing = get_assay(m["id_unico"], tipo_interno) if tipo_interno else None
+                    estado = assay_estado_display(existing) if existing else "sin-iniciar"
+                    clase = STATUS_BADGE[estado].replace("badge-", "")
+                    if not tipo_interno:
+                        st.markdown(f'<span class="assigned-chip assigned-chip-sm assigned-chip-muted">{html.escape(e)}</span>', unsafe_allow_html=True)
+                        continue
+                    slug = re.sub(r"[^a-z0-9]+", "-", e.lower())
+                    with st.container(key=f"chipens-{clase}-{m['id_unico']}-{slug}"):
+                        if st.button(e, key=f"chip_abrir_{m['id_unico']}_{slug}", help=f"Abrir {e} · {STATUS_LABELS[estado]}"):
+                            st.session_state.selected_codigo = codigo
+                            st.session_state.selected_perforacion = perf_codigo
+                            st.session_state.selected_muestra_id = m["id_unico"]
+                            if existing:
+                                st.session_state.selected_assay_id = existing["id"]
+                            else:
+                                st.session_state.selected_assay_id = db.create_assay(m["id"], tipo_interno)["id"]
+                            st.session_state.selected_assay_type = tipo_interno
+                            navigate("assay-form")
         with cols[4]:
             if st.button("Abrir", key=f"open_muestra_{m['id_unico']}", use_container_width=True):
                 # También proyecto y perforación: desde el desplegable de Detalle de Proyecto la perforación
