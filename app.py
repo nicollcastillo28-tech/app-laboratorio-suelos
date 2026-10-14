@@ -3509,6 +3509,16 @@ def render_home():
                     st.session_state.selected_codigo = elegido
                     navigate("bitacora")
 
+    if es_jefe:
+        st.markdown("<br>", unsafe_allow_html=True)
+        with st.container(border=True):
+            u1, u2 = st.columns([3, 1.4], vertical_alignment="center")
+            u1.markdown(f'<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">{icon("group", size=15)} '
+                        f'Usuarios del laboratorio</div><div class="cell-muted">Crear cuentas, restablecer claves y dar de baja a quien ya no trabaja aquí.</div>',
+                        unsafe_allow_html=True)
+            if u2.button("Administrar usuarios", key="home_usuarios_btn", icon=":material/manage_accounts:", use_container_width=True):
+                navigate("usuarios")
+
     st.markdown("<br>", unsafe_allow_html=True)
     todos_los_ensayos = sorted(st.session_state.assays, key=lambda a: a["lastModified"], reverse=True)
 
@@ -3916,6 +3926,124 @@ def _bal_admin():
                     st.rerun()
                 except Exception:
                     st.error("No se pudo guardar la balanza (revisa tu conexión).")
+
+
+USUARIO_ROLES = {"laboratorista": "Laboratorista", "ingeniero": "Director Técnico", "jefe": "Jefe de Laboratorio"}
+
+
+def render_usuarios():
+    """Administración de cuentas (solo Jefe de Laboratorio): crear, restablecer clave, dar de baja / reactivar y eliminar. Las operaciones
+    de db.admin_* usan la service-role key del servidor y vuelven a comprobar que quien las pide es Jefe."""
+    require_role("jefe")
+    if st.button("← Atrás"):
+        go_back(fallback="home")
+    st.markdown("## Usuarios del laboratorio")
+    st.caption("Cada persona entra con un código corto (ej. jperez) y su clave. Aquí creas las cuentas, restableces claves olvidadas "
+               "y das de baja a quien ya no trabaja en el laboratorio.")
+
+    if st.session_state.get("_usuarios_aviso"):
+        st.success(st.session_state.pop("_usuarios_aviso"))
+
+    if not db.admin_configurado():
+        st.warning("Falta un paso de configuración para crear y eliminar usuarios desde la app: agrega el secreto "
+                   "**SUPABASE_SERVICE_ROLE_KEY** (Supabase → Project Settings → API Keys → *secret*) en Streamlit Cloud → Settings → Secrets, "
+                   "y reinicia la app. Esa llave solo la usa el servidor; nadie la ve en pantalla.")
+        for perfil in sorted(db.list_profiles(), key=lambda x: x["full_name"].lower()):
+            st.markdown(f"- **{perfil['full_name']}** · {USUARIO_ROLES.get(perfil['role'], perfil['role'])}"
+                        + ("" if perfil["active"] else " · de baja"))
+        return
+
+    with st.container(border=True):
+        st.markdown(f'<div class="section-title">{icon("person_add", size=15)} Crear usuario</div>', unsafe_allow_html=True)
+        # No se usa clear_on_submit: borraría lo digitado también cuando hay un error de validación. El formulario se limpia solo si se creó bien.
+        if st.session_state.pop("_usr_limpiar", False):
+            for k in ("usr_new_codigo", "usr_new_nombre", "usr_new_clave"):
+                st.session_state.pop(k, None)
+        with st.form("crear-usuario", clear_on_submit=False, border=False):
+            f1, f2 = st.columns(2)
+            codigo = f1.text_input("Código de usuario", placeholder="ej. jperez", autocomplete="off", key="usr_new_codigo",
+                                    help="Con este código inicia sesión: de 3 a 30 caracteres, solo letras minúsculas, números, punto, guion o guion bajo.")
+            nombre = f2.text_input("Nombre completo", placeholder="Juan Pérez", autocomplete="off", key="usr_new_nombre")
+            f3, f4 = st.columns(2)
+            rol = f3.selectbox("Rol", list(USUARIO_ROLES), format_func=USUARIO_ROLES.get, key="usr_new_rol")
+            clave = f4.text_input("Clave inicial", type="password", autocomplete="new-password", key="usr_new_clave",
+                                   help="Mínimo 8 caracteres. Entrégasela a la persona; luego puedes restablecerla desde aquí.")
+            crear = st.form_submit_button("Crear usuario", type="primary", icon=":material/person_add:")
+        if crear:
+            try:
+                nuevo = db.admin_crear_usuario(codigo, nombre, rol, clave)
+            except ValueError as e:
+                st.error(str(e))
+            except Exception:
+                st.error("No se pudo crear el usuario. Revisa la conexión y que la llave de servicio esté bien configurada; inténtalo de nuevo.")
+            else:
+                list_laboratoristas.clear()
+                st.session_state["_usr_limpiar"] = True
+                st.session_state["_usuarios_aviso"] = (f"Usuario creado: **{nuevo['full_name']}** ({USUARIO_ROLES[nuevo['role']]}). "
+                                                       f"Código para entrar: **{nuevo['codigo']}**.")
+                st.rerun()
+
+    st.markdown('<div class="section-title" style="margin-top:18px;">Usuarios</div>', unsafe_allow_html=True)
+    try:
+        usuarios = db.admin_listar_usuarios()
+    except Exception:
+        st.error("No se pudo cargar la lista de usuarios. Inténtalo de nuevo.")
+        return
+    mi_id = str((st.session_state.profile or {}).get("id", ""))
+    for u in usuarios:
+        es_yo = str(u["id"]) == mi_id
+        with st.container(border=True):
+            c1, c2 = st.columns([3, 1.4], vertical_alignment="center")
+            estado = "" if u["active"] else ' <span class="badge badge-muted">De baja</span>'
+            c1.markdown(f'<div class="cell-title">{html.escape(u["full_name"])}{" (tú)" if es_yo else ""}{estado}</div>'
+                        f'<div class="cell-sub">Código: <b>{html.escape(u["codigo"])}</b> · {USUARIO_ROLES.get(u["role"], u["role"])}</div>',
+                        unsafe_allow_html=True)
+            with c2:
+                with st.popover("Restablecer clave", icon=":material/key:", use_container_width=True):
+                    nueva = st.text_input("Nueva clave (mín. 8 caracteres)", type="password", autocomplete="new-password",
+                                          key=f"usr_clave_{u['id']}")
+                    if st.button("Guardar clave", key=f"usr_clave_ok_{u['id']}", type="primary", use_container_width=True):
+                        try:
+                            db.admin_restablecer_clave(u["id"], nueva)
+                        except ValueError as e:
+                            st.error(str(e))
+                        except Exception:
+                            st.error("No se pudo cambiar la clave. Inténtalo de nuevo.")
+                        else:
+                            st.session_state["_usuarios_aviso"] = f"Clave de **{u['full_name']}** actualizada."
+                            st.rerun()
+            if not es_yo:
+                a1, a2 = st.columns(2)
+                with a1:
+                    if u["active"]:
+                        if st.button("Dar de baja", key=f"usr_baja_{u['id']}", icon=":material/person_off:", use_container_width=True,
+                                      help="Ya no podrá iniciar sesión; su nombre se conserva en el historial."):
+                            try:
+                                db.admin_cambiar_activo(u["id"], False)
+                            except ValueError as e:
+                                st.error(str(e))
+                            else:
+                                list_laboratoristas.clear()
+                                st.session_state["_usuarios_aviso"] = f"**{u['full_name']}** quedó de baja."
+                                st.rerun()
+                    elif st.button("Reactivar", key=f"usr_alta_{u['id']}", icon=":material/person_check:", use_container_width=True):
+                        db.admin_cambiar_activo(u["id"], True)
+                        list_laboratoristas.clear()
+                        st.session_state["_usuarios_aviso"] = f"**{u['full_name']}** quedó activo de nuevo."
+                        st.rerun()
+                with a2:
+                    if confirm_delete(f"usuario_{u['id']}", f"la cuenta de {u['full_name']}"):
+                        try:
+                            resultado = db.admin_eliminar_usuario(u["id"])
+                        except ValueError as e:
+                            st.error(str(e))
+                        else:
+                            list_laboratoristas.clear()
+                            st.session_state["_usuarios_aviso"] = (
+                                f"La cuenta de **{u['full_name']}** se eliminó." if resultado == "eliminado" else
+                                f"**{u['full_name']}** ya figura en ensayos o proyectos, así que no se puede borrar sin perder ese historial: "
+                                "quedó de baja (no puede entrar).")
+                            st.rerun()
 
 
 def render_balanzas():
@@ -12242,7 +12370,7 @@ else:
         "bitacora": render_bitacora, "assay-form": render_assay_form,
         "continue": render_continue, "search": render_search,
         "projects-active": render_projects_active, "projects-done": render_projects_done,
-        "balanzas": render_balanzas,
+        "balanzas": render_balanzas, "usuarios": render_usuarios,
     }
     SCREENS.get(st.session_state.screen, render_home)()
     render_bottomnav()

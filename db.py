@@ -480,6 +480,140 @@ def list_profiles() -> list[dict]:
 
 
 # ════════════════════════════════════════════════════════════════════
+# ADMINISTRACIÓN DE USUARIOS (solo Jefe de Laboratorio)
+# Crear una cuenta de acceso en Supabase Auth exige la "service role" key (la anon key, que usa la app para todo lo demás, no puede).
+# Esa llave vive SOLO en los secretos del servidor (SUPABASE_SERVICE_ROLE_KEY), nunca se guarda en session_state ni llega al navegador, y
+# cada función de abajo comprueba primero, con el cliente de la propia sesión, que quien la invoca es un Jefe de Laboratorio activo.
+# ════════════════════════════════════════════════════════════════════
+ROLES_VALIDOS = ("laboratorista", "ingeniero", "jefe")
+
+
+class AdminNoConfigurado(Exception):
+    pass
+
+
+def admin_configurado() -> bool:
+    try:
+        return bool(st.secrets.get("SUPABASE_SERVICE_ROLE_KEY"))
+    except Exception:
+        return False
+
+
+def _admin_client() -> Client:
+    if not admin_configurado():
+        raise AdminNoConfigurado("Falta SUPABASE_SERVICE_ROLE_KEY en los secretos de la app.")
+    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_SERVICE_ROLE_KEY"])
+
+
+def _exigir_jefe() -> dict:
+    perfil = get_current_profile()
+    if not perfil or perfil.get("role") != "jefe":
+        raise PermissionError("Solo el Jefe de Laboratorio puede administrar usuarios.")
+    return perfil
+
+
+def codigo_a_email(codigo: str) -> str:
+    return f"{codigo.strip().lower()}@{AUTH_DOMAIN}"
+
+
+def admin_listar_usuarios() -> list[dict]:
+    """[{id, codigo, full_name, role, active}] de todas las cuentas (el código sale del correo ficticio de la cuenta)."""
+    _exigir_jefe()
+    admin = _admin_client()
+    correos = {}
+    pagina = 1
+    while True:
+        usuarios = admin.auth.admin.list_users(page=pagina, per_page=200)
+        if not usuarios:
+            break
+        for u in usuarios:
+            correos[str(u.id)] = (u.email or "").split("@")[0]
+        if len(usuarios) < 200:
+            break
+        pagina += 1
+    perfiles = admin.table("profiles").select("id, full_name, role, active").execute().data or []
+    return sorted(({"id": p["id"], "codigo": correos.get(str(p["id"]), "—"), "full_name": p["full_name"], "role": p["role"],
+                    "active": p["active"]} for p in perfiles), key=lambda u: (not u["active"], u["full_name"].lower()))
+
+
+def admin_crear_usuario(codigo: str, full_name: str, role: str, password: str) -> dict:
+    perfil = _exigir_jefe()
+    import re as _re
+    codigo = codigo.strip().lower()
+    if not _re.fullmatch(r"[a-z0-9][a-z0-9._-]{2,29}", codigo):
+        raise ValueError("El código debe tener de 3 a 30 caracteres: letras, números, punto, guion o guion bajo (sin espacios ni tildes).")
+    if not full_name.strip():
+        raise ValueError("Escribe el nombre completo.")
+    if role not in ROLES_VALIDOS:
+        raise ValueError("Rol no válido.")
+    if len(password) < 8:
+        raise ValueError("La clave debe tener al menos 8 caracteres.")
+    admin = _admin_client()
+    try:
+        res = admin.auth.admin.create_user({"email": codigo_a_email(codigo), "password": password, "email_confirm": True})
+    except Exception as e:
+        if "already" in str(e).lower() or "registered" in str(e).lower() or "exists" in str(e).lower():
+            raise ValueError(f"Ya existe un usuario con el código «{codigo}».")
+        raise
+    uid = str(res.user.id)
+    try:
+        admin.table("profiles").insert({"id": uid, "full_name": full_name.strip(), "role": role, "active": True}).execute()
+    except Exception:
+        # Si no se pudo crear el perfil no se deja una cuenta de acceso huérfana.
+        try:
+            admin.auth.admin.delete_user(uid)
+        except Exception:
+            pass
+        raise
+    return {"id": uid, "codigo": codigo, "full_name": full_name.strip(), "role": role, "active": True, "creado_por": perfil["id"]}
+
+
+def _otros_jefes_activos(admin, excepto_id: str) -> int:
+    filas = admin.table("profiles").select("id").eq("role", "jefe").eq("active", True).neq("id", excepto_id).execute().data or []
+    return len(filas)
+
+
+def admin_cambiar_activo(user_id: str, activo: bool):
+    """Da de baja (activo=False) o reactiva una cuenta: quien está de baja ya no puede iniciar sesión, pero su historial se conserva."""
+    perfil = _exigir_jefe()
+    if not activo:
+        if str(user_id) == str(perfil["id"]):
+            raise ValueError("No puedes dar de baja tu propia cuenta.")
+    admin = _admin_client()
+    if not activo and _otros_jefes_activos(admin, str(user_id)) == 0:
+        objetivo = admin.table("profiles").select("role").eq("id", user_id).execute().data or []
+        if objetivo and objetivo[0]["role"] == "jefe":
+            raise ValueError("Tiene que quedar al menos un Jefe de Laboratorio activo.")
+    admin.table("profiles").update({"active": activo}).eq("id", user_id).execute()
+
+
+def admin_restablecer_clave(user_id: str, nueva_clave: str):
+    _exigir_jefe()
+    if len(nueva_clave) < 8:
+        raise ValueError("La clave debe tener al menos 8 caracteres.")
+    _admin_client().auth.admin.update_user_by_id(str(user_id), {"password": nueva_clave})
+
+
+def admin_eliminar_usuario(user_id: str) -> str:
+    """Elimina la cuenta. Devuelve 'eliminado' o, si la persona ya figura en el historial de ensayos o proyectos (no se puede borrar sin
+    romper ese historial), 'baja': queda dada de baja (no puede entrar) y su nombre se conserva donde ya aparece."""
+    perfil = _exigir_jefe()
+    if str(user_id) == str(perfil["id"]):
+        raise ValueError("No puedes eliminar tu propia cuenta.")
+    admin = _admin_client()
+    if _otros_jefes_activos(admin, str(user_id)) == 0:
+        objetivo = admin.table("profiles").select("role").eq("id", user_id).execute().data or []
+        if objetivo and objetivo[0]["role"] == "jefe":
+            raise ValueError("Tiene que quedar al menos un Jefe de Laboratorio activo.")
+    try:
+        admin.auth.admin.delete_user(str(user_id))
+        return "eliminado"
+    except Exception:
+        admin.table("profiles").update({"active": False}).eq("id", user_id).execute()
+        return "baja"
+
+
+# ════════════════════════════════════════════════════════════════════
 # NOTIFICACIONES — codigo_interno/perforacion_codigo/muestra_id_unico son
 # identificadores de negocio en texto plano, no FKs: una notificación es
 # informativa/efímera, no necesita integridad referencial con las otras tablas.
