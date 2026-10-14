@@ -4378,6 +4378,49 @@ def render_new_project():
     edited_frames = {}
     fechas_ingreso_perf = {}
     if codigo_valido and nombre:
+        # Subir la bitácora de orden de una vez, sin crear el proyecto primero: lo que traiga el Excel se carga como borrador de
+        # perforaciones y muestras (abajo, para revisar y corregir) y solo se guarda al darle "Guardar bitácora".
+        st.markdown('<div class="section-title">Bitácora de orden</div>', unsafe_allow_html=True)
+        with st.expander("Subir la bitácora de orden (plantilla GDA-FL-003 ya diligenciada)", icon=":material/upload_file:",
+                          expanded=not perforaciones):
+            st.caption("Sube uno o varios archivos de la plantilla oficial \"Bitácora Orden para Ensayos de Laboratorio\" — un archivo puede traer "
+                       "un solo sondeo o varias hojas (una por sondeo/apique). Las perforaciones y muestras que traiga quedan abajo para que las "
+                       "revises; con solo subir el archivo todavía no se guarda nada.")
+            archivos_orden = st.file_uploader("Archivos .xlsx / .xlsm", type=["xlsx", "xlsm"], accept_multiple_files=True,
+                                                key="import_bitacora_nuevo")
+            if archivos_orden and st.button("Importar de estos archivos", icon=":material/publish:", key="btn_import_bitacora_nuevo"):
+                advertencias_totales, importadas = [], 0
+                for archivo in archivos_orden:
+                    perfs_parseadas, advertencias, _hdr = parse_bitacora_orden_xlsx(archivo.name, archivo.getvalue())
+                    advertencias_totales.extend(advertencias)
+                    for pp in perfs_parseadas:
+                        codigo_norm = pp["codigo"].strip().upper()
+                        perf_nueva = next((p for p in perforaciones if p["codigo"].strip().upper() == codigo_norm), None)
+                        if not perf_nueva:
+                            consecutivo = len([p for p in perforaciones if p["tipo"] == pp["tipo"]]) + 1
+                            perf_nueva = {"tipo": pp["tipo"], "consecutivo": consecutivo, "codigo": pp["codigo"]}
+                            perforaciones.append(perf_nueva)
+                        muestras_perf = st.session_state.setdefault("draft_muestras", {}).setdefault(perf_nueva["codigo"], [])
+                        key_perf = f"{codigo_interno}::{perf_nueva['codigo']}"
+                        df_actual = _bitacora_draft_df(key_perf, muestras_perf)
+                        numeros_ya = set(df_actual["Número"].astype(str).str.strip())
+                        filas_nuevas = [f for f in pp["filas"] if f["Número"] not in numeros_ya]
+                        if filas_nuevas:
+                            df_actual = pd.concat([df_actual, pd.DataFrame(filas_nuevas)], ignore_index=True)
+                            df_actual = df_actual[df_actual["Número"].astype(str).str.strip() != ""]  # quita la fila vacía de arranque
+                            orden = sorted(range(len(df_actual)), key=lambda i: clave_numero_muestra(df_actual["Número"].iloc[i]))
+                            st.session_state.bitacora_draft[key_perf] = df_actual.iloc[orden].reset_index(drop=True)[BITACORA_BASE_COLS]
+                            st.session_state.pop(f"neweditor_{key_perf}", None)   # el editor re-aplicaría sus ediciones por posición de fila
+                            importadas += len(filas_nuevas)
+                if importadas:
+                    st.session_state["_import_nuevo_msg"] = f"Se importaron {importadas} muestra(s). Revísalas abajo antes de guardar la bitácora."
+                st.session_state["_import_nuevo_adv"] = advertencias_totales
+                st.rerun()
+            if st.session_state.get("_import_nuevo_msg"):
+                st.success(st.session_state["_import_nuevo_msg"])
+            for adv in st.session_state.get("_import_nuevo_adv", []):
+                st.warning(adv)
+
         st.markdown('<div class="section-title">Perforación</div>', unsafe_allow_html=True)
         pc1, pc2 = st.columns([2, 1])
         with pc1:
@@ -4466,6 +4509,8 @@ def render_new_project():
         # que olvidarlo al salir para que la próxima vez se recalcule contra la lista de proyectos
         # ya actualizada (si no, seguiría sugiriendo el mismo número recién usado).
         st.session_state.pop("new_numero", None)
+        st.session_state.pop("_import_nuevo_msg", None)
+        st.session_state.pop("_import_nuevo_adv", None)
 
     st.markdown("<br>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
