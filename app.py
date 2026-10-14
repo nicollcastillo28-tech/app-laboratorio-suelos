@@ -28,9 +28,23 @@ import alertas_resultados as alertas_res
 import db
 
 
+# Funciones de db que modifican datos del laboratorio. En el "Modo de prueba" (pantalla "pruebas") se ignoran: los formularios y
+# las descargas son los de verdad, pero nada llega a Supabase. Sesión, notificaciones leídas, balanzas y usuarios no se tocan acá.
+_PREFIJOS_ESCRITURA_DB = ("update_", "create_", "add_", "set_", "upsert_", "restore_or_create", "asignar_", "archive_", "commit_",
+                          "jefe_", "ing_", "reset_", "delete_", "save_")
+
+
+def _en_modo_prueba():
+    try:
+        return st.session_state.get("screen") == "pruebas"
+    except Exception:
+        return False
+
+
 def _envolver_escrituras_db():
     """Toda función de db que no sea de lectura (list_/get_) marca los datos en memoria como desactualizados: así _load_data
-    sabe cuándo NO puede saltarse la recarga que sigue a un cambio de pantalla. Se hace una sola vez por proceso."""
+    sabe cuándo NO puede saltarse la recarga que sigue a un cambio de pantalla. Se hace una sola vez por proceso.
+    En el Modo de prueba las funciones que escriben datos no hacen nada (ver _PREFIJOS_ESCRITURA_DB)."""
     import functools
     import inspect
     for nombre, f in list(vars(db).items()):
@@ -38,9 +52,11 @@ def _envolver_escrituras_db():
                 or getattr(f, "_gd_envuelta", False)):
             continue
 
-        def _crear(f):
+        def _crear(f, escribe):
             @functools.wraps(f)
             def envuelta(*args, **kwargs):
+                if escribe and _en_modo_prueba():
+                    return None
                 try:
                     st.session_state["_datos_sucios"] = True
                 except Exception:
@@ -48,7 +64,7 @@ def _envolver_escrituras_db():
                 return f(*args, **kwargs)
             envuelta._gd_envuelta = True
             return envuelta
-        setattr(db, nombre, _crear(f))
+        setattr(db, nombre, _crear(f, nombre.startswith(_PREFIJOS_ESCRITURA_DB)))
 
 
 _envolver_escrituras_db()
@@ -3536,6 +3552,15 @@ def render_home():
                         unsafe_allow_html=True)
             if u2.button("Administrar usuarios", key="home_usuarios_btn", icon=":material/manage_accounts:", use_container_width=True):
                 navigate("usuarios")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    with st.container(border=True):
+        t1, t2 = st.columns([3, 1.4], vertical_alignment="center")
+        t1.markdown(f'<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">{icon("science", size=15)} '
+                    f'Modo de prueba</div><div class="cell-muted">Prueba los formularios y descarga los formatos con una muestra de ejemplo: '
+                    f'no se guarda nada ni toca ningún proyecto.</div>', unsafe_allow_html=True)
+        if t2.button("Abrir modo de prueba", key="home_pruebas_btn", icon=":material/science:", use_container_width=True):
+            navigate("pruebas")
 
     st.markdown("<br>", unsafe_allow_html=True)
     todos_los_ensayos = sorted(st.session_state.assays, key=lambda a: a["lastModified"], reverse=True)
@@ -11881,7 +11906,17 @@ def render_alertas_resultados(alertas, info_material):
             st.markdown(f"- {enlace} _({etiqueta})_" + (f"  \n  {f['nota']}" if f.get("nota") else ""))
 
 
-def render_assay_form():
+def _salir_del_ensayo(prueba):
+    """Después de enviar un ensayo a revisión se vuelve a la muestra; en el Modo de prueba esa muestra no existe, así que
+    solo se avisa y se queda en la pantalla de pruebas."""
+    if prueba:
+        st.session_state["_pruebas_aviso"] = ("Así queda al enviarlo a revisión: en un proyecto real el ensayo pasa al Jefe de "
+                                              "Laboratorio. Como esto es una prueba, no se guardó ni se avisó a nadie.")
+        st.rerun()
+    navigate("muestra-detail")
+
+
+def render_assay_form(prueba=False):
     assay_id = st.session_state.selected_assay_id
     assay = next((a for a in st.session_state.assays if a["id"] == assay_id), None)
     if not assay:
@@ -11896,8 +11931,9 @@ def render_assay_form():
     # El Jefe y el Director Técnico solo consultan los ensayos — quien digita los datos de laboratorio es el laboratorista.
     read_only = es_supervisor or (st.session_state.role == "laboratorista" and project_status(codigo) == "ejecutado")
 
-    if st.button("← Atrás"):
+    if not prueba and st.button("← Atrás"):
         go_back(fallback="muestra-detail")
+    puede_descargar = es_supervisor or prueba
 
     st.markdown(f"## {ASSAY_LABELS[assay['tipo']]}")
     st.caption("Resultados de Ensayo" if read_only else "Registro de Ensayo")
@@ -11993,7 +12029,7 @@ def render_assay_form():
             with st.container(border=True):
                 st.markdown(card_header_html("person", "Laboratorista"), unsafe_allow_html=True)
                 st.markdown(f'<div style="font-weight:600;">{html.escape(assay.get("laboratorist") or "—")}</div>', unsafe_allow_html=True)
-        if es_jefe and assay["status"] == "finalizado":
+        if es_jefe and assay["status"] == "finalizado" and not prueba:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("Habilitar edición para el laboratorista", icon=":material/lock_open:", use_container_width=True):
                 db.update_assay_data(assay["id"], status="en-proceso")
@@ -12145,7 +12181,7 @@ def render_assay_form():
                             if compute_muestra_estado(muestra) == "finalizado":
                                 add_notification("jefe", f"La Muestra {muestra['numero']} de {codigo} ya completó todos sus "
                                                           f"ensayos — está lista para tu confirmación.", codigo, perf_codigo, muestra_id)
-                    navigate("muestra-detail")
+                    _salir_del_ensayo(prueba)
 
         # "No se pudo realizar": para cuando el ensayo no se puede completar por una razón ajena a
         # los datos (ej. en Carga puntual, los especímenes no cumplían las dimensiones mínimas) --
@@ -12188,7 +12224,7 @@ def render_assay_form():
                                 if compute_muestra_estado(muestra) == "finalizado":
                                     add_notification("jefe", f"La Muestra {muestra['numero']} de {codigo} ya completó todos sus "
                                                               f"ensayos — está lista para tu confirmación.", codigo, perf_codigo, muestra_id)
-                        navigate("muestra-detail")
+                        _salir_del_ensayo(prueba)
                     except Exception:
                         st.error("No se pudo guardar (revisa tu conexión) — vuelve a intentarlo.")
         else:
@@ -12199,7 +12235,7 @@ def render_assay_form():
 
     # No se ofrece descarga de Excel para un ensayo marcado "no se pudo realizar" (ver
     # motivo_no_realizado más arriba) -- no hay datos de verdad que exportar.
-    if not motivo_no_realizado and es_supervisor and assay["tipo"] == "granulometria" and muestra:
+    if not motivo_no_realizado and puede_descargar and assay["tipo"] == "granulometria" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_granulometria(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -12209,7 +12245,7 @@ def render_assay_form():
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
-    if not motivo_no_realizado and es_supervisor and assay["tipo"] == "pasa200" and muestra:
+    if not motivo_no_realizado and puede_descargar and assay["tipo"] == "pasa200" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_pasa200(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -12219,7 +12255,7 @@ def render_assay_form():
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
-    if not motivo_no_realizado and es_supervisor and assay["tipo"] == "humedad" and muestra:
+    if not motivo_no_realizado and puede_descargar and assay["tipo"] == "humedad" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_humedad(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -12229,7 +12265,7 @@ def render_assay_form():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
 
-    if not motivo_no_realizado and es_supervisor and assay["tipo"] == "limites" and muestra:
+    if not motivo_no_realizado and puede_descargar and assay["tipo"] == "limites" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_limites(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -12239,7 +12275,7 @@ def render_assay_form():
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
-    if not motivo_no_realizado and es_supervisor and assay["tipo"] == "masa-unitaria" and muestra and data.get("mu_metodo") != "Método B":
+    if not motivo_no_realizado and puede_descargar and assay["tipo"] == "masa-unitaria" and muestra and data.get("mu_metodo") != "Método B":
         # Parafinado y Método B usan plantillas de Excel distintas (GDA-FLC-004 y GDA-FLC-030) — cada una con su
         # propio botón, más abajo para Método B.
         st.markdown("---")
@@ -12251,7 +12287,7 @@ def render_assay_form():
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
 
-    if not motivo_no_realizado and es_supervisor and assay["tipo"] == "masa-unitaria" and muestra and data.get("mu_metodo") == "Método B":
+    if not motivo_no_realizado and puede_descargar and assay["tipo"] == "masa-unitaria" and muestra and data.get("mu_metodo") == "Método B":
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -12409,6 +12445,105 @@ def render_assay_form():
             data=excel_bytes, file_name=f"CBR_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
+
+
+# ════════════════════════════════════════════════════════════════════
+# MODO DE PRUEBA
+# ════════════════════════════════════════════════════════════════════
+# Un proyecto/sondeo/muestra ficticios que viven SOLO en la sesión del navegador (st.session_state["_pruebas"]): se prueban los
+# formularios y las descargas de Excel reales sin crear nada en Supabase. Mientras la pantalla es "pruebas", db ignora toda
+# escritura de datos (ver _PREFIJOS_ESCRITURA_DB), y durante el dibujo del ensayo la app solo "ve" estos datos ficticios.
+PRUEBAS_VISTAS = ("Digitando (laboratorista)", "Consultando (Jefe / Director Técnico)")
+
+
+def _pruebas_estado():
+    est = st.session_state.get("_pruebas")
+    if est:
+        return est
+    hoy = hoy_colombia()
+    anio = str(hoy.year)[2:]
+    codigo = f"GDA-000-{anio}"
+    est = {
+        "proyecto": {"id": "sbx-proyecto", "codigo_interno": codigo, "nombre": "PROYECTO DE PRUEBA (datos ficticios)",
+                     "cliente": "CLIENTE DE PRUEBA", "correo_cliente": "prueba@geodelta.co", "numero": "000", "anio": anio,
+                     "localizacion": "Bogotá D.C.", "norma": "INVIAS", "muestra_tomada_por": "Personal de prueba",
+                     "fecha_bitacora": hoy.isoformat(), "fecha_ingreso_muestra": hoy.isoformat(), "fecha_recepcion": hoy.isoformat()},
+        "perforacion": {"id": "sbx-perforacion", "project_id": "sbx-proyecto", "tipo": "Sondeo", "consecutivo": 1, "codigo": "S1",
+                        "fecha_ingreso": hoy.isoformat()},
+        "muestra": {"id": "sbx-muestra", "perforacion_id": "sbx-perforacion", "id_unico": f"{codigo}-S1-M1", "numero": "1",
+                    "profundidad_de": 1.0, "profundidad_hasta": 1.5, "tipo_muestra": "SPT", "ensayos": {}, "observaciones": "",
+                    "desc_tipo_suelo": "ARCILLA", "desc_color": "MARRÓN", "updated_at": now_iso()},
+        "assays": {}, "version": {},
+    }
+    st.session_state["_pruebas"] = est
+    return est
+
+
+def _pruebas_ensayo_nuevo(est, tipo):
+    ahora = now_iso()
+    return {"id": f"sbx-{tipo}-{est['version'].get(tipo, 0)}", "muestra_id": est["muestra"]["id_unico"], "tipo": tipo, "data": {},
+            "status": "sin-iniciar", "observations": "", "laboratorist": "", "historial": [], "created_at": ahora, "updated_at": ahora,
+            "createdAt": ahora, "lastModified": ahora, "codigo_interno": est["proyecto"]["codigo_interno"],
+            "perforacion_codigo": est["perforacion"]["codigo"], "muestra_numero": est["muestra"]["numero"]}
+
+
+def render_pruebas():
+    if st.button("← Atrás"):
+        go_back()
+    st.markdown("## Modo de prueba")
+    st.markdown(
+        f'<div style="background:{WARNING_LIGHT};color:{WARNING};border-radius:12px;padding:12px 16px;margin-bottom:14px;">'
+        f'{icon("science", size=18)} <b>Aquí nada es real ni se guarda.</b> Es un proyecto y una muestra de ejemplo que solo existen mientras '
+        f'tengas esta pestaña abierta. Los formularios y los formatos de Excel son los mismos de siempre.</div>', unsafe_allow_html=True)
+    aviso = st.session_state.pop("_pruebas_aviso", None)
+    if aviso:
+        st.success(aviso)
+
+    est = _pruebas_estado()
+    muestra = est["muestra"]
+    with st.container(border=True):
+        st.markdown(card_header_html("science", "Qué quieres probar"), unsafe_allow_html=True)
+        tipo = st.selectbox("Ensayo", list(ASSAY_LABELS), format_func=ASSAY_LABELS.get, key="pruebas_tipo")
+        vista = st.radio("Cómo lo quieres ver", PRUEBAS_VISTAS, horizontal=True, key="pruebas_vista")
+        with st.expander("Muestra de ejemplo", icon=":material/labs:"):
+            st.caption("Lo que se elija aquí sale en la descripción visual y decide con qué rangos se comparan los resultados (alertas).")
+            c1, c2, c3, c4 = st.columns(4)
+            muestra["desc_tipo_suelo"] = c1.selectbox("Tipo de suelo", DESC_TIPO_SUELO_OPTIONS, index=DESC_TIPO_SUELO_OPTIONS.index("ARCILLA"),
+                                                       key="pruebas_suelo")
+            muestra["desc_color"] = c2.selectbox("Color", DESC_COLOR_OPTIONS, index=DESC_COLOR_OPTIONS.index("MARRÓN"), key="pruebas_color")
+            muestra["desc_intensidad"] = c3.selectbox("Intensidad", DESC_INTENSIDAD_OPTIONS, key="pruebas_intensidad")
+            muestra["tipo_muestra"] = c4.selectbox("Tipo de muestra", TIPO_MUESTRA_OPTIONS, index=TIPO_MUESTRA_OPTIONS.index("SPT"),
+                                                    key="pruebas_tmuestra")
+        r1, r2 = st.columns(2)
+        if r1.button("Reiniciar este ensayo", icon=":material/restart_alt:", use_container_width=True, key="pruebas_reiniciar"):
+            est["version"][tipo] = est["version"].get(tipo, 0) + 1
+            est["assays"].pop(tipo, None)
+            st.rerun()
+        if r2.button("Reiniciar todo", icon=":material/delete_sweep:", use_container_width=True, key="pruebas_reiniciar_todo"):
+            st.session_state.pop("_pruebas", None)
+            st.rerun()
+
+    assay = est["assays"].get(tipo)
+    if assay is None:
+        assay = est["assays"][tipo] = _pruebas_ensayo_nuevo(est, tipo)
+
+    claves = ("role", "projects", "perforaciones", "muestras", "assays", "selected_codigo", "selected_perforacion",
+              "selected_muestra_id", "selected_assay_id", "selected_assay_type")
+    guardado = {k: st.session_state.get(k) for k in claves}
+    proyecto, perf = est["proyecto"], est["perforacion"]
+    try:
+        st.session_state.role = "laboratorista" if vista == PRUEBAS_VISTAS[0] else "jefe"
+        st.session_state.projects = [proyecto]
+        st.session_state.perforaciones = {proyecto["codigo_interno"]: [perf]}
+        st.session_state.muestras = {f"{proyecto['codigo_interno']}::{perf['codigo']}": [muestra]}
+        st.session_state.assays = list(est["assays"].values())
+        st.session_state.selected_codigo, st.session_state.selected_perforacion = proyecto["codigo_interno"], perf["codigo"]
+        st.session_state.selected_muestra_id, st.session_state.selected_assay_id = muestra["id_unico"], assay["id"]
+        st.session_state.selected_assay_type = tipo
+        render_assay_form(prueba=True)
+    finally:
+        for k, v in guardado.items():
+            st.session_state[k] = v
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -12595,6 +12730,7 @@ else:
         "continue": render_continue, "search": render_search,
         "projects-active": render_projects_active, "projects-done": render_projects_done,
         "balanzas": render_balanzas, "usuarios": render_usuarios,
+        "pruebas": render_pruebas,
     }
     SCREENS.get(st.session_state.screen, render_home)()
     render_bottomnav()
