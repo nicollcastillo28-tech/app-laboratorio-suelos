@@ -423,12 +423,21 @@ Error = indicación − masa de referencia. Aceptación simple: <span class="mon
 <div style="border-radius: 12px; padding: 12px 14px; background: #FBE3DF; color: #9E2716;"><div class="lbl" style="color: #9E2716;">Retraso · TNC</div><div class="mono" style="font-size: 24px; font-weight: 600;">{{ctrlStats.fail}}</div></div>
 <div style="border-radius: 12px; padding: 12px 14px; background: #ECEAE4; color: #45433D;"><div class="lbl" style="color: #45433D;">Pendientes</div><div class="mono" style="font-size: 24px; font-weight: 600;">{{ctrlStats.pend}}</div></div>
 </div>
+<div style="display: flex; flex-direction: column; gap: 6px;">
+<span class="lbl">Elige el equipo para ver su control semanal</span>
+<div style="display: flex; flex-wrap: wrap; gap: 8px;">
+<sc-for list="{{ctrlPills}}" as="p" hint-placeholder-count="4">
+<button type="button" onClick="{{p.go}}" style="height: 44px; padding: 0 14px; border-radius: 999px; border: 1px solid {{p.bd}}; background: {{p.bg}}; color: {{p.fg}}; font-size: 14px; font-weight: 600; cursor: pointer;"><span class="mono">{{p.label}}</span> <span style="opacity: 0.75;">· {{p.count}}</span></button>
+</sc-for>
+</div>
+<div style="font-size: 13px; color: #5E6167;">Registros de <strong class="mono">{{ctrlSelLabel}}</strong>, de la semana más reciente a la más antigua.</div>
+</div>
 <div style="display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 10px;">
 <button type="button" class="btnp" onClick="{{addCurrent}}">Registrar comprobación actual</button>
 <button type="button" class="btn" style="height: 48px;" onClick="{{addBlank}}">+ Fila vacía</button>
 </div>
 <sc-if value="{{ctrlEmpty}}" hint-placeholder-val="{{ false }}">
-<div style="padding: 28px; border: 1px dashed #D9D5CA; border-radius: 14px; text-align: center; font-size: 14px; color: #5E6167;">Sin registros esta semana.</div>
+<div style="padding: 28px; border: 1px dashed #D9D5CA; border-radius: 14px; text-align: center; font-size: 14px; color: #5E6167;">Este equipo todavía no tiene registros en el control semanal.</div>
 </sc-if>
 <sc-for list="{{ctrlRows}}" as="c" hint-placeholder-count="2">
 <div style="border: 1px solid #E2DED4; border-radius: 14px; padding: 14px; background: {{c.bg}}; display: flex; flex-direction: column; gap: 10px;">
@@ -493,7 +502,7 @@ class Component extends DCLogic {
       fuente: '', obs: '', tnc: '', decision: '', decisionDate: '',
       elaboro: { nombre: '', cargo: '', firmado: false },
       reviso: { nombre: '', cargo: '', firmado: false },
-      control: []
+      control: [], ctrlEq: null
     };
   }
 
@@ -753,14 +762,29 @@ class Component extends DCLogic {
       go: () => this.setState({ step: 6 })
     });
 
-    const ctrlRows = s.control.map((c, i) => {
-      let st = 'pend', lab = 'Pendiente';
-      if (c.realizada && c.programada) { if (c.realizada <= c.programada) { st = 'ok'; lab = 'A tiempo'; } else { st = 'fail'; lab = 'Retraso · TNC'; } }
-      else if (c.realizada) { st = 'ok'; lab = 'Realizada'; }
-      const o = Object.assign({}, c, { chip: this.chip(st, lab), st: st, bg: st === 'fail' ? '#FDF1EF' : '#FFFFFF', remove: () => this.setState((ss) => ({ control: ss.control.filter((_, j) => j !== i) })) });
-      ['semana', 'codigo', 'programada', 'realizada', 'operador', 'revision', 'registro', 'just'].forEach((key) => { o['set' + key.charAt(0).toUpperCase() + key.slice(1)] = this.setListRow('control', i, key); });
-      return o;
+    // Control semanal: se elige el equipo y solo se despliegan SUS registros, de la semana más reciente a la más antigua (las filas sin
+    // semana, recién agregadas, quedan al final). Los índices son los de la lista completa: así editar/eliminar sigue tocando la fila correcta.
+    const ctrlCodes = {};
+    s.control.forEach((c) => { ctrlCodes[c.codigo || ''] = true; });
+    if (s.eq.codigo) ctrlCodes[s.eq.codigo] = true;
+    const ctrlSel = (s.ctrlEq !== null && s.ctrlEq !== undefined && ctrlCodes[s.ctrlEq]) ? s.ctrlEq : (s.eq.codigo || '');
+    const ctrlPills = Object.keys(ctrlCodes).sort().map((code) => {
+      const on = code === ctrlSel;
+      return { label: code || 'Sin código', count: String(s.control.filter((c) => (c.codigo || '') === code).length),
+               bg: on ? '#2F7A3E' : '#FFFFFF', fg: on ? '#FFFFFF' : '#1C1F22', bd: on ? '#2F7A3E' : '#D9D5CA',
+               go: () => this.setState({ ctrlEq: code }) };
     });
+    const ctrlRows = s.control.map((c, i) => ({ c: c, i: i })).filter((x) => (x.c.codigo || '') === ctrlSel)
+      .sort((a, b) => String(b.c.semana || '').localeCompare(String(a.c.semana || '')) || String(b.c.realizada || '').localeCompare(String(a.c.realizada || '')))
+      .map((x) => {
+        const c = x.c, i = x.i;
+        let st = 'pend', lab = 'Pendiente';
+        if (c.realizada && c.programada) { if (c.realizada <= c.programada) { st = 'ok'; lab = 'A tiempo'; } else { st = 'fail'; lab = 'Retraso · TNC'; } }
+        else if (c.realizada) { st = 'ok'; lab = 'Realizada'; }
+        const o = Object.assign({}, c, { chip: this.chip(st, lab), st: st, bg: st === 'fail' ? '#FDF1EF' : '#FFFFFF', remove: () => this.setState((ss) => ({ control: ss.control.filter((_, j) => j !== i) })) });
+        ['semana', 'codigo', 'programada', 'realizada', 'operador', 'revision', 'registro', 'just'].forEach((key) => { o['set' + key.charAt(0).toUpperCase() + key.slice(1)] = this.setListRow('control', i, key); });
+        return o;
+      });
     const ctrlStats = { ok: ctrlRows.filter((r) => r.st === 'ok').length, fail: ctrlRows.filter((r) => r.st === 'fail').length, pend: ctrlRows.filter((r) => r.st === 'pend').length };
 
     const firmas = [['elaboro', 'Elaboró'], ['reviso', 'Revisó']].map((f) => {
@@ -809,9 +833,9 @@ class Component extends DCLogic {
       fuente: s.fuente, obs: s.obs, tnc: s.tnc, setFuente: this.setTop('fuente'), setObs: this.setTop('obs'), setTnc: this.setTop('tnc'),
       firmas: firmas,
       overall: overall, progress: progress, issues: issues, noIssues: issues.length === 0,
-      ctrlRows: ctrlRows, ctrlEmpty: ctrlRows.length === 0, ctrlStats: ctrlStats,
-      addCurrent: () => this.setState((ss) => ({ control: ss.control.concat([{ semana: this.monday(ss.fecha), codigo: ss.eq.codigo, programada: this.monday(ss.fecha), realizada: ss.fecha, operador: ss.elaboro.nombre, revision: ss.reviso.nombre, registro: '', just: '' }]) })),
-      addBlank: () => this.setState((ss) => ({ control: ss.control.concat([{ semana: '', codigo: '', programada: '', realizada: '', operador: '', revision: '', registro: '', just: '' }]) }))
+      ctrlRows: ctrlRows, ctrlEmpty: ctrlRows.length === 0, ctrlStats: ctrlStats, ctrlPills: ctrlPills, ctrlSelLabel: ctrlSel || 'Sin código',
+      addCurrent: () => this.setState((ss) => ({ ctrlEq: ss.eq.codigo, control: ss.control.concat([{ semana: this.monday(ss.fecha), codigo: ss.eq.codigo, programada: this.monday(ss.fecha), realizada: ss.fecha, operador: ss.elaboro.nombre, revision: ss.reviso.nombre, registro: '', just: '' }]) })),
+      addBlank: () => this.setState((ss) => ({ ctrlEq: ctrlSel, control: ss.control.concat([{ semana: '', codigo: ctrlSel, programada: '', realizada: '', operador: '', revision: '', registro: '', just: '' }]) }))
     };
   }
 }
@@ -824,7 +848,7 @@ class Component extends DCLogic {
     var st = Object.assign({}, inst.state);
     var control = st.control || [];
     // lo que solo es de pantalla (paso abierto, paneles desplegados) no se guarda
-    delete st.control; delete st.step; delete st.focusPt; delete st.eqOpen; delete st.showIssues;
+    delete st.control; delete st.step; delete st.focusPt; delete st.eqOpen; delete st.showIssues; delete st.ctrlEq;
     return { state: st, control: control };
   }
   // El diseño crece hacia abajo: el marco toma la altura del contenido y la página hace el scroll.

@@ -4046,6 +4046,50 @@ def render_usuarios():
                             st.rerun()
 
 
+def _bal_paquete(equipo):
+    """Descarga de varios registros de comprobación a la vez, en un solo ZIP (un Excel por registro), en vez de bajarlos de a uno.
+    Se puede elegir una balanza o todas, y acotar por fechas. El paquete se arma al pedirlo (no en cada rerun: generar muchos Excel pesa)."""
+    with st.expander("Descargar varios registros en un paquete (ZIP)", icon=":material/folder_zip:"):
+        alcance = st.radio("¿Qué incluir?", ["Esta balanza", "Todas las balanzas"], horizontal=True, key="bal_zip_alcance")
+        candidatos = [c for c in st.session_state.balance_checks if alcance == "Todas las balanzas" or c["codigo_equipo"] == equipo]
+        fecha_de = lambda c: str(c.get("fecha_comprobacion") or c["semana_lunes"])
+        if not candidatos:
+            st.caption("Todavía no hay registros para armar un paquete.")
+            return
+        fechas = sorted(fecha_de(c) for c in candidatos)
+        f_min, f_max = date.fromisoformat(fechas[0]), date.fromisoformat(fechas[-1])
+        z1, z2 = st.columns(2)
+        desde = z1.date_input("Desde", value=f_min, min_value=f_min, max_value=f_max, format="DD/MM/YYYY", key=f"bal_zip_desde_{alcance}_{equipo}")
+        hasta = z2.date_input("Hasta", value=f_max, min_value=f_min, max_value=f_max, format="DD/MM/YYYY", key=f"bal_zip_hasta_{alcance}_{equipo}")
+        elegidos = sorted((c for c in candidatos if str(desde) <= fecha_de(c)[:10] <= str(hasta)),
+                          key=lambda c: (c["codigo_equipo"], fecha_de(c)))
+        st.caption(f"{len(elegidos)} registro(s) en el paquete, ordenados por balanza y fecha.")
+        firma = (alcance, equipo, str(desde), str(hasta), tuple(c["id"] for c in elegidos))
+        if st.button("Preparar paquete", key="bal_zip_preparar", icon=":material/inventory_2:", use_container_width=True, disabled=not elegidos):
+            import zipfile
+            buf, barra = BytesIO(), st.progress(0.0, text="Armando el paquete…")
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                usados = set()
+                for n, c in enumerate(elegidos, 1):
+                    xlsx = generar_excel_balanza({**c, "data": _bal_state_a_data(_bal_cargar_estado(c))}, _bal_por_codigo(c["codigo_equipo"]) or {},
+                                                  control=_bal_control())
+                    nombre = f"Verificacion_balanza_{c['codigo_equipo']}_{c['semana_lunes']}.xlsx"
+                    if alcance == "Todas las balanzas":
+                        nombre = f"{c['codigo_equipo']}/{nombre}"
+                    if nombre in usados:   # dos registros de la misma semana (no debería pasar): no se pisan
+                        nombre = nombre.replace(".xlsx", f"_{str(c['id'])[:6]}.xlsx")
+                    usados.add(nombre)
+                    zf.writestr(nombre, xlsx)
+                    barra.progress(n / len(elegidos), text=f"Armando el paquete… {n} de {len(elegidos)}")
+            barra.empty()
+            st.session_state["_bal_zip"] = {"firma": firma, "bytes": buf.getvalue(),
+                                            "nombre": f"Verificacion_balanzas_{hoy_colombia().isoformat()}.zip", "n": len(elegidos)}
+        listo = st.session_state.get("_bal_zip")
+        if listo and listo["firma"] == firma:
+            st.download_button(f"Descargar paquete ({listo['n']} archivo(s))", data=listo["bytes"], file_name=listo["nombre"],
+                               mime="application/zip", icon=":material/download:", use_container_width=True, key="bal_zip_dl", type="primary")
+
+
 def render_balanzas():
     require_role("jefe")
     # El mockup es un tablero de ~1440 px: se reduce el margen lateral de Streamlit solo en esta pantalla.
@@ -4098,6 +4142,7 @@ def render_balanzas():
     if st.session_state.get("_bal_control_error"):
         st.warning("El Control semanal no se pudo leer/guardar: falta correr la migración 0031_balance_control.sql en Supabase.")
     _bal_admin()
+    _bal_paquete(equipo)
     if not sel_id:
         st.info("Crea el primer registro de esta balanza con «Nuevo registro» (uno por equipo y semana).")
         return
