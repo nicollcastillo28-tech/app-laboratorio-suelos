@@ -83,6 +83,7 @@ HOJAS_AJENAS_COMPRESION = ["PE4-3 M10", "PE4-2 M11", "PE4-7 M7", "PP4-3 M6", "PP
 TEMPLATE_CARGA_PUNTUAL = os.path.join(BASE_DIR, "templates", "GDA-FLC-018_carga_puntual.xlsx")
 TEMPLATE_SOLIDEZ_SULFATOS = os.path.join(BASE_DIR, "templates", "GDA-FLC-033_solidez_sulfatos.xlsx")
 TEMPLATE_TERRONES_ARCILLA = os.path.join(BASE_DIR, "templates", "GDA-FLC-034_terrones_arcilla.xlsx")
+TEMPLATE_ALARGAMIENTO_APLANAMIENTO = os.path.join(BASE_DIR, "templates", "GDA-FLC-026_alargamiento_aplanamiento.xlsx")
 TEMPLATE_VERIFICACION_BALANZAS = os.path.join(BASE_DIR, "templates", "GDA-FL-029_verificacion_balanzas.xlsx")
 
 ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "laboratorista": "Laboratorista", "ingeniero": "Director Técnico"}
@@ -831,7 +832,7 @@ SIEVES = [
     ("s_60", "No. 60", "0.25", "E32"), ("s_100", "No. 100", "0.149", "E33"), ("s_200", "No. 200", "0.075", "E34"),
 ]
 
-ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor", "materia-organica": "Materia orgánica", "limite-contraccion": "Límite de contracción", "consolidacion": "Consolidación", "compresion-inconfinada": "Compresión inconfinada", "compresion-roca": "Compresión en roca", "carga-puntual": "Carga puntual", "solidez-sulfatos": "Solidez en sulfatos", "terrones-arcilla": "Terrones de arcilla"}
+ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor", "materia-organica": "Materia orgánica", "limite-contraccion": "Límite de contracción", "consolidacion": "Consolidación", "compresion-inconfinada": "Compresión inconfinada", "compresion-roca": "Compresión en roca", "carga-puntual": "Carga puntual", "solidez-sulfatos": "Solidez en sulfatos", "terrones-arcilla": "Terrones de arcilla", "alargamiento-aplanamiento": "Alargamiento y aplanamiento"}
 NORMAS_ENSAYO = {
     "granulometria": ["INV-214-13", "INV.E-213-13", "INV.E 123-13"],
     "humedad": ["INV E-122", "ASTM D2216"],
@@ -848,6 +849,7 @@ NORMAS_ENSAYO = {
     "carga-puntual": ["ASTM D5731"],
     "solidez-sulfatos": ["INV E-220-13", "ASTM C88"],
     "terrones-arcilla": ["INV E-211-13"],
+    "alargamiento-aplanamiento": ["INV E-230-13"],
 }
 STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado", "no-realizado": "No realizado"}
 STATUS_BADGE = {"sin-iniciar": "badge-danger", "en-proceso": "badge-warning", "finalizado": "badge-success", "no-realizado": "badge-muted"}
@@ -1384,6 +1386,7 @@ SUPPORTED_ASSAY_MAP = {
     "Carga puntual": "carga-puntual",
     "Solidez en sulfatos": "solidez-sulfatos",
     "Terrones de arcilla": "terrones-arcilla",
+    "Alargamiento y aplanamiento": "alargamiento-aplanamiento",
 }
 
 
@@ -5021,18 +5024,14 @@ def render_project_detail():
                     _render_tabla_muestras_con_semaforo(sorted(muestras, key=lambda m: clave_numero_muestra(m["numero"])),
                                                         codigo, perf["codigo"])
 
-            bc1, bc2 = st.columns(2)
-            with bc1:
-                if st.button("Ver detalle del sondeo →", key=f"open_perf_{perf['codigo']}", use_container_width=True):
-                    st.session_state.selected_perforacion = perf["codigo"]
-                    navigate("perforacion-detail")
-            with bc2:
-                filas_perf = _bitacora_filas_perforacion(codigo, perf["codigo"])
-                excel_bytes, _truncado = generar_excel_bitacora_orden(project, filas_perf, {perf["tipo"]})
-                st.download_button("Descargar orden", data=excel_bytes, icon=":material/download:",
-                                    file_name=f"{codigo} Bitacora de orden {perf['codigo']}.xlsx",
-                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                    use_container_width=True, key=f"dl_perf_{perf['codigo']}")
+            # (Antes había aquí un botón "Ver detalle del sondeo": las muestras y sus ensayos ya se abren directo desde
+            # "Ver muestras", así que esa pantalla intermedia no hacía falta.)
+            filas_perf = _bitacora_filas_perforacion(codigo, perf["codigo"])
+            excel_bytes, _truncado = generar_excel_bitacora_orden(project, filas_perf, {perf["tipo"]})
+            st.download_button("Descargar orden", data=excel_bytes, icon=":material/download:",
+                                file_name=f"{codigo} Bitacora de orden {perf['codigo']}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                use_container_width=True, key=f"dl_perf_{perf['codigo']}")
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -5231,7 +5230,12 @@ def _render_tabla_muestras_con_semaforo(muestras, codigo, perf_codigo):
                             if existing:
                                 st.session_state.selected_assay_id = existing["id"]
                             else:
-                                st.session_state.selected_assay_id = db.create_assay(m["id"], tipo_interno)["id"]
+                                try:
+                                    st.session_state.selected_assay_id = db.create_assay(m["id"], tipo_interno)["id"]
+                                except Exception:
+                                    st.error("No se pudo abrir el ensayo. Si es un ensayo nuevo en la app, falta aplicar su migración en Supabase "
+                                             "(la última de la carpeta supabase/migrations).")
+                                    st.stop()
                             st.session_state.selected_assay_type = tipo_interno
                             navigate("assay-form")
         with cols[4]:
@@ -10811,6 +10815,120 @@ def generar_excel_terrones_arcilla(codigo, perf_codigo, muestra, project, data, 
                                                 TEMPLATE_TERRONES_ARCILLA)
 
 
+# ════════════════════════════════════════════════════════════════════
+# ALARGAMIENTO Y APLANAMIENTO (INV E-230-13) — bitácora GDA-FL-046, informe GDA-FLC-026
+# Dos tablas con las MISMAS 7 fracciones (de 2 1/2" a 1/4"): para cada una, la masa inicial de la fracción seca y la masa de las partículas
+# alargadas (tabla 1) / aplanadas (tabla 2). Índice de la fracción = masa de partículas / masa de la fracción × 100; índice del ensayo =
+# masa total de partículas / masa total de las fracciones × 100 -- las mismas fórmulas del informe (F30 y F46 de la plantilla).
+# ════════════════════════════════════════════════════════════════════
+AA_FRACCIONES = [('2 1/2"', '2"'), ('2"', '1 1/2"'), ('1 1/2"', '1"'), ('1"', '3/4"'), ('3/4"', '1/2"'), ('1/2"', '3/8"'), ('3/8"', '1/4"')]
+AA_PRIMERA_FILA = {"alar": 21, "apla": 37}   # primera fila de cada tabla en la plantilla GDA-FLC-026 (F = masa de la fracción, G = masa de partículas)
+AA_TITULOS = {"alar": ("Índice de alargamiento", "Masa de las partículas alargadas (g)", "alargadas"),
+              "apla": ("Índice de aplanamiento", "Masa de las partículas aplanadas (g)", "aplanadas")}
+# Equipos que lista la bitácora GDA-FL-046. El código de los tamices viene como "GDA-E-000" (sin asignar) en el formato.
+EQUIPO_ALARGAMIENTO_APLANAMIENTO = ["Balanza GDA-E-011", "Balanza GDA-E-010", "Balanza GDA-E-407", "Horno GDA-E-007", "Horno GDA-E-404",
+                                     "Serie de tamices GDA-E-000", "Equipo de alargamiento GDA-E-401", "Equipo de aplanamiento GDA-E-402"]
+# Código que va en el "Informe ID" (celda K10 de la plantilla: "DIGITAR CODIGO ENSAYO").
+AA_CODIGO_INFORME = "AA"
+
+
+def _aa_calculo(data, clave):
+    """Filas por fracción y totales de una de las dos tablas ("alar" o "apla")."""
+    filas, masa_total, masa_particulas, alguna = [], 0.0, 0.0, False
+    for i, (pasa, retiene) in enumerate(AA_FRACCIONES, start=1):
+        ini, par = to_float(data.get(f"aa_{clave}_{i}_ini")), to_float(data.get(f"aa_{clave}_{i}_par"))
+        filas.append({"pasa": pasa, "retiene": retiene, "ini": ini, "par": par, "idx": (par / ini * 100) if (ini and par is not None) else None})
+        if ini is not None:
+            masa_total += ini
+            alguna = True
+        if par is not None:
+            masa_particulas += par
+            alguna = True
+    return {"filas": filas, "masa_total": masa_total if alguna else None, "masa_particulas": masa_particulas if alguna else None,
+            "indice": (masa_particulas / masa_total * 100) if (alguna and masa_total) else None}
+
+
+def resultados_alargamiento_aplanamiento(data):
+    filas = []
+    for clave in ("alar", "apla"):
+        r = _aa_calculo(data, clave)
+        if r["masa_total"] is None:
+            continue
+        titulo, _col, nombre = AA_TITULOS[clave]
+        filas += [(f"{titulo} — masa total de la muestra empleada (g)", fmt_num(r["masa_total"], 1)),
+                  (f"{titulo} — masa de todas las partículas {nombre} (g)", fmt_num(r["masa_particulas"], 1)),
+                  (f"{titulo} (%)", fmt_num(r["indice"], 1) if r["indice"] is not None else "—")]
+    return filas
+
+
+def render_alargamiento_aplanamiento_form(data, assay_id):
+    st.info("Formulario armado sobre la bitácora GDA-FL-046 y el informe GDA-FLC-026. Si una fracción pesa menos del 5 % de la muestra, "
+            "la norma no pide ensayarla: déjala en blanco. El Excel para descargar está al final del ensayo.")
+    render_norma_selector("alargamiento-aplanamiento", data, "aa")
+    render_equipo(data, "aa", EQUIPO_ALARGAMIENTO_APLANAMIENTO)
+    for clave in ("alar", "apla"):
+        titulo, col_particulas, _nombre = AA_TITULOS[clave]
+        calculo = _aa_calculo(data, clave)
+        with st.container(border=True):
+            st.markdown(card_header_html("straighten", titulo), unsafe_allow_html=True)
+            head = st.columns([1.2, 1.2, 1.2, 0.9])
+            head[0].markdown('<div class="cell-muted" style="font-weight:700;">Tamiz (pasa / retiene)</div>', unsafe_allow_html=True)
+            head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Masa inicial de la fracción seca (g)</div>', unsafe_allow_html=True)
+            head[2].markdown(f'<div class="cell-muted" style="text-align:center;font-weight:700;">{col_particulas}</div>', unsafe_allow_html=True)
+            head[3].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Índice (%)</div>', unsafe_allow_html=True)
+            for i, f in enumerate(calculo["filas"], start=1):
+                row = st.columns([1.2, 1.2, 1.2, 0.9], vertical_alignment="center")
+                row[0].markdown(f'<div style="font-family:JetBrains Mono,monospace;font-size:13px;">{html.escape(f["pasa"])} → {html.escape(f["retiene"])}</div>', unsafe_allow_html=True)
+                for col, sufijo in ((row[1], "ini"), (row[2], "par")):
+                    key = f"aa_{clave}_{i}_{sufijo}"
+                    data[key] = col.text_input(f"{titulo} {f['pasa']} {sufijo}", value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                               label_visibility="collapsed", placeholder="0.0")
+                idx = _aa_calculo(data, clave)["filas"][i - 1]["idx"]
+                row[3].markdown(f'<div style="text-align:center;font-weight:700;color:{PRIMARY};">{fmt_num(idx, 1) if idx is not None else "—"}</div>',
+                                unsafe_allow_html=True)
+    with resultados_desplegable():
+        filas = resultados_alargamiento_aplanamiento(data)
+        if filas:
+            st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        else:
+            st.caption("Se muestran a medida que se digitan las masas de arriba.")
+
+
+def generar_excel_alargamiento_aplanamiento(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    """Informe GDA-FLC-026 (INV E-230-13). Solo se escriben las celdas desbloqueadas de la plantilla (encabezado, masas de cada fracción
+    y observaciones): los índices los calcula el propio Excel con sus fórmulas, que quedan intactas."""
+    c = {}
+    c["C6"] = project.get("cliente", "") if project else ""
+    c["C7"] = project["nombre"] if project else codigo
+    c["C8"] = project.get("correo_cliente", "") if project else ""
+    c["C9"] = project.get("localizacion", "") if project else ""
+    if project and project.get("muestra_tomada_por"):
+        c["C10"] = project["muestra_tomada_por"]
+    c["H6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
+    c["H7"] = _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, [data])) if project else ""
+    c["H8"] = _fecha_ddmmaaaa(fecha_emision_hoy()) if project else ""
+    c["I9"] = project.get("numero", "") if project else ""
+    c["J9"] = project.get("anio", "") if project else ""
+    c["K10"] = AA_CODIGO_INFORME
+    perf = get_perforacion(codigo, perf_codigo)
+    c["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
+    c["D12"] = perf_codigo
+    c["F12"] = muestra["numero"]
+    c["H12"] = to_float(muestra.get("profundidad_de"))
+    c["J12"] = to_float(muestra.get("profundidad_hasta"))
+    c["C13"] = descripcion_para_informe(muestra)
+    for clave, primera in AA_PRIMERA_FILA.items():
+        for i in range(len(AA_FRACCIONES)):
+            c[f"F{primera + i}"] = to_float(data.get(f"aa_{clave}_{i + 1}_ini"))
+            c[f"G{primera + i}"] = to_float(data.get(f"aa_{clave}_{i + 1}_par"))
+    if (observaciones_ensayo or "").strip():
+        c["C48"] = observaciones_ensayo.strip()
+    with open(TEMPLATE_ALARGAMIENTO_APLANAMIENTO, "rb") as f:
+        plantilla = f.read()
+    return _restaurar_orden_formato_condicional(_xlsx_escribir_celdas(plantilla, "xl/worksheets/sheet1.xml", c),
+                                                TEMPLATE_ALARGAMIENTO_APLANAMIENTO)
+
+
 def render_limite_contraccion_form(data, assay_id):
     st.info("Formulario armado sobre la plantilla oficial GDA-FLC-022. El Excel para descargar está al final del ensayo.")
 
@@ -11382,6 +11500,21 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             with resultados_desplegable():
                 st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
         equipos, norma = data.get("ter_equipos", []), data.get("ter_norma", "—")
+    elif tipo == "alargamiento-aplanamiento":
+        for clave in ("alar", "apla"):
+            titulo, col_particulas, _nombre = AA_TITULOS[clave]
+            calculo = _aa_calculo(data, clave)
+            with st.container(border=True):
+                st.markdown(card_header_html("straighten", titulo), unsafe_allow_html=True)
+                st.markdown(param_table_ncol_html(["TAMIZ (PASA / RETIENE)", "MASA INICIAL DE LA FRACCIÓN (g)", col_particulas.upper(), "ÍNDICE (%)"],
+                                                  [(f"{f['pasa']} → {f['retiene']}", data.get(f"aa_{clave}_{i}_ini"), data.get(f"aa_{clave}_{i}_par"),
+                                                    fmt_num(f["idx"], 1) if f["idx"] is not None else None)
+                                                   for i, f in enumerate(calculo["filas"], start=1)]), unsafe_allow_html=True)
+        resultados = resultados_alargamiento_aplanamiento(data)
+        if resultados:
+            with resultados_desplegable():
+                st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        equipos, norma = data.get("aa_equipos", []), data.get("aa_norma", "—")
     elif tipo == "consolidacion":
         with st.container(border=True):
             st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
@@ -11689,6 +11822,9 @@ def _valores_alertas(tipo, data, muestra):
         return [{"perdida_grueso": _fila_num(f, "% de pérdida ponderada — grueso"), "perdida_fino": _fila_num(f, "% de pérdida ponderada — fino")}]
     if tipo == "terrones-arcilla":
         return [{"ponderado": _fila_num(resultados_terrones_arcilla(data), "% de pérdida ponderada")}]
+    if tipo == "alargamiento-aplanamiento":
+        return [{"tablas": {clave: {"filas": [(f["ini"], f["par"]) for f in (_aa_calculo(data, clave)["filas"])],
+                                    "indice": _aa_calculo(data, clave)["indice"]} for clave in ("alar", "apla")}}]
     return []
 
 
@@ -11917,6 +12053,8 @@ def render_assay_form():
             render_solidez_sulfatos_form(data, assay_id)
         elif assay["tipo"] == "terrones-arcilla":
             render_terrones_arcilla_form(data, assay_id)
+        elif assay["tipo"] == "alargamiento-aplanamiento":
+            render_alargamiento_aplanamiento_form(data, assay_id)
 
         with slot_alertas:
             render_alertas_resultados(*alertas_de_ensayo(assay["tipo"], data, muestra))
@@ -12171,6 +12309,16 @@ def render_assay_form():
             file_name=f"Terrones_arcilla_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_terrones_arcilla")
+
+    if not motivo_no_realizado and assay["tipo"] == "alargamiento-aplanamiento" and muestra:
+        st.markdown("---")
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        st.download_button(
+            "Descargar Excel (informe GDA-FLC-026 de Alargamiento y Aplanamiento)", icon=":material/download:",
+            data=generar_excel_alargamiento_aplanamiento(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            file_name=f"Alargamiento_aplanamiento_{muestra['id_unico']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
+            key="dl_alargamiento_aplanamiento")
 
     if not motivo_no_realizado and assay["tipo"] == "consolidacion" and muestra:
         st.markdown("---")

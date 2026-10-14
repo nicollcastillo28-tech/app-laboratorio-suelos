@@ -578,7 +578,24 @@ def _terrones(v, material, ctx):
     return []
 
 
+def _alargamiento_aplanamiento(v, material, ctx):
+    """Chequeos físicos (no hay un rango "típico" confiable sin fijarse en la especificación del proyecto): la masa de partículas alargadas /
+    aplanadas no puede pasar de la masa de su fracción, y el índice del ensayo está entre 0 y 100 %."""
+    out = []
+    nombres = {"alar": "alargadas", "apla": "aplanadas"}
+    for clave, t in (v.get("tablas") or {}).items():
+        for i, (ini, par) in enumerate(t.get("filas") or [], start=1):
+            if _num(ini) and _num(par) and par > ini:
+                out.append(_a("alto", f"Fracción {i}: la masa de partículas {nombres.get(clave, '')} ({_f(par, 1)} g) es mayor que la masa de la fracción "
+                                      f"({_f(ini, 1)} g). Revisa las pesadas.", "fisica"))
+        idx = t.get("indice")
+        if _num(idx) and not (0 <= idx <= 100):
+            out.append(_a("alto", f"Índice de {'alargamiento' if clave == 'alar' else 'aplanamiento'} = {_f(idx, 1)} % fuera de 0–100 %.", "fisica"))
+    return out
+
+
 _REGLAS = {
+    "alargamiento-aplanamiento": _alargamiento_aplanamiento,
     "humedad": _humedad, "limites": _limites, "granulometria": _granulometria, "pasa200": _granulometria,
     "proctor": _proctor, "cbr": _cbr, "corte-directo": _corte_directo, "masa-unitaria": _masa_unitaria,
     "gravedad-especifica": _gravedad, "materia-organica": _materia_organica, "limite-contraccion": _limite_contraccion,
