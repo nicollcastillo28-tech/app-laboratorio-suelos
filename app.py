@@ -26,6 +26,7 @@ from openpyxl import load_workbook
 
 import alertas_resultados as alertas_res
 import db
+import pruebas_datos
 
 
 # Funciones de db que modifican datos del laboratorio. En el "Modo de prueba" (pantalla "pruebas") se ignoran: los formularios y
@@ -12487,6 +12488,49 @@ def _pruebas_ensayo_nuevo(est, tipo):
             "perforacion_codigo": est["perforacion"]["codigo"], "muestra_numero": est["muestra"]["numero"]}
 
 
+def _equipos_ejemplo(tipo, data):
+    """Equipos de ejemplo (los 3 primeros de la lista de cada formulario) para los selectores de 'Equipos utilizados'."""
+    por_tipo = {
+        "granulometria": {"gran_equipos": EQUIPO_GRANULOMETRIA}, "pasa200": {"gran_equipos": EQUIPO_GRANULOMETRIA},
+        "humedad": {"hum_equipos": EQUIPO_HUMEDAD}, "limites": {"lim_equipos": EQUIPO_LIMITES},
+        "masa-unitaria": {"mu_equipos": EQUIPO_MASA_UNITARIA}, "cbr": {"cbr_equipos": EQUIPO_CBR},
+        "corte-directo": {"corte_equipos": EQUIPO_CORTE_DIRECTO, "corte_ge_equipos": EQUIPO_CORTE_GRAVEDAD,
+                          **{f"corte_m{i}_hum_equipos": EQUIPO_CORTE_HUMEDAD for i in (1, 2, 3)}},
+        "gravedad-especifica": {"gesp_finos_equipos": EQUIPO_GESP_FINOS}, "proctor": {"proc_equipos": EQUIPO_PROCTOR},
+        "consolidacion": {"cons_equipos": EQUIPO_CONSOLIDACION}, "compresion-inconfinada": {"ci_equipos": EQUIPO_COMPRESION_INCONFINADA},
+        "compresion-roca": {"roca_equipos": EQUIPO_COMPRESION_ROCA}, "carga-puntual": {"cp_equipos": EQUIPO_CARGA_PUNTUAL},
+        "solidez-sulfatos": {"sulf_equipos": EQUIPO_SOLIDEZ_SULFATOS}, "terrones-arcilla": {"ter_equipos": EQUIPO_TERRONES_ARCILLA},
+        "alargamiento-aplanamiento": {"aa_equipos": EQUIPO_ALARGAMIENTO_APLANAMIENTO},
+    }
+    return {clave: list(lista[:3]) for clave, lista in por_tipo.get(tipo, {}).items()}
+
+
+# Ensayos que se apoyan en otro de la misma muestra: el informe de CBR y el de peso unitario toman la humedad del ensayo de
+# Humedad, y la clasificación USCS (Granulometría + Límites de Atterberg) sale de los dos. Al rellenar uno de ejemplo, el
+# otro también se llena si todavía no existe, para que el informe descargado salga completo.
+PRUEBAS_DEPENDENCIAS = {"granulometria": ["limites"], "limites": ["granulometria"], "cbr": ["humedad"], "masa-unitaria": ["humedad"]}
+
+
+def _pruebas_rellenar(est, tipo):
+    """Deja el ensayo de prueba con datos de ejemplo (en un ensayo nuevo, para que los campos se dibujen con esos valores).
+    Devuelve los otros ensayos que también se llenaron (ver PRUEBAS_DEPENDENCIAS)."""
+    def _llenar(t):
+        est["version"][t] = est["version"].get(t, 0) + 1
+        nuevo = _pruebas_ensayo_nuevo(est, t)
+        datos = pruebas_datos.datos_ejemplo(t)
+        datos.update(_equipos_ejemplo(t, datos))
+        datos["_fecha_primer_dato"] = hoy_colombia().isoformat()
+        nuevo.update(data=datos, status="en-proceso", laboratorist=(st.session_state.profile or {}).get("full_name") or "")
+        est["assays"][t] = nuevo
+
+    _llenar(tipo)
+    extra = [t for t in PRUEBAS_DEPENDENCIAS.get(tipo, []) if t not in est["assays"]]
+    for t in extra:
+        _llenar(t)
+    est["muestra"].update(pruebas_datos.CONDICION_EJEMPLO)
+    return extra
+
+
 def render_pruebas():
     if st.button("← Atrás"):
         go_back()
@@ -12514,6 +12558,13 @@ def render_pruebas():
             muestra["desc_intensidad"] = c3.selectbox("Intensidad", DESC_INTENSIDAD_OPTIONS, key="pruebas_intensidad")
             muestra["tipo_muestra"] = c4.selectbox("Tipo de muestra", TIPO_MUESTRA_OPTIONS, index=TIPO_MUESTRA_OPTIONS.index("SPT"),
                                                     key="pruebas_tmuestra")
+        if st.button("Rellenar con datos de ejemplo", icon=":material/auto_fix_high:", type="primary", use_container_width=True,
+                     key="pruebas_rellenar", help="Llena el ensayo (y la temperatura/humedad de la muestra) con valores ficticios coherentes."):
+            otros = _pruebas_rellenar(est, tipo)
+            if otros:
+                st.session_state["_pruebas_aviso"] = ("También se llenó con datos de ejemplo " + " y ".join(ASSAY_LABELS[t] for t in otros)
+                                                      + ", porque el informe de este ensayo se apoya en él.")
+            st.rerun()
         r1, r2 = st.columns(2)
         if r1.button("Reiniciar este ensayo", icon=":material/restart_alt:", use_container_width=True, key="pruebas_reiniciar"):
             est["version"][tipo] = est["version"].get(tipo, 0) + 1
