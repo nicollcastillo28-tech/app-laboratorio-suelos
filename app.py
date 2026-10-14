@@ -1068,12 +1068,10 @@ CORTE_GRAVEDAD_CAMPOS = [
     ("temperatura", "Temperatura (°C)"),
 ]
 
-# Gravedad Específica — dos variantes en el formato físico: la que pasa el tamiz No. 4 (finos,
-# con picnómetro) y la que lo retiene (gruesos, material sumergido).
-EQUIPO_GESP_FINOS = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Horno GDA-E-007", "Picnómetro",
-                     "Termómetro GDA-E-116", "Baño de María GDA-E-009"]
-EQUIPO_GESP_GRUESOS = ["Balanza GDA-E-012", "Balanza GDA-E-011", "Horno GDA-E-007",
-                       "Termómetro GDA-E-116", "Horno GDA-E-404"]
+# Gravedad Específica — dos bloques en la bitácora GDA-FL-019 (versión 03): la que pasa el tamiz No. 4 (finos,
+# con picnómetro) y la que lo retiene (gruesos, material sumergido). Los equipos son los que trae impresos cada bloque.
+EQUIPO_GESP_FINOS = ["Balanza GDA-E-010", "Horno GDA-E-007", "Termómetro GDA-E-116"]
+EQUIPO_GESP_GRUESOS = ["Balanza GDA-E-012", "Horno GDA-E-007", "Horno GDA-E-404"]
 GESP_OPCIONES = ["Pasa el tamiz No. 4 (finos)", "Retiene el tamiz No. 4 (gruesos)", "Ambos",
                  "Arcillas y limos (INV E-128)"]
 GESP_ARCILLA_CAMPOS = [
@@ -1084,12 +1082,13 @@ GESP_ARCILLA_CAMPOS = [
     ("gesp_a_temp", "Temperatura del ensayo (°C)"),
     ("gesp_a_pct_retenido", "% material retenido en el tamiz No. 4"),
 ]
+# En el mismo orden que la bitácora GDA-FL-019.
 GESP_FINOS_CAMPOS = [
-    ("gesp_f_masa_seco", "Masa del suelo seco (g)"),
-    ("gesp_f_masa_sss", "Masa de la muestra saturada superficialmente seca (g)"),
+    ("gesp_f_masa_sss", "Masa del material saturado superficialmente seco (g)"),
     ("gesp_f_masa_pic_agua_suelo", "Masa del picnómetro + agua + suelo a la temperatura del ensayo (g)"),
     ("gesp_f_masa_pic_agua", "Masa del picnómetro + agua a la temperatura del ensayo (g)"),
     ("gesp_f_temp", "Temperatura del ensayo (°C)"),
+    ("gesp_f_masa_seco", "Masa del suelo seco (g)"),
     ("gesp_f_pct_retenido", "% material retenido en el tamiz No. 4"),
 ]
 GESP_GRUESOS_CAMPOS = [
@@ -7495,12 +7494,13 @@ def generar_excel_cbr(codigo, perf_codigo, muestra, project, data, observaciones
     return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_CBR)
 
 
-def _generar_excel_gravedad(template, hoja, celdas, codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+def _generar_excel_gravedad(template, hoja, celdas, codigo, perf_codigo, muestra, project, data, observaciones_ensayo="",
+                            celda_observaciones=None):
     """Gravedad específica y absorción del agregado fino (GDA-FLC-027, INV E-222) o grueso
     (GDA-FLC-028, INV E-223). `celdas` mapea cada celda de entrada de la plantilla a su valor;
     las densidades y la absorción las calcula el propio Excel."""
     wb = load_workbook(template)
-    ws = wb[hoja]
+    ws = wb.worksheets[0]   # el informe es siempre la primera hoja (cada versión de la plantilla le pone un nombre distinto)
     ws["C6"] = project.get("cliente", "") if project else ""
     ws["C7"] = project["nombre"] if project else codigo
     ws["C8"] = project.get("correo_cliente", "") if project else ""
@@ -7521,6 +7521,8 @@ def _generar_excel_gravedad(template, hoja, celdas, codigo, perf_codigo, muestra
     ws["C13"] = descripcion_para_informe(muestra)
     for celda, valor in celdas.items():
         ws[celda] = to_float(valor)
+    if celda_observaciones and (observaciones_ensayo or "").strip():
+        ws[celda_observaciones] = observaciones_ensayo.strip()
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
@@ -7531,8 +7533,8 @@ def generar_excel_gravedad_fino(codigo, perf_codigo, muestra, project, data, obs
     celdas = {"G19": data.get("gesp_f_masa_seco"), "G20": data.get("gesp_f_masa_pic_agua"),
               "G21": data.get("gesp_f_masa_pic_agua_suelo"), "G22": data.get("gesp_f_masa_sss"),
               "N54": data.get("gesp_f_pct_retenido"), "AD30": data.get("gesp_f_temp")}
-    return _generar_excel_gravedad(TEMPLATE_GESP_FINO, "GUIA", celdas, codigo, perf_codigo, muestra, project, data,
-                                    observaciones_ensayo)
+    return _generar_excel_gravedad(TEMPLATE_GESP_FINO, "Hoja1 (2)", celdas, codigo, perf_codigo, muestra, project, data,
+                                    observaciones_ensayo, celda_observaciones="C33")
 
 
 def generar_excel_limite_contraccion(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
@@ -7805,19 +7807,20 @@ def generar_excel_gravedad_arcilla(codigo, perf_codigo, muestra, project, data, 
               "D32": data.get("gesp_a_pct_retenido")}
     if to_float(data.get("gesp_a_masa_pic_agua")) is not None:
         celdas["G21"] = data.get("gesp_a_masa_pic_agua")
-    # G26 (total corregida) combinaba el % retenido con F51/F52, que en la plantilla son valores de
-    # ejemplo (30 y 11) — daba un número que no correspondía a la muestra. Se deja el resultado
-    # de la gravedad específica de la muestra ensayada, calculado en F48.
-    excel = _generar_excel_gravedad(TEMPLATE_GESP_ARCILLA, "Hoja1", celdas, codigo, perf_codigo, muestra, project,
-                                     data, observaciones_ensayo)
-    return _fijar_celda_formula(excel, "G26", "F48")
+    # G26 (total corregida a 20 °C) combina, si hay % retenido en el tamiz No. 4, la gravedad del material retenido a
+    # partir de N41/N42 (masas en el aire y sumergida), que en la plantilla son valores de ejemplo (30 y 11) —
+    # daba un número que no correspondía a la muestra. Se deja la gravedad específica de la muestra ensayada
+    # corregida a 20 °C (N40 = gravedad a la temperatura del ensayo × K).
+    excel = _generar_excel_gravedad(TEMPLATE_GESP_ARCILLA, "FORMATO", celdas, codigo, perf_codigo, muestra, project,
+                                     data, observaciones_ensayo, celda_observaciones="C36")
+    return _fijar_celda_formula(excel, "G26", "N40")
 
 
 def generar_excel_gravedad_grueso(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     celdas = {"G19": data.get("gesp_g_masa_seco"), "G20": data.get("gesp_g_masa_sumergido"),
               "G21": data.get("gesp_g_masa_sss"), "AD29": data.get("gesp_g_temp")}
     return _generar_excel_gravedad(TEMPLATE_GESP_GRUESO, "Hoja1 (2)", celdas, codigo, perf_codigo, muestra, project,
-                                    data, observaciones_ensayo)
+                                    data, observaciones_ensayo, celda_observaciones="C32")
 
 
 CORTE_TIPO_EXCEL = {"CD": "CONSOLIDADO DRENADO (CD)", "CU": "CONSOLIDADO NO DRENADO (CU)",
@@ -8797,8 +8800,8 @@ def render_corte_directo_form(data, assay_id):
 def _tabla_agua_temperatura():
     """Tabla 1 de la plantilla GDA-FLC-006: {temperatura °C: (densidad del agua, coeficiente K)}."""
     tabla = {}
-    ws = load_workbook(TEMPLATE_GESP_ARCILLA, data_only=True, read_only=True)["Hoja1"]
-    for row in ws.iter_rows(min_row=4, max_row=163, min_col=41, max_col=43, values_only=True):
+    ws = load_workbook(TEMPLATE_GESP_ARCILLA, data_only=True, read_only=True).worksheets[0]   # el nombre de la hoja cambia entre versiones
+    for row in ws.iter_rows(min_row=3, max_row=170, min_col=41, max_col=43, values_only=True):
         t, dens, k = row
         if isinstance(t, (int, float)) and isinstance(dens, (int, float)) and isinstance(k, (int, float)):
             tabla[round(float(t), 1)] = (dens, k)
@@ -8841,7 +8844,9 @@ def resultados_gravedad(data, modo):
         return []
     gt = ws_ * dens_k[0] / (wpw + ws_ - wpws)
     return [("Peso específico del agua (g/cm³)", fmt_num(dens_k[0], 5)),
-            ("Gravedad específica", fmt_num(gt, 4))]
+            ("Gravedad específica", fmt_num(gt, 4)),
+            ("Factor de corrección K (a 20 °C)", fmt_num(dens_k[1], 5)),
+            ("Gravedad específica corregida a 20 °C", fmt_num(gt * dens_k[1], 4))]
 
 
 def resultados_materia_organica(data):
@@ -12496,7 +12501,7 @@ def _equipos_ejemplo(tipo, data):
         "masa-unitaria": {"mu_equipos": EQUIPO_MASA_UNITARIA}, "cbr": {"cbr_equipos": EQUIPO_CBR},
         "corte-directo": {"corte_equipos": EQUIPO_CORTE_DIRECTO, "corte_ge_equipos": EQUIPO_CORTE_GRAVEDAD,
                           **{f"corte_m{i}_hum_equipos": EQUIPO_CORTE_HUMEDAD for i in (1, 2, 3)}},
-        "gravedad-especifica": {"gesp_finos_equipos": EQUIPO_GESP_FINOS}, "proctor": {"proc_equipos": EQUIPO_PROCTOR},
+        "gravedad-especifica": {"gesp_finos_equipos": EQUIPO_GESP_FINOS, "gesp_gruesos_equipos": EQUIPO_GESP_GRUESOS}, "proctor": {"proc_equipos": EQUIPO_PROCTOR},
         "consolidacion": {"cons_equipos": EQUIPO_CONSOLIDACION}, "compresion-inconfinada": {"ci_equipos": EQUIPO_COMPRESION_INCONFINADA},
         "compresion-roca": {"roca_equipos": EQUIPO_COMPRESION_ROCA}, "carga-puntual": {"cp_equipos": EQUIPO_CARGA_PUNTUAL},
         "solidez-sulfatos": {"sulf_equipos": EQUIPO_SOLIDEZ_SULFATOS}, "terrones-arcilla": {"ter_equipos": EQUIPO_TERRONES_ARCILLA},

@@ -115,9 +115,13 @@ def _corte_directo():
 
 
 def _gravedad_especifica():
-    return {"gesp_sel": "Pasa el tamiz No. 4 (finos)", "gesp_f_masa_seco": "492.50", "gesp_f_masa_sss": "500.00",
-            "gesp_f_masa_pic_agua_suelo": "977.00", "gesp_f_masa_pic_agua": "665.20", "gesp_f_temp": "22.0",
-            "gesp_f_pct_retenido": "8.0"}
+    # "Ambos": agregado fino (pasa el tamiz No. 4) y grueso (lo retiene); además quedan los datos del método de arcillas y limos
+    # (INV E-128, picnómetro 3) por si se cambia la opción.
+    return {"gesp_sel": "Ambos", "gesp_f_masa_sss": "500.00", "gesp_f_masa_pic_agua_suelo": "977.00", "gesp_f_masa_pic_agua": "665.20",
+            "gesp_f_temp": "22.0", "gesp_f_masa_seco": "492.50", "gesp_f_pct_retenido": "8.0",
+            "gesp_g_masa_sss": "1520.00", "gesp_g_masa_sumergido": "960.00", "gesp_g_masa_seco": "1500.00", "gesp_g_temp": "22.0",
+            "gesp_a_picnometro": "3", "gesp_a_masa_aire": "50.00", "gesp_a_masa_pic_agua": "347.96", "gesp_a_masa_pic_muestra": "379.34", "gesp_a_temp": "22.0",
+            "gesp_a_pct_retenido": "0"}
 
 
 def _proctor():
