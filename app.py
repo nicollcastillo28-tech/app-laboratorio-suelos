@@ -1074,10 +1074,9 @@ GESP_GRUESOS_CAMPOS = [
 # (INV E-102 / ASTM D2488), no una lista inventada. No hay campo de texto libre — la frase final
 # se arma solo con lo elegido en estos menús (ver descripcion_visual_estructurada).
 DESC_TIPO_SUELO_OPTIONS = ["", "GRAVA", "ARENA", "LIMO", "ARCILLA", "ORGÁNICO", "OTROS"]
-# Componente secundario ("grava CON ALGO DE arena", "arcilla CON ALGO DE arena") — mismas
-# opciones que el tipo principal (sin la casilla en blanco, se filtra el tipo principal ya
-# elegido para no dejar escoger "grava con algo de grava"). Es opcional: la casilla
-# "¿tiene un componente secundario?" decide si se muestra o no.
+# Componentes secundarios, con las reglas del INV E-102-13 (13.8.2, 13.8.3 y 14.6): entre 15 y 25 % de otro material se nombra "CON ARENA /
+# CON GRAVA"; con 30 % o más pasa a adjetivo: "ARCILLA ARENOSA", "LIMO GRAVOSO". Mismas opciones que el tipo principal (se filtra el principal
+# para no dejar armar "grava con grava"). Se guardan separados por coma; un "*" al final marca el de 30 % o más (ARENA*).
 DESC_TIPO_SECUNDARIO_OPTIONS = ["GRAVA", "ARENA", "LIMO", "ARCILLA", "ORGÁNICO", "OTROS"]
 # Color principal y subtonalidad van separados (antes venían mezclados como "Café oscuro"): el
 # color base es el matiz dominante, la subtonalidad es el matiz que lo modifica (ej. "MARRÓN
@@ -1096,10 +1095,22 @@ DESC_CONSISTENCIA_OPTIONS = ["", "MUY BLANDA", "BLANDA", "FIRME", "DURA", "MUY D
 # Forma solo aplica a grava (partículas lo bastante grandes para juzgar su forma a ojo);
 # angulosidad aplica a cualquier suelo grueso (grava o arena).
 DESC_FORMA_OPTIONS = ["", "PLANAS", "ALARGADAS", "PLANAS Y ALARGADAS"]
+# Una muestra puede traer partículas de más de una angulosidad ("SUB ANGULOSA Y REDONDEADA"; la norma admite incluso un intervalo, "de
+# sub-redondeados a redondeados", INV E-102 numeral 9.1): se marcan varias a la vez y se guardan separadas por coma en la misma columna
+# (desc_angulosidad), así los datos de una sola opción siguen valiendo.
 DESC_ANGULOSIDAD_OPTIONS = ["", "ANGULOSA", "SUB ANGULOSA", "SUB REDONDEADA", "REDONDEADA"]
-# Una muestra puede traer partículas de más de una angulosidad ("SUB ANGULOSA Y REDONDEADA"): se marcan varias a la vez y se guardan separadas
-# por coma en la misma columna (desc_angulosidad), así los datos de una sola opción siguen valiendo.
 DESC_HUMEDAD_OPTIONS = ["", "SECA", "HÚMEDA", "SATURADA"]
+# Más descriptores de la lista de comprobación del INV E-102-13 (Tabla 102-13) que antes no se podían registrar: estructura (Tabla 102-7),
+# reacción con HCl (Tabla 102-4: nula, débil, fuerte) y olor (solo si es orgánico o inusual, numeral 9.4). Columnas desc_estructura,
+# desc_hcl y desc_olor (migración 0035).
+DESC_ESTRUCTURA_OPTIONS = ["", "ESTRATIFICADA", "LAMINADA", "FISURADA", "LISA", "EN BLOQUES", "LENTICULAR", "HOMOGÉNEA"]
+DESC_HCL_OPTIONS = ["", "NULA", "DÉBIL", "FUERTE"]
+DESC_OLOR_OPTIONS = ["", "ORGÁNICO", "INUSUAL"]
+# Columnas agregadas por migraciones recientes: si aún no están en la base, se guarda igual lo demás (ver _guardar_descripcion_visual).
+DESC_COLUMNAS_NUEVAS = ("desc_intensidad", "desc_estructura", "desc_hcl", "desc_olor")
+# Adjetivo con que la norma (13.8.3) nombra un componente que pasa del 30 %: "arcilla ARENOSA", "limo GRAVOSO" -> (femenino, masculino).
+_ADJETIVO_SUELO = {"GRAVA": ("GRAVOSA", "GRAVOSO"), "ARENA": ("ARENOSA", "ARENOSO"), "LIMO": ("LIMOSA", "LIMOSO"),
+                   "ARCILLA": ("ARCILLOSA", "ARCILLOSO"), "ORGÁNICO": ("ORGÁNICA", "ORGÁNICO")}
 
 
 def _es_grueso(tipo_suelo):
@@ -1120,12 +1131,24 @@ def _partes_color(muestra):
     return color, subton, intensidad
 
 
-def _tipos_secundarios(muestra, principal=None):
-    """Lista de los componentes secundarios de la muestra ("arcilla CON ALGO DE grava Y arena" -> ["GRAVA", "ARENA"]). Se guardan
-    separados por coma en la misma columna de siempre (desc_tipo_secundario), así los datos de un solo componente siguen valiendo."""
+def _secundarios_por_nivel(muestra, principal=None):
+    """(con, adjetivo): los componentes secundarios de la muestra separados según la norma -- "con" (15 a 25 %: "arcilla CON arena y grava") y
+    "adjetivo" (30 % o más: "arcilla ARENOSA"). Se guardan separados por coma en la columna de siempre (desc_tipo_secundario) y el de 30 %
+    o más lleva un "*"; los datos de antes (sin "*") se leen como "con"."""
     crudo = (muestra.get("desc_tipo_secundario") or "").upper()
-    lista = [p.strip() for p in crudo.split(",") if p.strip()]
-    return [p for p in dict.fromkeys(lista) if p != principal]
+    con, adj = [], []
+    for p in dict.fromkeys(x.strip() for x in crudo.split(",") if x.strip()):
+        nombre, es_adj = p.rstrip("*").strip(), p.endswith("*")
+        if nombre == principal:
+            continue
+        (adj if (es_adj and nombre in _ADJETIVO_SUELO) else con).append(nombre)
+    return con, adj
+
+
+def _tipos_secundarios(muestra, principal=None):
+    """Todos los componentes secundarios (con + adjetivo), sin importar el nivel."""
+    con, adj = _secundarios_por_nivel(muestra, principal)
+    return adj + con
 
 
 def _angulosidades(muestra):
@@ -1155,15 +1178,21 @@ def descripcion_visual_estructurada(muestra, tipo_override=None):
     # (ej. "Limo", "Café oscuro") — se normalizan al leer para que la frase salga toda en
     # mayúscula igual que los datos nuevos, sin tener que migrar filas viejas en la base de datos.
     tipo = (muestra.get("desc_tipo_suelo") or "").upper() or None
-    partes = [tipo_override or tipo] if (tipo_override or tipo) else []
+    base = tipo_override or tipo
+    partes = []
 
-    # Componente secundario (ej. "GRAVA CON ALGO DE ARENA", "ARCILLA CON ALGO DE ARENA") — un
-    # segundo tipo de grano que también está presente en la muestra, sin ser el dominante.
-    secundarios = _tipos_secundarios(muestra, tipo)
-    if tipo_override:   # no repetir un grano que ya nombra la clasificación ("GRAVA MAL GRADADA CON ALGO DE GRAVA" no tiene sentido)
-        secundarios = [x for x in secundarios if x not in tipo_override]
-    if secundarios:
-        partes.append(f"CON ALGO DE {_lista_y(secundarios)}")
+    # Componentes secundarios, como los nombra el INV E-102: 30 % o más -> adjetivo pegado al nombre ("ARCILLA ARENOSA"); 15 a 25 % ->
+    # "CON ARENA". Si la clasificación ya nombra ese grano ("GRAVA ARCILLOSA") no se repite.
+    con, adj = _secundarios_por_nivel(muestra, tipo)
+    if tipo_override:
+        con = [x for x in con if x[:4] not in tipo_override]
+        adj = [x for x in adj if x[:4] not in tipo_override]
+    if base:
+        masculino = base.split()[0] in ("LIMO", "ORGÁNICO")
+        adjetivos = [_ADJETIVO_SUELO[x][1 if masculino else 0] for x in adj]
+        partes.append(base + (f" {_lista_y(adjetivos)}" if adjetivos else ""))
+    if con:
+        partes.append(f"CON {_lista_y(con)}")
 
     angulosidades = _angulosidades(muestra) if _es_grueso(tipo) else []
     if angulosidades:
@@ -1185,12 +1214,23 @@ def descripcion_visual_estructurada(muestra, tipo_override=None):
         if consistencia:
             partes.append(f"DE CONSISTENCIA {consistencia}")
 
+    estructura = (muestra.get("desc_estructura") or "").upper() or None
+    if estructura:
+        partes.append(f"DE ESTRUCTURA {estructura}")
+
     # "CONDICIÓN {ESTADO}", no "CONDICIÓN DE HUMEDAD {ESTADO}" — el estado (SECA/HÚMEDA/
     # SATURADA) ya funciona como adjetivo de "condición", "condición de humedad húmeda" suena
     # redundante.
     humedad = (muestra.get("desc_humedad") or "").upper() or None
     if humedad:
         partes.append(f"EN CONDICIÓN {humedad}")
+
+    hcl = (muestra.get("desc_hcl") or "").upper() or None
+    if hcl:
+        partes.append(f"CON REACCIÓN {hcl} AL HCL")
+    olor = (muestra.get("desc_olor") or "").upper() or None
+    if olor:
+        partes.append(f"CON OLOR {olor}")
 
     return " ".join(partes) if partes else None
 
@@ -5557,6 +5597,23 @@ def _seleccion_multiple(label, opciones, actuales, key):
     return st.multiselect(label, opciones, default=actuales, key=key)
 
 
+def _guardar_descripcion_visual(muestra_id, campos):
+    """Guarda los campos de la descripción visual. Si la base aún no tiene las columnas de las migraciones 0034/0035 (intensidad, estructura,
+    HCl, olor), se guarda todo lo demás y se avisa; la intensidad se funde en la subtonalidad (como se guardaba antes) para no perderla."""
+    try:
+        db.update_muestra(muestra_id, **campos)
+    except Exception:
+        campos = dict(campos)
+        inten = campos.get("desc_intensidad")
+        for c in DESC_COLUMNAS_NUEVAS:
+            campos.pop(c, None)
+        if inten and not campos.get("desc_subtonalidad"):
+            campos["desc_subtonalidad"] = inten
+        db.update_muestra(muestra_id, **campos)
+        st.toast("Guardado, pero faltan las migraciones 0034 y 0035 en Supabase para guardar intensidad, estructura, HCl y olor.",
+                 icon=":material/warning:")
+
+
 def render_muestra_detail():
     codigo = st.session_state.selected_codigo
     perf_codigo = st.session_state.selected_perforacion
@@ -5624,12 +5681,12 @@ def render_muestra_detail():
                     placeholder="Ej: Grava arcillosa de color gris oscuro, débilmente cementada, en condición húmeda...",
                 )
                 if st.button("Guardar descripción visual", icon=":material/save:", key=f"desc_visual_save_texto_{muestra_id}"):
-                    db.update_muestra(
-                        muestra["id"], descripcion_visual=texto.strip().upper(),
-                        desc_tipo_suelo=None, desc_tipo_secundario=None, desc_color=None, desc_subtonalidad=None, desc_intensidad=None,
-                        desc_forma=None, desc_angulosidad=None, desc_cementacion=None, desc_consistencia=None,
-                        desc_humedad=None,
-                    )
+                    _guardar_descripcion_visual(
+                        muestra["id"], dict(
+                            descripcion_visual=texto.strip().upper(),
+                            desc_tipo_suelo=None, desc_tipo_secundario=None, desc_color=None, desc_subtonalidad=None, desc_intensidad=None,
+                            desc_forma=None, desc_angulosidad=None, desc_cementacion=None, desc_consistencia=None,
+                            desc_humedad=None, desc_estructura=None, desc_hcl=None, desc_olor=None))
                     st.session_state[desc_edit_key] = False
                     st.toast("Descripción visual guardada.", icon=":material/check_circle:")
                     st.rerun()
@@ -5644,18 +5701,25 @@ def render_muestra_detail():
                                           key=f"desc_tipo_{muestra_id}", format_func=lambda v: v or "— Seleccionar —")
                 grueso = _es_grueso(desc_tipo)
 
-                # Componentes secundarios: una muestra puede venir acompañada de más de un grano a la vez (ej. "arcilla con algo de
-                # grava y arena"), por eso se marcan como etiquetas (varias a la vez) en vez de un solo menú. El tipo principal
-                # no se ofrece (no existe "grava con algo de grava"). Se guardan separados por coma en desc_tipo_secundario.
+                # Componentes secundarios, con las reglas del INV E-102-13 (13.8): 15 a 25 % del otro material -> "CON ARENA"; 30 % o más -> el
+                # adjetivo, "ARCILLA ARENOSA". Una muestra puede traer más de uno a la vez, por eso son etiquetas (varias a la vez). El tipo
+                # principal no se ofrece. Se guardan separados por coma en desc_tipo_secundario (con "*" los de 30 % o más).
                 opciones_sec = [o for o in DESC_TIPO_SECUNDARIO_OPTIONS if o != desc_tipo]
-                sec_actuales = [x for x in _tipos_secundarios(muestra, desc_tipo) if x in opciones_sec]
-                desc_secundarios = _seleccion_multiple(
-                    "Con algo de… (opcional, puedes marcar varios)", opciones_sec, sec_actuales,
-                    key=f"desc_sec_{muestra_id}_{desc_tipo}")
+                con_act, adj_act = _secundarios_por_nivel(muestra, desc_tipo)
+                sel_con = _seleccion_multiple(
+                    "Lo acompaña con 15 a 25 % de… (se dice «con arena», «con grava»)", opciones_sec,
+                    [x for x in con_act if x in opciones_sec], key=f"desc_sec_con_{muestra_id}_{desc_tipo}")
+                opciones_adj = [o for o in opciones_sec if o in _ADJETIVO_SUELO]
+                sel_adj = _seleccion_multiple(
+                    "Lo acompaña con 30 % o más de… (se dice «arenoso», «gravoso»)", opciones_adj,
+                    [x for x in adj_act if x in opciones_adj], key=f"desc_sec_adj_{muestra_id}_{desc_tipo}")
+                desc_secundarios = [x for x in sel_con if x not in sel_adj] + [f"{x}*" for x in sel_adj]
 
                 # Color en tres pasos que se combinan: color base + matiz + intensidad ("MARRÓN ROJIZO CLARO").
                 color_act, subton_act, intens_act = _partes_color(muestra)
-                st.markdown('<div class="cell-muted" style="margin:6px 0 -6px;font-weight:700;">Color</div>', unsafe_allow_html=True)
+                st.markdown('<div class="cell-muted" style="margin:6px 0 -6px;font-weight:700;">Color <span style="font-weight:400;">'
+                            '(descríbelo con la muestra húmeda; si es de la muestra seca, anótalo en las observaciones — INV E-102, 9.3)</span></div>',
+                            unsafe_allow_html=True)
                 valores = {}
                 for col, (label, opciones, campo_db, campo_key, actual) in zip(st.columns(3), [
                         ("Color base", DESC_COLOR_OPTIONS, "desc_color", "color", color_act),
@@ -5681,6 +5745,9 @@ def render_muestra_detail():
                 campos.append(("Cementación", DESC_CEMENTACION_OPTIONS, "desc_cementacion", "cem") if grueso
                                else ("Consistencia", DESC_CONSISTENCIA_OPTIONS, "desc_consistencia", "cons"))
                 campos.append(("Condición de humedad", DESC_HUMEDAD_OPTIONS, "desc_humedad", "hum"))
+                campos.append(("Estructura", DESC_ESTRUCTURA_OPTIONS, "desc_estructura", "estr"))
+                campos.append(("Reacción con HCl", DESC_HCL_OPTIONS, "desc_hcl", "hcl"))
+                campos.append(("Olor (solo si es orgánico o inusual)", DESC_OLOR_OPTIONS, "desc_olor", "olor"))
                 for i in range(0, len(campos), 2):
                     for col, (label, opciones, campo_db, campo_key) in zip(st.columns(2), campos[i:i + 2]):
                         with col:
@@ -5705,17 +5772,7 @@ def render_muestra_detail():
                     # se ve.
                     for campo_db in ("desc_forma", "desc_angulosidad", "desc_cementacion", "desc_consistencia"):
                         guardar.setdefault(campo_db, None)
-                    try:
-                        db.update_muestra(muestra["id"], **guardar)
-                    except Exception:
-                        # Falta la migración 0034 (columna desc_intensidad): se guarda todo lo demás y se avisa. La intensidad
-                        # que se eligió se funde en la subtonalidad (como se guardaba antes) para no perderla.
-                        inten = guardar.pop("desc_intensidad", None)
-                        if inten and not guardar.get("desc_subtonalidad"):
-                            guardar["desc_subtonalidad"] = inten
-                        db.update_muestra(muestra["id"], **guardar)
-                        st.toast("Guardado, pero falta aplicar la migración 0034 en Supabase para guardar la intensidad por separado.",
-                                 icon=":material/warning:")
+                    _guardar_descripcion_visual(muestra["id"], guardar)
                     st.session_state[desc_edit_key] = False
                     st.toast("Descripción visual guardada.", icon=":material/check_circle:")
                     st.rerun()
