@@ -1097,6 +1097,8 @@ DESC_CONSISTENCIA_OPTIONS = ["", "MUY BLANDA", "BLANDA", "FIRME", "DURA", "MUY D
 # angulosidad aplica a cualquier suelo grueso (grava o arena).
 DESC_FORMA_OPTIONS = ["", "PLANAS", "ALARGADAS", "PLANAS Y ALARGADAS"]
 DESC_ANGULOSIDAD_OPTIONS = ["", "ANGULOSA", "SUB ANGULOSA", "SUB REDONDEADA", "REDONDEADA"]
+# Una muestra puede traer partículas de más de una angulosidad ("SUB ANGULOSA Y REDONDEADA"): se marcan varias a la vez y se guardan separadas
+# por coma en la misma columna (desc_angulosidad), así los datos de una sola opción siguen valiendo.
 DESC_HUMEDAD_OPTIONS = ["", "SECA", "HÚMEDA", "SATURADA"]
 
 
@@ -1124,6 +1126,12 @@ def _tipos_secundarios(muestra, principal=None):
     crudo = (muestra.get("desc_tipo_secundario") or "").upper()
     lista = [p.strip() for p in crudo.split(",") if p.strip()]
     return [p for p in dict.fromkeys(lista) if p != principal]
+
+
+def _angulosidades(muestra):
+    """Angulosidades de la muestra como lista (en el orden de DESC_ANGULOSIDAD_OPTIONS, sin repetir)."""
+    crudo = [p.strip() for p in (muestra.get("desc_angulosidad") or "").upper().split(",") if p.strip()]
+    return [o for o in DESC_ANGULOSIDAD_OPTIONS if o and o in crudo]
 
 
 def _lista_y(items):
@@ -1157,9 +1165,9 @@ def descripcion_visual_estructurada(muestra, tipo_override=None):
     if secundarios:
         partes.append(f"CON ALGO DE {_lista_y(secundarios)}")
 
-    angulosidad = (muestra.get("desc_angulosidad") or "").upper() if _es_grueso(tipo) else None
-    if angulosidad:
-        partes.append(angulosidad)
+    angulosidades = _angulosidades(muestra) if _es_grueso(tipo) else []
+    if angulosidades:
+        partes.append(_lista_y(angulosidades))
     forma = (muestra.get("desc_forma") or "").upper() if tipo == "GRAVA" else None
     if forma:
         partes.append(f"DE FORMA {forma}")
@@ -5659,13 +5667,17 @@ def render_muestra_detail():
                             label, opciones, index=opciones.index(actual) if actual in opciones else 0,
                             key=f"{campo_key}_{muestra_id}_{grueso}", format_func=lambda v: v or "— Seleccionar —")
 
-                # El resto depende del tipo de grano — grueso (grava/arena): angulosidad y cementación; fino
+                # Angulosidad (solo grano grueso): etiquetas, se pueden marcar varias ("sub angulosa y redondeada").
+                if grueso:
+                    sel_ang = _seleccion_multiple("Angulosidad (puedes marcar varias)", [o for o in DESC_ANGULOSIDAD_OPTIONS if o],
+                                                  _angulosidades(muestra), key=f"angulosidad_{muestra_id}_{grueso}")
+                    valores["desc_angulosidad"] = ",".join(o for o in DESC_ANGULOSIDAD_OPTIONS if o in sel_ang) or None
+
+                # El resto depende del tipo de grano — grueso (grava/arena): cementación; fino
                 # (limo/arcilla/orgánico): consistencia; forma solo en grava. Van en parejas de 2 columnas.
                 campos = []
                 if desc_tipo == "GRAVA":
                     campos.append(("Forma", DESC_FORMA_OPTIONS, "desc_forma", "forma"))
-                if grueso:
-                    campos.append(("Angulosidad", DESC_ANGULOSIDAD_OPTIONS, "desc_angulosidad", "angulosidad"))
                 campos.append(("Cementación", DESC_CEMENTACION_OPTIONS, "desc_cementacion", "cem") if grueso
                                else ("Consistencia", DESC_CONSISTENCIA_OPTIONS, "desc_consistencia", "cons"))
                 campos.append(("Condición de humedad", DESC_HUMEDAD_OPTIONS, "desc_humedad", "hum"))
