@@ -6119,6 +6119,17 @@ def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observ
     ws["D13"] = descripcion_para_informe(muestra)
 
 
+def _limites_tienen_datos(data):
+    """True si el ensayo de Límites trae algo que llevar al Excel: un dato numérico o la marca de suelo no líquido / no plástico. Si no,
+    no se toca NADA de la zona de Límites (ni datos ni Resultados) para que las fórmulas de la plantilla queden tal cual."""
+    if not data:
+        return False
+    if data.get("lim_nl") or data.get("lim_np"):
+        return True
+    return any(to_float(v) is not None for k, v in data.items()
+               if k.startswith("lim_") and "recipiente" not in k and not k.endswith("_lastsync") and isinstance(v, str))
+
+
 def _escribir_limites(ws, data):
     def _escribir(filas):
         for key, _label, cells in filas:
@@ -6126,7 +6137,10 @@ def _escribir_limites(ws, data):
             for i, cell in enumerate(cells, start=1):
                 valor = data.get(f"{key}_{i}", "")
                 if es_recipiente:
-                    ws[cell] = valor
+                    # Nunca se escribe "" en una celda: un texto vacío NO es una celda en blanco para las fórmulas de la plantilla
+                    # (ej. Y25 = SI(Y20=0;"";...) deja de dar "" y se rompe el cálculo del límite plástico).
+                    if valor not in ("", None):
+                        ws[cell] = valor
                 else:
                     num = to_float(valor)
                     if num is not None:
@@ -6928,7 +6942,7 @@ def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_dat
             valor = to_float(gran_data.get(key))
             ws[cell] = valor if valor is not None else 0
 
-    if lim_data is not None:
+    if _limites_tienen_datos(lim_data):
         _escribir_limites(ws, lim_data)
 
     bio = BytesIO()
