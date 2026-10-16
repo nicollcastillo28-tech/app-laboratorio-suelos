@@ -3699,7 +3699,7 @@ def render_home():
                     ensayo_id = f'{a["codigo_interno"]}-{a["perforacion_codigo"]}-M{a["muestra_numero"]}'
                     cols[0].markdown(f'<span class="cell-id">{html.escape(ensayo_id)}</span>', unsafe_allow_html=True)
                     titulo = html.escape(proyecto["nombre"] if proyecto else a["codigo_interno"])
-                    subtitulo = html.escape(proyecto.get("localizacion", "")) if proyecto else ""
+                    subtitulo = html.escape(proyecto.get("localizacion", "")) if proyecto and st.session_state.role != "laboratorista" else ""
                     cols[1].markdown(f'<div class="cell-title">{titulo}</div><div class="cell-sub">{subtitulo}</div>',
                                       unsafe_allow_html=True)
                     # Texto plano (mismo estilo que "Sondeo / Muestra" en Actividad reciente del
@@ -4487,15 +4487,17 @@ def render_projects_active():
             top[1].markdown(f'<div style="text-align:right;"><span class="badge {estado_badge}">{estado_label}</span></div>',
                              unsafe_allow_html=True)
             st.markdown(f"**{p['nombre']}**")
-            st.markdown(f'<span class="cell-muted">{icon("location_on", size=14)} {html.escape(p.get("localizacion") or "—")}</span>',
-                        unsafe_allow_html=True)
-            st.markdown(f'<div class="section-title" style="margin-bottom:4px;">Norma</div>'
-                        f'<div style="margin-bottom:10px;">{html.escape(p.get("norma") or "—")}</div>', unsafe_allow_html=True)
-            m1, m2 = st.columns(2)
-            m1.markdown(f'<span class="cell-muted">Fecha bitácora:</span><br><span style="font-weight:600;">'
-                        f'{html.escape(p.get("fecha_bitacora") or "—")}</span>', unsafe_allow_html=True)
-            m2.markdown(f'<span class="cell-muted">Fecha ingreso:</span><br><span style="font-weight:600;">'
-                        f'{html.escape(p.get("fecha_ingreso_muestra") or "—")}</span>', unsafe_allow_html=True)
+            # Ubicación, norma y fechas del proyecto no son para el laboratorista (solo Jefe y Director Técnico).
+            if st.session_state.role != "laboratorista":
+                st.markdown(f'<span class="cell-muted">{icon("location_on", size=14)} {html.escape(p.get("localizacion") or "—")}</span>',
+                            unsafe_allow_html=True)
+                st.markdown(f'<div class="section-title" style="margin-bottom:4px;">Norma</div>'
+                            f'<div style="margin-bottom:10px;">{html.escape(p.get("norma") or "—")}</div>', unsafe_allow_html=True)
+                m1, m2 = st.columns(2)
+                m1.markdown(f'<span class="cell-muted">Fecha bitácora:</span><br><span style="font-weight:600;">'
+                            f'{html.escape(p.get("fecha_bitacora") or "—")}</span>', unsafe_allow_html=True)
+                m2.markdown(f'<span class="cell-muted">Fecha ingreso:</span><br><span style="font-weight:600;">'
+                            f'{html.escape(p.get("fecha_ingreso_muestra") or "—")}</span>', unsafe_allow_html=True)
             resumen = _resumen_tecnico_perforaciones(codigo)
             if resumen:
                 st.markdown(f'<div class="section-title" style="margin-bottom:6px;">'
@@ -4986,45 +4988,47 @@ def render_project_detail():
                 </div>
             ''', unsafe_allow_html=True)
 
-    with st.container(border=True):
-        info_rows = [
-            ("location_on", "Ubicación", project.get("localizacion")),
-            ("rule", "Norma", project.get("norma")),
-        ]
-        # Datos del cliente: los ven Jefe y Director Técnico (roles de consulta/revisión), nunca el laboratorista.
-        if st.session_state.role in ("jefe", "ingeniero"):
-            info_rows.insert(1, ("badge", "Cliente", project.get("cliente")))
-            info_rows.insert(2, ("mail", "Correo electrónico", project.get("correo_cliente")))
-            info_rows.insert(3, ("home_pin", "Dirección cliente", project.get("direccion_cliente")))
-            info_rows.insert(4, ("call", "Teléfono de contacto", project.get("telefono_contacto")))
-            info_rows.insert(5, ("contact_page", "Nombre de contacto", project.get("nombre_contacto")))
+    # El laboratorista no ve la información del proyecto (ubicación, norma, fechas, datos del cliente).
+    if st.session_state.role != "laboratorista":
+        with st.container(border=True):
+            info_rows = [
+                ("location_on", "Ubicación", project.get("localizacion")),
+                ("rule", "Norma", project.get("norma")),
+            ]
+            # Datos del cliente: los ven Jefe y Director Técnico (roles de consulta/revisión), nunca el laboratorista.
+            if st.session_state.role in ("jefe", "ingeniero"):
+                info_rows.insert(1, ("badge", "Cliente", project.get("cliente")))
+                info_rows.insert(2, ("mail", "Correo electrónico", project.get("correo_cliente")))
+                info_rows.insert(3, ("home_pin", "Dirección cliente", project.get("direccion_cliente")))
+                info_rows.insert(4, ("call", "Teléfono de contacto", project.get("telefono_contacto")))
+                info_rows.insert(5, ("contact_page", "Nombre de contacto", project.get("nombre_contacto")))
 
-        def _info_row(icono, label, valor, primera):
-            margen = "" if primera else "margin-top:14px;"
-            return (f'<div class="cell-muted" style="{margen}text-transform:uppercase;letter-spacing:0.04em;font-size:11px;">'
-                    f'{icon(icono, size=14)} {label}</div>'
-                    f'<div style="font-weight:600;font-size:15px;">{html.escape(valor or "—")}</div>')
+            def _info_row(icono, label, valor, primera):
+                margen = "" if primera else "margin-top:14px;"
+                return (f'<div class="cell-muted" style="{margen}text-transform:uppercase;letter-spacing:0.04em;font-size:11px;">'
+                        f'{icon(icono, size=14)} {label}</div>'
+                        f'<div style="font-weight:600;font-size:15px;">{html.escape(valor or "—")}</div>')
 
-        for i, (icono, label, valor) in enumerate(info_rows):
-            st.markdown(_info_row(icono, label, valor, i == 0), unsafe_allow_html=True)
+            for i, (icono, label, valor) in enumerate(info_rows):
+                st.markdown(_info_row(icono, label, valor, i == 0), unsafe_allow_html=True)
 
-        # Fechas agrupadas en paquetes separados (orden/ingreso, plazos del proyecto) para que no se vean como una sola lista
-        # larga y confusa. Recepción, ejecución y emisión van por perforación (ver la tarjeta de cada una).
-        date_groups = [
-            [("calendar_month", "Fecha de orden", project.get("fecha_bitacora")),
-             ("move_to_inbox", "Ingreso de muestras", project.get("fecha_ingreso_muestra"))],
-            [("event", "Fecha inicio proyecto", project.get("fecha_inicio_proyecto")),
-             ("event_available", "Fecha final proyecto", project.get("fecha_final_proyecto")),
-             ("event_available", "Fecha final real", project.get("fecha_final_real"))],
-        ]
-        for gi, group in enumerate(date_groups):
-            margen_inferior = "margin-bottom:6px;" if gi == len(date_groups) - 1 else ""
-            rows_html = "".join(_info_row(icono, label, valor, i == 0) for i, (icono, label, valor) in enumerate(group))
-            st.markdown(
-                f'<div style="margin-top:16px;{margen_inferior}padding:10px 12px 12px;border-radius:10px;'
-                f'background:rgba(74,120,98,0.06);border:1px solid rgba(74,120,98,0.16);">{rows_html}</div>',
-                unsafe_allow_html=True,
-            )
+            # Fechas agrupadas en paquetes separados (orden/ingreso, plazos del proyecto) para que no se vean como una sola lista
+            # larga y confusa. Recepción, ejecución y emisión van por perforación (ver la tarjeta de cada una).
+            date_groups = [
+                [("calendar_month", "Fecha de orden", project.get("fecha_bitacora")),
+                 ("move_to_inbox", "Ingreso de muestras", project.get("fecha_ingreso_muestra"))],
+                [("event", "Fecha inicio proyecto", project.get("fecha_inicio_proyecto")),
+                 ("event_available", "Fecha final proyecto", project.get("fecha_final_proyecto")),
+                 ("event_available", "Fecha final real", project.get("fecha_final_real"))],
+            ]
+            for gi, group in enumerate(date_groups):
+                margen_inferior = "margin-bottom:6px;" if gi == len(date_groups) - 1 else ""
+                rows_html = "".join(_info_row(icono, label, valor, i == 0) for i, (icono, label, valor) in enumerate(group))
+                st.markdown(
+                    f'<div style="margin-top:16px;{margen_inferior}padding:10px 12px 12px;border-radius:10px;'
+                    f'background:rgba(74,120,98,0.06);border:1px solid rgba(74,120,98,0.16);">{rows_html}</div>',
+                    unsafe_allow_html=True,
+                )
 
     if st.session_state.role == "jefe":
         c1, c2 = st.columns(2)
@@ -5390,10 +5394,12 @@ def render_perforacion_detail():
             st.markdown(f"#### Sondeo {html.escape(perf_codigo)}")
             st.markdown(f'<span class="assigned-chip">{html.escape(perf["tipo"] if perf else "—")}</span>',
                         unsafe_allow_html=True)
-            st.markdown(f'<div class="cell-muted" style="margin-top:10px;">'
-                        f'{icon("location_on", size=13)} {html.escape(project.get("localizacion") or "—")}'
-                        f'&nbsp;&nbsp;&nbsp;{icon("calendar_month", size=13)} {html.escape(project.get("fecha_bitacora") or "—")}'
-                        f'&nbsp;&nbsp;&nbsp;{icon("move_to_inbox", size=13)} Recepción {fecha_ingreso_perf_txt(perf, project)}</div>',
+            ubicacion_txt = ("" if st.session_state.role == "laboratorista" else
+                             f'{icon("location_on", size=13)} {html.escape(project.get("localizacion") or "—")}&nbsp;&nbsp;&nbsp;')
+            st.markdown(f'<div class="cell-muted" style="margin-top:10px;">{ubicacion_txt}'
+                        f'{icon("move_to_inbox", size=13)} Recepción {fecha_ingreso_perf_txt(perf, project)}'
+                        f'&nbsp;&nbsp;&nbsp;{icon("science", size=13)} Ejecución {_fecha_txt(fecha_ejecucion_perf(codigo, perf_codigo, muestras))}'
+                        f'&nbsp;&nbsp;&nbsp;{icon("outbox", size=13)} Emisión {_fecha_txt((perf or {}).get("fecha_emision"))}</div>',
                         unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         with c1:
