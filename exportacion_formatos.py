@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 
 from openpyxl import load_workbook
 from openpyxl.utils.cell import coordinate_to_tuple, range_boundaries
+from presentacion_excel import ajustar_presentacion
 
 S = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
 R = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
@@ -131,7 +132,7 @@ def escribir_entradas(contenido, parte, valores, *, celdas_formula_editables=())
                     texto = re.sub(r'<calcPr\b[^>]*/>', recalcular, texto)
                     datos = texto.encode('utf-8')
                 out.writestr(item, datos)
-        return salida.getvalue()
+        return ajustar_presentacion(salida.getvalue(), parte, entradas)
 
 
 class _HojaEntradas:

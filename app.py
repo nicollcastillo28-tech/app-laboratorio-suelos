@@ -28,6 +28,7 @@ import alertas_resultados as alertas_res
 import db
 import pruebas_datos
 from exportacion_formatos import LibroFormatoOriginal, escribir_entradas, FormatoIncompatibleError
+from presentacion_excel import ajustar_presentacion, reparar_formulas_clasificacion
 
 
 # Funciones de db que modifican datos del laboratorio. En el "Modo de prueba" (pantalla "pruebas") se ignoran: los formularios y
@@ -4248,7 +4249,7 @@ def _bal_estado_control(fila):
 
 
 def _xlsx_combinar_con_ajuste(xlsx_bytes, hoja_xml, ref_celda, rango):
-    """Combina `rango` (ej. "E38:AV39") y deja la celda `ref_celda` con el texto alineado arriba a la izquierda y con
+    """Combina `rango` (ej. "E38:AV39") y deja la celda `ref_celda` con el texto centrado y con
     ajuste de línea: en la plantilla, Observaciones son dos filas de celdas sueltas centradas, donde un texto largo
     se sale de la hoja. Se clona el estilo que ya tenía la celda (bordes, fuente) y solo se cambia la alineación."""
     with zipfile.ZipFile(BytesIO(xlsx_bytes)) as zin:
@@ -4258,7 +4259,7 @@ def _xlsx_combinar_con_ajuste(xlsx_bytes, hoja_xml, ref_celda, rango):
         estilo = int(re.search(r'\bs="(\d+)"', m_cell.group(1)).group(1))
         m_xfs = re.search(r'(<cellXfs count=")(\d+)(">)(.*?)(</cellXfs>)', styles, re.S)
         xfs = re.findall(r'<xf [^>]*?(?:/>|>.*?</xf>)', m_xfs.group(4), re.S)
-        xf, alineacion = xfs[estilo], '<alignment horizontal="left" vertical="top" wrapText="1"/>'
+        xf, alineacion = xfs[estilo], '<alignment horizontal="center" vertical="center" wrapText="1"/>'
         if "<alignment" in xf:
             xf = re.sub(r'<alignment[^>]*/>', alineacion, xf)
         elif xf.endswith("/>"):
@@ -6616,34 +6617,15 @@ def _reparar_graficos_perdidos(xlsm_bytes, template_path):
 
 
 def _restaurar_orden_formato_condicional(xlsx_bytes, template_path):
-    """openpyxl reordena los rangos de las reglas de formato condicional con varias áreas (ej.
-    sqref="I6:M6 B6:B10 D6:D10 ...") al volver a guardar. La fórmula de esas reglas (ej.
-    LEN(TRIM(B6))=0, las casillas verdes/grises que se apagan al escribir) es relativa a la
-    primera celda del rango, así que con otro orden Excel las evalúa contra celdas equivocadas y
-    el verde puede quedarse en casillas ya llenas. Se devuelve cada sqref al orden exacto de la
-    plantilla original."""
-    patron = re.compile(r'<conditionalFormatting sqref="([^"]*)">(.*?)</conditionalFormatting>', re.S)
-
-    # Excel evalúa la fórmula relativa a la PRIMERA celda del sqref. Varias plantillas traen
-    # reglas de varias áreas cuya fórmula apunta a otra celda (ej. sqref="G19:G20 G22:G23 E33:G34"
-    # con LEN(TRIM(E19))=0), así que las casillas G19:G23 se quedan verdes aunque estén llenas —
-    # pasa incluso escribiendo directo en la plantilla original. Se reescribe la fórmula para que
-    # siempre revise la celda misma (la primera del sqref), que es lo que la regla quiere decir.
-    # La fórmula relativa depende de qué celda toma Excel como base en reglas de varias áreas (varía
-    # según el orden de los rangos), así que en vez de apuntar a una celda se usa una fórmula que
-    # siempre revisa la celda misma: INDIRECT(ADDRESS(ROW(),COLUMN())).
-    def reemplazo(m):
-        sqref, cuerpo = m.group(1), m.group(2)
-        nuevo = re.sub(r"LEN\(TRIM\(\$?[A-Z]+\$?\d+\)\)=0", "LEN(TRIM(INDIRECT(ADDRESS(ROW(),COLUMN()))))=0", cuerpo)
-        return f'<conditionalFormatting sqref="{sqref}">{nuevo}</conditionalFormatting>'
-
+    """Compatibilidad del exportador anterior con las reglas de casillas vacías."""
+    from presentacion_excel import corregir_avisos_vacios
     bio = BytesIO()
-    with zipfile.ZipFile(BytesIO(xlsx_bytes)) as out, zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as z:
-        for item in out.infolist():
-            contenido = out.read(item.filename)
-            if re.match(r"xl/worksheets/sheet\d+\.xml$", item.filename):
-                contenido = patron.sub(reemplazo, contenido.decode("utf-8")).encode("utf-8")
-            z.writestr(item, contenido)
+    with zipfile.ZipFile(BytesIO(xlsx_bytes)) as origen, zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as salida:
+        for item in origen.infolist():
+            datos = origen.read(item.filename)
+            if re.fullmatch(r"xl/worksheets/sheet\d+\.xml", item.filename):
+                datos = corregir_avisos_vacios(datos.decode("utf-8")).encode("utf-8")
+            salida.writestr(item, datos)
     return bio.getvalue()
 
 
@@ -7322,7 +7304,10 @@ def _quitar_hojas_ajenas(xlsx_bytes, hojas_a_quitar):
 
 def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_data=None, lim_data=None, observaciones_ensayo=""):
     """Granulometría y límites comparten el formato 001 completo. Se llenan las entradas de FORMATO y se conservan sus fórmulas y objetos originales."""
-    wb = _cargar_plantilla_informe(TEMPLATE_GRANULOMETRIA, keep_vba=True)
+    # NP/NL sólo sustituyen sus casillas de resultado, por autorización del laboratorio.
+    editables = ('R40', 'R41') if (lim_data or {}).get('lim_nl') else ('R41', 'R42') if (lim_data or {}).get('lim_np') else ()
+    wb = _cargar_plantilla_informe(TEMPLATE_GRANULOMETRIA, keep_vba=True,
+                                  celdas_formula_editables={'FORMATO': editables})
     ws = wb["FORMATO"]
     _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo, perf_numero_cell="F12", datas=[gran_data, lim_data])
 
@@ -7348,7 +7333,8 @@ def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_dat
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return bio.getvalue()
+    salida = bio.getvalue()
+    return reparar_formulas_clasificacion(salida, _parte_hoja_informe(salida, 'FORMATO'))
 
 
 @_exportacion_controlada
@@ -9592,7 +9578,7 @@ def _xlsx_escribir_celdas(xlsx_bytes, hoja_xml, celdas):
                 elif item.filename == rels_wb and tiene_calc_chain:
                     contenido = re.sub(rb'<Relationship[^>]*Target="calcChain\.xml"[^>]*/>', b"", contenido)
                 zout.writestr(item, contenido)
-        return bio.getvalue()
+        return ajustar_presentacion(bio.getvalue(), hoja_xml, celdas)
 
 
 def _insertar_imagen_hoja(xlsx_bytes, drawing_xml, imagen_bytes, imagen_ext, col, fila, ancho_emu, alto_emu,
