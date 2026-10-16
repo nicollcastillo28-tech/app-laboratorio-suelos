@@ -27,6 +27,7 @@ from openpyxl import load_workbook
 import alertas_resultados as alertas_res
 import db
 import pruebas_datos
+from exportacion_formatos import LibroFormatoOriginal, escribir_entradas, FormatoIncompatibleError
 
 
 # Funciones de db que modifican datos del laboratorio. En el "Modo de prueba" (pantalla "pruebas") se ignoran: los formularios y
@@ -6364,11 +6365,40 @@ def _bitacora_filas_perforacion(codigo, perf_codigo):
     return filas
 
 
+
+EXPORTACIONES_EN_REVISION = frozenset({"cbr", "corte-directo", "consolidacion"})
+LOTES_EN_REVISION = frozenset({"cbr", "proctor"})
+
+
+def _conservar_hojas_del_informe(contenido, conservar):
+    """Conserva el formato de la muestra y excluye ejemplos de otros proyectos."""
+    with zipfile.ZipFile(BytesIO(contenido)) as z:
+        quitar = [nombre for nombre in _sheet_info(z) if nombre not in conservar]
+    return _quitar_hojas_ajenas(contenido, quitar)
+
+
+def _exportacion_controlada(generador):
+    """Un caso de formato incompatible avisa sin mostrar un error técnico en la interfaz."""
+    from functools import wraps
+    @wraps(generador)
+    def generar(*args, **kwargs):
+        try:
+            return generador(*args, **kwargs)
+        except FormatoIncompatibleError:
+            from streamlit.runtime.scriptrunner import get_script_run_ctx
+            if get_script_run_ctx(suppress_warning=True) is None:
+                raise
+            st.info("Esta variante de descarga está en revisión. Puedes continuar digitando y guardar el ensayo.")
+            st.stop()
+    return generar
+
+
+@_exportacion_controlada
 def generar_excel_bitacora_orden(project, filas, tipos_usados):
     """filas: lista de dicts con perf_codigo, numero, tipo_muestra, profundidad_de,
     profundidad_hasta, ensayos (dict) y observaciones. Devuelve (bytes, truncado)."""
-    wb = load_workbook(TEMPLATE_BITACORA_ORDEN)
-    ws = wb["S1"]
+    wb = _cargar_plantilla_informe(TEMPLATE_BITACORA_ORDEN)
+    ws = wb["FORMATO"]
 
     # La plantilla ya trae "GDA" impreso en su propio recuadro (AC8); solo se llena el
     # recuadro siguiente (AG8) con número-año, tal como se digita en Código interno.
@@ -6410,7 +6440,7 @@ def generar_excel_bitacora_orden(project, filas, tipos_usados):
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_BITACORA_ORDEN), truncado
+    return bio.getvalue(), truncado
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -6454,7 +6484,7 @@ def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observ
     perf = get_perforacion(codigo, perf_codigo)
     ws["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""  # Tipo de perforación (lista desplegable)
     # El número de perforación cae en una celda distinta según la plantilla: F12 en la de
-    # Humedad (GDA-FLC-014), E12 en la de Granulometría/Límites (GDA-FLC-001, actualizada 2026).
+    # Humedad (GDA-FLC-014), F12 también en Granulometría/Límites (GDA-FLC-001, revisión de octubre de 2026).
     ws[perf_numero_cell] = perf["consecutivo"] if perf else ""
     ws["H12"] = muestra["numero"]
     ws["K12"] = to_float(muestra.get("profundidad_de"))
@@ -6829,6 +6859,31 @@ def _sheet_info(zin):
             continue
         info[attrs["name"]] = (rels[rid], attrs.get("sheetId"), i)
     return info
+
+
+
+def _parte_hoja_informe(xlsx_bytes, nombre):
+    """Localiza una hoja por nombre; el orden del ZIP cambia entre versiones."""
+    with zipfile.ZipFile(BytesIO(xlsx_bytes)) as zin:
+        return _sheet_info(zin)[nombre][0]
+
+
+def _drawing_hoja_informe(xlsx_bytes, nombre):
+    with zipfile.ZipFile(BytesIO(xlsx_bytes)) as zin:
+        parte = _sheet_info(zin)[nombre][0]
+        for _rid, tipo, destino in _leer_rels(zin, parte):
+            if tipo.rsplit("/", 1)[-1] == "drawing":
+                return destino
+    raise ValueError(f"La hoja {nombre} no tiene un dibujo para insertar la foto")
+
+
+def _plantilla_informe_bytes(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def _cargar_plantilla_informe(path, **kwargs):
+    return LibroFormatoOriginal(path, **kwargs)
 
 
 def _content_type_de(ct_xml, parte):
@@ -7266,12 +7321,10 @@ def _quitar_hojas_ajenas(xlsx_bytes, hojas_a_quitar):
 
 
 def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_data=None, lim_data=None, observaciones_ensayo=""):
-    """Granulometría y Límites de Atterberg comparten la misma plantilla y hoja ("GUIA") —
-    por muestra van juntos en un solo archivo, sin importar si se descarga desde el ensayo de
-    Granulometría o desde el de Límites."""
-    wb = load_workbook(TEMPLATE_GRANULOMETRIA, keep_vba=True)
-    ws = wb["GUIA"]
-    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo, perf_numero_cell="E12", datas=[gran_data, lim_data])
+    """Granulometría y límites comparten el formato 001 completo. Se llenan las entradas de FORMATO y se conservan sus fórmulas y objetos originales."""
+    wb = _cargar_plantilla_informe(TEMPLATE_GRANULOMETRIA, keep_vba=True)
+    ws = wb["FORMATO"]
+    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo, perf_numero_cell="F12", datas=[gran_data, lim_data])
 
     if gran_data is not None:
         masa_inicial_seca = to_float(gran_data.get("masa_inicial_seca"))
@@ -7295,10 +7348,10 @@ def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_dat
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    data = _reparar_graficos_perdidos(bio.getvalue(), TEMPLATE_GRANULOMETRIA)
-    return _restaurar_imagenes_perdidas(data, TEMPLATE_GRANULOMETRIA)
+    return bio.getvalue()
 
 
+@_exportacion_controlada
 def generar_excel_granulometria(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     lim_assay = get_assay(muestra["id_unico"], "limites")
     lim_data = lim_assay.get("data", {}) if lim_assay else None
@@ -7306,6 +7359,7 @@ def generar_excel_granulometria(codigo, perf_codigo, muestra, project, data, obs
                                          observaciones_ensayo=observaciones_ensayo)
 
 
+@_exportacion_controlada
 def generar_excel_pasa200(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Pasa 200 usa la misma plantilla de Granulometría. `data` ya viene resuelto por
     render_assay_form: si la muestra también tiene Granulometría, es el mismo diccionario de
@@ -7317,9 +7371,10 @@ def generar_excel_pasa200(codigo, perf_codigo, muestra, project, data, observaci
                                          observaciones_ensayo=observaciones_ensayo)
 
 
+@_exportacion_controlada
 def generar_excel_humedad(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
-    wb = load_workbook(TEMPLATE_HUMEDAD)
-    ws = wb["GUIA"]
+    wb = _cargar_plantilla_informe(TEMPLATE_HUMEDAD)
+    ws = wb["Hoja1"]
 
     _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo, datas=[data])
     ws["I19"] = data.get("hum_recipiente", "")
@@ -7336,9 +7391,10 @@ def generar_excel_humedad(codigo, perf_codigo, muestra, project, data, observaci
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_HUMEDAD)
+    return bio.getvalue()
 
 
+@_exportacion_controlada
 def generar_excel_limites(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     gran_assay = get_assay(muestra["id_unico"], "granulometria")
     gran_data = gran_assay.get("data", {}) if gran_assay else None
@@ -7369,9 +7425,10 @@ def _llenar_encabezado_masa_unitaria(ws, codigo, perf_codigo, muestra, project, 
     ws["C13"] = descripcion_para_informe(muestra)
 
 
+@_exportacion_controlada
 def generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
-    wb = load_workbook(TEMPLATE_MASA_UNITARIA)
-    ws = wb["GUIA"]
+    wb = _cargar_plantilla_informe(TEMPLATE_MASA_UNITARIA)
+    ws = wb["FORMATO"]
     _llenar_encabezado_masa_unitaria(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo, datas=[data])
 
     ws["E20"] = to_float(data.get("mu_peso_aire"))  # B = masa en el aire
@@ -7392,7 +7449,7 @@ def generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, obs
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_MASA_UNITARIA)
+    return bio.getvalue()
 
 
 def _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo="", datas=()):
@@ -7419,16 +7476,14 @@ def _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observacio
     ws["C13"] = descripcion_para_informe(muestra)
 
 
+@_exportacion_controlada
 def generar_excel_cbr(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
-    """CBR (GDA-FLC-013, INV E-148-13). La plantilla real trae ~20 hojas ocultas más (proyectos
-    anteriores, cada uno una copia de "GUIA" ya diligenciada) que no tienen nada que ver con esta
-    muestra — se descartan todas menos "GUIA" antes de guardar, para no mandar datos de otros
-    clientes en cada descarga ni inflar el archivo."""
-    wb = load_workbook(TEMPLATE_CBR)
+    """Diligencia el formato 013 original. Las entradas que colisionan con celdas combinadas se dejan pendientes; no se divide ni se rediseña el formato."""
+    wb = _cargar_plantilla_informe(TEMPLATE_CBR)
     for nombre in list(wb.sheetnames):
-        if nombre != "GUIA":
+        if nombre not in ("FORMATO", "CONTROL DE CAMBIOS"):
             del wb[nombre]
-    ws = wb["GUIA"]
+    ws = wb["FORMATO"]
     _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo, datas=[data])
 
     ws["D20"] = data.get("cbr_molde", "")
@@ -7491,15 +7546,15 @@ def generar_excel_cbr(codigo, perf_codigo, muestra, project, data, observaciones
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_CBR)
+    return bio.getvalue()
 
 
 def _generar_excel_gravedad(template, hoja, celdas, codigo, perf_codigo, muestra, project, data, observaciones_ensayo="",
-                            celda_observaciones=None):
+                            celda_observaciones=None, celdas_formula_editables=()):
     """Gravedad específica y absorción del agregado fino (GDA-FLC-027, INV E-222) o grueso
     (GDA-FLC-028, INV E-223). `celdas` mapea cada celda de entrada de la plantilla a su valor;
     las densidades y la absorción las calcula el propio Excel."""
-    wb = load_workbook(template)
+    wb = _cargar_plantilla_informe(template, celdas_formula_editables={hoja: celdas_formula_editables})
     ws = wb.worksheets[0]   # el informe es siempre la primera hoja (cada versión de la plantilla le pone un nombre distinto)
     ws["C6"] = project.get("cliente", "") if project else ""
     ws["C7"] = project["nombre"] if project else codigo
@@ -7526,9 +7581,10 @@ def _generar_excel_gravedad(template, hoja, celdas, codigo, perf_codigo, muestra
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return _restaurar_imagenes_perdidas(bio.getvalue(), template)
+    return bio.getvalue()
 
 
+@_exportacion_controlada
 def generar_excel_gravedad_fino(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     celdas = {"G19": data.get("gesp_f_masa_seco"), "G20": data.get("gesp_f_masa_pic_agua"),
               "G21": data.get("gesp_f_masa_pic_agua_suelo"), "G22": data.get("gesp_f_masa_sss"),
@@ -7537,11 +7593,12 @@ def generar_excel_gravedad_fino(codigo, perf_codigo, muestra, project, data, obs
                                     observaciones_ensayo, celda_observaciones="C33")
 
 
+@_exportacion_controlada
 def generar_excel_limite_contraccion(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Límite de contracción (GDA-FLC-022, INV E-129). Se llenan encabezado y datos; LC, R, Cv y Cl
     los calcula el Excel."""
-    wb = load_workbook(TEMPLATE_LIMITE_CONTRACCION)
-    ws = wb["GUIA"]
+    wb = _cargar_plantilla_informe(TEMPLATE_LIMITE_CONTRACCION)
+    ws = wb["FORMATO"]
     ws["D6"] = project.get("cliente", "") if project else ""
     ws["D7"] = project["nombre"] if project else codigo
     ws["D8"] = project.get("correo_cliente", "") if project else ""
@@ -7573,14 +7630,15 @@ def generar_excel_limite_contraccion(codigo, perf_codigo, muestra, project, data
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_LIMITE_CONTRACCION)
+    return bio.getvalue()
 
 
+@_exportacion_controlada
 def generar_excel_materia_organica(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Contenido de materia orgánica (GDA-FLC-003, INV E-121). Se llenan encabezado y las cuatro
     casillas de datos; la masa seca y el contenido (%) los calcula el Excel."""
-    wb = load_workbook(TEMPLATE_MATERIA_ORGANICA)
-    ws = wb["GUIA"]
+    wb = _cargar_plantilla_informe(TEMPLATE_MATERIA_ORGANICA)
+    ws = wb["FORMATO"]
     ws["D6"] = project.get("cliente", "") if project else ""
     ws["D7"] = project["nombre"] if project else codigo
     ws["D8"] = project.get("correo_cliente", "") if project else ""
@@ -7606,17 +7664,14 @@ def generar_excel_materia_organica(codigo, perf_codigo, muestra, project, data, 
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_MATERIA_ORGANICA)
+    return bio.getvalue()
 
 
+@_exportacion_controlada
 def generar_excel_proctor(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
-    """Proctor (GDA-FLC-002, INV E-141/E-142). La plantilla es un .xlsm que trae juntos el informe
-    de Proctor (izquierda) y el de CBR (derecha) — acá solo se llena el Proctor; el CBR se descarga
-    desde su propio ensayo. Los cálculos (humedad, densidades, humedad óptima, curva) los hace el
-    Excel. El método (A/B/C), la preparación de la muestra, el martillo y el molde usado no se
-    llenan: no se digitan en la bitácora."""
-    wb = load_workbook(TEMPLATE_PROCTOR, keep_vba=True)
-    ws = wb["Hoja1"]
+    """Diligencia Proctor y CBR compactado en el mismo libro 002. Se conservan todas las hojas, objetos y fórmulas originales; el volumen lo calcula la fórmula del formato."""
+    wb = _cargar_plantilla_informe(TEMPLATE_PROCTOR, keep_vba=True)
+    ws = wb["FORMATO"]
     ws["D6"] = project.get("cliente", "") if project else ""
     ws["D7"] = project["nombre"] if project else codigo
     ws["D8"] = project.get("correo_cliente", "") if project else ""
@@ -7669,7 +7724,7 @@ def generar_excel_proctor(codigo, perf_codigo, muestra, project, data, observaci
         altura, diametro = to_float(c("altura")), to_float(c("diametro"))
         ws[f"{col}24"] = altura
         ws[f"{col}25"] = diametro
-        ws[f"{col}27"] = round(math.pi * (diametro / 2) ** 2 * altura, 2) if altura and diametro else None
+        # El volumen ya es una fórmula del formato nuevo; altura y diámetro son entradas.
         for fila_hum, pref, filas_xl in (("hc", "hc", (34, 35, 37, 38)), ("hd", "hd", (42, 43, 45, 46))):
             f_rec, f_hum, f_seco, f_masa = filas_xl
             ws[f"{col}{f_rec}"] = c(f"{pref}_recipiente") or None
@@ -7685,7 +7740,7 @@ def generar_excel_proctor(codigo, perf_codigo, muestra, project, data, observaci
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return _restaurar_imagenes_perdidas(_reparar_graficos_perdidos(bio.getvalue(), TEMPLATE_PROCTOR), TEMPLATE_PROCTOR)
+    return _conservar_hojas_del_informe(bio.getvalue(), ('FORMATO', 'CONTROL DE CAMBIOS'))
 
 
 # Ensayos con descarga por lote (ver empaquetar_hojas más arriba): solo los que tienen UNA sola hoja de datos
@@ -7695,35 +7750,37 @@ def generar_excel_proctor(codigo, perf_codigo, muestra, project, data, observaci
 # distinta según el método elegido (Parafinado/Método B; fino/grueso/arcilla), y agruparlas por variante es
 # trabajo aparte.
 EXCEL_LOTE_CONFIG = {
-    "granulometria": {"hoja": "GUIA", "generar": generar_excel_granulometria, "ext": "xlsm",
+    "granulometria": {"hoja": "FORMATO", "generar": generar_excel_granulometria, "ext": "xlsm",
                        "mime": "application/vnd.ms-excel.sheet.macroEnabled.12",
                        "prefijo": "Clasificacion_de_suelos", "etiqueta": "Granulometría y Límites de Atterberg",
                        "bitacora": "Granulometría"},
-    "humedad": {"hoja": "GUIA", "generar": generar_excel_humedad, "ext": "xlsx",
+    "humedad": {"hoja": "Hoja1", "generar": generar_excel_humedad, "ext": "xlsx",
                 "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 "prefijo": "Humedad", "etiqueta": "Humedad", "bitacora": "Humedad"},
-    "cbr": {"hoja": "GUIA", "generar": generar_excel_cbr, "ext": "xlsx",
+    "cbr": {"hoja": "FORMATO", "generar": generar_excel_cbr, "ext": "xlsx",
             "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "prefijo": "CBR", "etiqueta": "CBR", "bitacora": "CBR"},
-    "limite-contraccion": {"hoja": "GUIA", "generar": generar_excel_limite_contraccion, "ext": "xlsx",
+    "limite-contraccion": {"hoja": "FORMATO", "generar": generar_excel_limite_contraccion, "ext": "xlsx",
                             "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             "prefijo": "Limite_contraccion", "etiqueta": "Límite de contracción",
                             "bitacora": "Límite de contracción"},
-    "materia-organica": {"hoja": "GUIA", "generar": generar_excel_materia_organica, "ext": "xlsx",
+    "materia-organica": {"hoja": "FORMATO", "generar": generar_excel_materia_organica, "ext": "xlsx",
                           "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                           "prefijo": "Materia_organica", "etiqueta": "Materia orgánica", "bitacora": "Materia orgánica"},
-    "masa-unitaria": {"hoja": "GUIA", "generar": generar_excel_masa_unitaria, "ext": "xlsx",
+    "masa-unitaria": {"hoja": "FORMATO", "generar": generar_excel_masa_unitaria, "ext": "xlsx",
                        "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        "prefijo": "Peso_unitario_parafinado", "etiqueta": "Peso unitario (Parafinado)",
                        "bitacora": "Peso unitario",
                        "filtro": lambda data: data.get("mu_metodo") != "Método B"},
-    "proctor": {"hoja": "Hoja1", "generar": generar_excel_proctor, "ext": "xlsm",
+    "proctor": {"hoja": "FORMATO", "generar": generar_excel_proctor, "ext": "xlsm",
                 "mime": "application/vnd.ms-excel.sheet.macroEnabled.12",
                 "prefijo": "Proctor", "etiqueta": "Proctor", "bitacora": "Proctor"},
     # "carga-puntual" se agrega más abajo (ver junto a generar_excel_carga_puntual) -- esa función se
     # define más adelante en el archivo, así que no se puede nombrar todavía aquí arriba.
 }
 
+
+EXCEL_LOTE_CONFIG = {tipo: cfg for tipo, cfg in EXCEL_LOTE_CONFIG.items() if tipo not in LOTES_EN_REVISION}
 
 def _muestras_para_lote(muestras, tipo_lote):
     """(muestra, data) de las muestras de una perforación que tienen ese ensayo solicitado Y ya con datos
@@ -7799,23 +7856,21 @@ def _fijar_celda_formula(xlsx_bytes, celda, formula):
         return bio.getvalue()
 
 
+@_exportacion_controlada
 def generar_excel_gravedad_arcilla(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
-    """GDA-FLC-006 (INV E-128). G21 (masa del picnómetro lleno de agua) trae una fórmula que la
-    busca en la calibración del picnómetro — solo se pisa si el laboratorista digitó el valor."""
+    """Formato 006: G21 recibe la masa digitada en la app, según autorización del laboratorio.
+    Sólo se sustituye esa fórmula en la descarga; el original y las demás fórmulas se conservan.
+    """
     celdas = {"G19": data.get("gesp_a_picnometro"), "G20": data.get("gesp_a_masa_aire"),
+              "G21": data.get("gesp_a_masa_pic_agua"),
               "G22": data.get("gesp_a_masa_pic_muestra"), "G23": data.get("gesp_a_temp"),
               "D32": data.get("gesp_a_pct_retenido")}
-    if to_float(data.get("gesp_a_masa_pic_agua")) is not None:
-        celdas["G21"] = data.get("gesp_a_masa_pic_agua")
-    # G26 (total corregida a 20 °C) combina, si hay % retenido en el tamiz No. 4, la gravedad del material retenido a
-    # partir de N41/N42 (masas en el aire y sumergida), que en la plantilla son valores de ejemplo (30 y 11) —
-    # daba un número que no correspondía a la muestra. Se deja la gravedad específica de la muestra ensayada
-    # corregida a 20 °C (N40 = gravedad a la temperatura del ensayo × K).
     excel = _generar_excel_gravedad(TEMPLATE_GESP_ARCILLA, "FORMATO", celdas, codigo, perf_codigo, muestra, project,
-                                     data, observaciones_ensayo, celda_observaciones="C36")
-    return _fijar_celda_formula(excel, "G26", "N40")
+                                     data, observaciones_ensayo, celda_observaciones="C36", celdas_formula_editables=("G21",))
+    return excel
 
 
+@_exportacion_controlada
 def generar_excel_gravedad_grueso(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     celdas = {"G19": data.get("gesp_g_masa_seco"), "G20": data.get("gesp_g_masa_sumergido"),
               "G21": data.get("gesp_g_masa_sss"), "AD29": data.get("gesp_g_temp")}
@@ -7828,14 +7883,11 @@ CORTE_TIPO_EXCEL = {"CD": "CONSOLIDADO DRENADO (CD)", "CU": "CONSOLIDADO NO DREN
 CORTE_CONDICION_EXCEL = {"Inalterada": "INALTERADA", "Remoldada": "REMOLDEADA", "Compactada": "COMPACTADA"}
 
 
+@_exportacion_controlada
 def generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
-    """Corte Directo (GDA-FLC-007, INV E-154). Se llena la hoja "1" (informe): encabezado,
-    dimensiones y masas de las 3 probetas, humedad inicial/final y gravedad específica. Las hojas
-    "2", "CARGA1" y "Fuente" (lecturas de deformación/carga de la máquina) NO se llenan: la app
-    todavía no captura esas lecturas, así que el esfuerzo cortante, la cohesión y el ángulo de
-    fricción quedan para completar en el Excel."""
-    wb = load_workbook(TEMPLATE_CORTE_DIRECTO)
-    ws = wb["1"]
+    """Diligencia el formato 007 y los datos de la máquina en Fuente. Se conservan las fórmulas de las hojas FORMATO1, FORMATO 2 y FORMATO3; no se aplican correcciones del formato anterior."""
+    wb = _cargar_plantilla_informe(TEMPLATE_CORTE_DIRECTO)
+    ws = wb["FORMATO1"]
     ws["C6"] = project.get("cliente", "") if project else ""
     ws["C7"] = project["nombre"] if project else codigo
     ws["C8"] = project.get("correo_cliente", "") if project else ""
@@ -7896,12 +7948,6 @@ def generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, obs
             for r, fila in enumerate(filas_maq, start=4):
                 for c, v in zip(cols, fila):
                     wf[f"{c}{r}"] = v
-                if cols[0] == "A":
-                    wf[f"E{r}"] = f"=+D{r}/100"
-                elif cols[0] == "H":
-                    wf[f"L{r}"] = f"=+K{r}/100"
-                else:
-                    wf[f"S{r}"] = f"=+R{r}/100"
 
     ws["C57"] = CORTE_TIPO_EXCEL.get(data.get("corte_tipo"), ws["C57"].value)
     ws["C58"] = CORTE_CONDICION_EXCEL.get(data.get("corte_condicion"), ws["C58"].value)
@@ -7909,7 +7955,7 @@ def generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, obs
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_CORTE_DIRECTO)
+    return bio.getvalue()
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -8406,6 +8452,7 @@ def resultados_masa_unitaria_b(data):
     return filas
 
 
+@_exportacion_controlada
 def generar_excel_masa_unitaria_b(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Peso unitario Método B (GDA-FLC-030, D7263-09). Se escribe directo en el XML de la hoja (sin fórmulas
     compartidas ni calcChain en esta plantilla — más simple que Compresión); volumen y densidades las calcula
@@ -8435,10 +8482,8 @@ def generar_excel_masa_unitaria_b(codigo, perf_codigo, muestra, project, data, o
     c["F20"] = to_float(data.get("mub_masa"))
     c["G28"] = _mub_humedad(data)
 
-    with open(TEMPLATE_MASA_UNITARIA_B, "rb") as f:
-        plantilla = f.read()
-    return _restaurar_orden_formato_condicional(_xlsx_escribir_celdas(plantilla, "xl/worksheets/sheet1.xml", c),
-                                                TEMPLATE_MASA_UNITARIA_B)
+    plantilla = _plantilla_informe_bytes(TEMPLATE_MASA_UNITARIA_B)
+    return escribir_entradas(plantilla, _parte_hoja_informe(plantilla, "FORMATO"), c)
 
 
 def render_masa_unitaria_form(data, assay_id, muestra_id=None):
@@ -9110,15 +9155,11 @@ def render_consolidacion_form(data, assay_id):
     render_norma_selector("consolidacion", data, "cons")
 
 
+@_exportacion_controlada
 def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
-    """Consolidación unidimensional (GDA-FLC-009, INV E-151). Se llena la hoja "Resultados": encabezado,
-    datos de la muestra, humedades, gravedad específica y condiciones. Las lecturas de la máquina (hojas de
-    cada carga, "Datos " y "DATOS MAQUINA ") quedan para los humanos; con ellas el Excel calcula Cc, Cr, Cv…
-    Además corrige tres referencias de la plantilla que la dejaban sin gravedad específica: la calibración
-    del picnómetro leía la temperatura de una celda vacía (G23), K30 leía una hoja GS vacía y el % que pasa
-    el tamiz No. 4 (Z30) restaba de X30 en vez de Z28."""
-    wb = load_workbook(TEMPLATE_CONSOLIDACION)
-    ws = wb["Resultados"]
+    """Diligencia entradas del formato 009 sin corregir sus fórmulas. Si una columna de la máquina está calculada por el original, la exportación queda pendiente de revisión."""
+    wb = _cargar_plantilla_informe(TEMPLATE_CONSOLIDACION)
+    ws = wb["FORMATO"]
     ws["D6"] = project.get("cliente", "") if project else ""
     ws["D7"] = project["nombre"] if project else codigo
     ws["D8"] = project.get("correo_cliente", "") if project else ""
@@ -9162,20 +9203,10 @@ def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, obs
     ws["AB21"] = to_float(data.get("cons_pic_masa_agua_suelo"))
     ws["AB22"] = to_float(data.get("cons_pic_temp"))
     ws["Z28"] = 0  # la bitácora no captura el % retenido en el tamiz No. 4
-    for col in "BCDEFG":
-        ws[f"{col}109"] = "=$AB$22"
-    ws["Z30"] = "=100-Z28"
-    ws["K30"] = "=AB25"
 
     # Lecturas de la máquina: la plantilla ya trae la rejilla de tiempos (min) de cada carga en "DATOS MAQUINA ";
     # se escribe la deformación de la máquina interpolada en cada tiempo, hasta donde haya datos.
     hoja_maq = wb["DATOS MAQUINA "]
-    # En la plantilla la columna V (16 kg) leía la deformación pasando por la columna Y (32 kg), que a su vez copiaba
-    # la U: para poder cargar el 32 kg por separado, V se calcula directo desde U (igual que sus filas de más abajo).
-    for fila in range(4, hoja_maq.max_row + 1):
-        v = hoja_maq[f"V{fila}"].value
-        if isinstance(v, str) and v.startswith("=Y"):
-            hoja_maq[f"V{fila}"] = f"=U{fila}+$AB$7"
     for i, (_enc, col_t, col_d) in enumerate(CONS_MAQ_BLOQUES, start=1):
         puntos = data.get(f"cons_maq_{i}")
         if not puntos:
@@ -9188,7 +9219,7 @@ def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, obs
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return _restaurar_imagenes_perdidas(bio.getvalue(), TEMPLATE_CONSOLIDACION)
+    return bio.getvalue()
 
 def _ci_promedio(data, prefijo):
     valores = [v for v in (to_float(data.get(f"{prefijo}_{i}")) for i in (1, 2, 3)) if v is not None]
@@ -9656,6 +9687,7 @@ def _textos_compartidos(xlsx_path):
     return textos
 
 
+@_exportacion_controlada
 def generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Compresión inconfinada (GDA-FLC-008, INV E-152). Se llena la hoja GUIA: encabezado, dimensiones, masa, humedad y las
     lecturas de carga/deformación (columnas P, R y U, que en la plantilla reciben los datos de la máquina); esfuerzo, qu y
@@ -9912,10 +9944,9 @@ def render_compresion_roca_form(data, assay_id):
     render_norma_selector("compresion-roca", data, "roca")
 
 
+@_exportacion_controlada
 def generar_excel_compresion_roca(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
-    """Compresión simple en roca (GDA-FLC-043, ASTM D7012 método B). Se escribe directo en el XML de la hoja (igual
-    que compresión inconfinada) para conservar el plano de falla, las firmas, las casillas y el gráfico de la
-    plantilla — pasar por openpyxl los perdía."""
+    """Diligencia el formato 043 conservando las hojas, fórmulas, formas, firmas y gráficos originales. Las fotos se agregan al dibujo del informe resuelto por nombre."""
     c = {}
     c["C6"] = project.get("cliente", "") if project else ""
     c["C7"] = project["nombre"] if project else codigo
@@ -9953,16 +9984,14 @@ def generar_excel_compresion_roca(codigo, perf_codigo, muestra, project, data, o
         c[f"R{fila}"] = fuerza
         c[f"U{fila}"] = mm
 
-    with open(TEMPLATE_COMPRESION_ROCA, "rb") as f:
-        plantilla = f.read()
-    salida = _restaurar_orden_formato_condicional(_xlsx_escribir_celdas(plantilla, "xl/worksheets/sheet1.xml", c),
-                                                   TEMPLATE_COMPRESION_ROCA)
+    plantilla = _plantilla_informe_bytes(TEMPLATE_COMPRESION_ROCA)
+    salida = escribir_entradas(plantilla, _parte_hoja_informe(plantilla, "FORMATO"), c)
     foto = data.get("roca_foto_falla")
     if foto:
         imagen = base64.b64decode(foto["b64"])
-        salida = _insertar_imagen_hoja(salida, "xl/drawings/drawing1.xml", imagen, foto["ext"],
+        salida = _insertar_imagen_hoja(salida, _drawing_hoja_informe(salida, "FORMATO"), imagen, foto["ext"],
                                        **_foto_dentro_de_recuadro(foto))
-    return _quitar_hojas_ajenas(salida, HOJAS_AJENAS_COMPRESION)
+    return _conservar_hojas_del_informe(salida, ('FORMATO', 'CONTROL DE CAMBIOS'))
 
 # Carga puntual — índice de fuerza de carga puntual de la roca (ASTM D5731) — bitácora GDA-FL-020 y plantilla
 # GDA-FLC-018. Hasta 10 ensayos por muestra; cada uno puede ser diametral, axial, en bloque o irregular, y esa
@@ -10404,19 +10433,9 @@ def render_carga_puntual_form(data, assay_id):
     render_norma_selector("carga-puntual", data, "cp")
 
 
+@_exportacion_controlada
 def generar_excel_carga_puntual(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
-    """Carga puntual (GDA-FLC-018, ASTM D5731). Se escribe directo en el XML de la hoja "FORMATO" (sheet2.xml en
-    esta plantilla) para conservar los diagramas y las firmas.
-
-    Los ensayos 1 a 6 (filas 21-26) tienen fórmulas vivas para De², De, K, Is e Is50 — pero encadenadas entre sí con
-    "fórmulas compartidas" de Excel (una fila trae la fórmula completa y las demás solo la referencian por índice);
-    si se borra o reemplaza la fila que trae la fórmula completa, las que la referencian quedan apuntando a nada y
-    el archivo no vuelve a abrir en Excel (se detectó así: openpyxl seguía abriéndolo bien, pero Excel no). Por eso
-    esas columnas (H a M) NUNCA se tocan en esas filas — solo se escriben los datos de entrada (C, D, E, G, N) y
-    Excel las calcula solo. Los ensayos 7 a 10 (filas 27-30) son un simple "-" sin fórmula, así que ahí sí se
-    escriben ya calculados (misma fórmula que la plantilla). El promedio final (E33, =AVERAGE(M21:M30) en la
-    plantilla) se reemplaza por el promedio calculado en Python, porque esa fórmula se rompe (#¡DIV/0!) apenas
-    algún ensayo queda sin digitar, sin importar cuántos otros sí tengan resultado."""
+    """Diligencia C/D/E/G/N del formato 018. Las fórmulas existentes de H:M y del promedio E33 se conservan; se resuelve la hoja por nombre, sin depender de su índice en el archivo."""
     c = {}
     c["D6"] = project.get("cliente", "") if project else ""
     c["D7"] = project["nombre"] if project else codigo
@@ -10462,23 +10481,30 @@ def generar_excel_carga_puntual(codigo, perf_codigo, muestra, project, data, obs
                 c[f"{col}{fila}"] = None
             if resultado:
                 c[f"I{fila}"], c[f"J{fila}"], c[f"K{fila}"], c[f"L{fila}"], c[f"M{fila}"] = resultado
-    c["E33"] = sum(valores_is50) / len(valores_is50) if valores_is50 else None
     c["E36"] = data.get("cp_hum_recipiente") or None
     c["E37"] = to_float(data.get("cp_hum_humedo"))
     c["E38"] = next((v for v in (to_float(data.get(f"cp_hum_seco_{x}")) for x in (16, 15, 14)) if v is not None), None)
     c["E39"] = to_float(data.get("cp_hum_masa_rec"))
 
-    with open(TEMPLATE_CARGA_PUNTUAL, "rb") as f:
-        plantilla = f.read()
-    salida = _restaurar_orden_formato_condicional(_xlsx_escribir_celdas(plantilla, "xl/worksheets/sheet2.xml", c),
-                                                   TEMPLATE_CARGA_PUNTUAL)
+    plantilla = _plantilla_informe_bytes(TEMPLATE_CARGA_PUNTUAL)
+    # Las revisiones nuevas pueden incorporar fórmulas también en las filas 7 a 10.
+    # Mantenerlas: H:M son resultados derivados, las entradas siguen en C/D/E/G/N.
+    from xml.etree import ElementTree as ET
+    with zipfile.ZipFile(BytesIO(plantilla)) as z:
+        arbol = ET.fromstring(z.read(_parte_hoja_informe(plantilla, "FORMATO")))
+        ns_hoja = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+        for celda in arbol.iter(ns_hoja + "c"):
+            ref = celda.get("r", "")
+            if re.fullmatch(r"[HIJKLM](?:2[1-9]|30)", ref) and celda.find(ns_hoja + "f") is not None:
+                c.pop(ref, None)
+    salida = escribir_entradas(plantilla, _parte_hoja_informe(plantilla, "FORMATO"), c)
     foto = data.get("cp_foto_falla")
     if foto:
         imagen = base64.b64decode(foto["b64"])
         # Suelta, a la derecha de la tabla de ensayos (columna U, fila 18) — ahí no hay nada más en la plantilla.
         ancho_emu = 2286000
         alto_emu = round(ancho_emu * foto["alto"] / foto["ancho"])
-        salida = _insertar_imagen_hoja(salida, "xl/drawings/drawing2.xml", imagen, foto["ext"], col=20, fila=17,
+        salida = _insertar_imagen_hoja(salida, _drawing_hoja_informe(salida, "FORMATO"), imagen, foto["ext"], col=20, fila=17,
                                        ancho_emu=ancho_emu, alto_emu=alto_emu)
     return salida
 
@@ -10644,6 +10670,7 @@ def render_solidez_sulfatos_form(data, assay_id):
     render_norma_selector("solidez-sulfatos", data, "sulf")
 
 
+@_exportacion_controlada
 def generar_excel_solidez_sulfatos(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Solidez frente a sulfatos (GDA-FLC-033, INV E-220). Se escribe directo en el XML de la hoja: la columna N
     (masa retenida corregida) de la gradación y las masas de las fracciones — el % retenido, % de pérdida y el
@@ -10679,10 +10706,8 @@ def generar_excel_solidez_sulfatos(codigo, perf_codigo, muestra, project, data, 
     c["D38"] = textos.get(solucion, solucion or None)
     c["D39"] = to_float(data.get("sulf_ciclos")) or (5 if data.get("sulf_ciclos") is None else None)
 
-    with open(TEMPLATE_SOLIDEZ_SULFATOS, "rb") as f:
-        plantilla = f.read()
-    return _restaurar_orden_formato_condicional(_xlsx_escribir_celdas(plantilla, "xl/worksheets/sheet1.xml", c),
-                                                TEMPLATE_SOLIDEZ_SULFATOS)
+    plantilla = _plantilla_informe_bytes(TEMPLATE_SOLIDEZ_SULFATOS)
+    return escribir_entradas(plantilla, _parte_hoja_informe(plantilla, "FORMATO"), c)
 
 
 # Gradación unificada (17 tamices, igual idea que Solidez en Sulfatos) — columnas O (% retenido
@@ -10808,6 +10833,7 @@ def render_terrones_arcilla_form(data, assay_id):
     render_norma_selector("terrones-arcilla", data, "ter")
 
 
+@_exportacion_controlada
 def generar_excel_terrones_arcilla(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Terrones de arcilla y partículas deleznables (GDA-FLC-034, INV E-211). Se escribe directo en
     el XML de la hoja: la gradación unificada (columna N) y las masas de cada fracción — el %
@@ -10840,10 +10866,8 @@ def generar_excel_terrones_arcilla(codigo, perf_codigo, muestra, project, data, 
         c[f"E{fila}"] = to_float(data.get(f"ter_{fila}_ini"))
         c[f"G{fila}"] = to_float(data.get(f"ter_{fila}_fin"))
 
-    with open(TEMPLATE_TERRONES_ARCILLA, "rb") as f:
-        plantilla = f.read()
-    return _restaurar_orden_formato_condicional(_xlsx_escribir_celdas(plantilla, "xl/worksheets/sheet1.xml", c),
-                                                TEMPLATE_TERRONES_ARCILLA)
+    plantilla = _plantilla_informe_bytes(TEMPLATE_TERRONES_ARCILLA)
+    return escribir_entradas(plantilla, _parte_hoja_informe(plantilla, "FORMATO"), c)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -10925,6 +10949,7 @@ def render_alargamiento_aplanamiento_form(data, assay_id):
             st.caption("Se muestran a medida que se digitan las masas de arriba.")
 
 
+@_exportacion_controlada
 def generar_excel_alargamiento_aplanamiento(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Informe GDA-FLC-026 (INV E-230-13). Solo se escriben las celdas desbloqueadas de la plantilla (encabezado, masas de cada fracción
     y observaciones): los índices los calcula el propio Excel con sus fórmulas, que quedan intactas."""
@@ -10954,10 +10979,8 @@ def generar_excel_alargamiento_aplanamiento(codigo, perf_codigo, muestra, projec
             c[f"G{primera + i}"] = to_float(data.get(f"aa_{clave}_{i + 1}_par"))
     if (observaciones_ensayo or "").strip():
         c["C48"] = observaciones_ensayo.strip()
-    with open(TEMPLATE_ALARGAMIENTO_APLANAMIENTO, "rb") as f:
-        plantilla = f.read()
-    return _restaurar_orden_formato_condicional(_xlsx_escribir_celdas(plantilla, "xl/worksheets/sheet1.xml", c),
-                                                TEMPLATE_ALARGAMIENTO_APLANAMIENTO)
+    plantilla = _plantilla_informe_bytes(TEMPLATE_ALARGAMIENTO_APLANAMIENTO)
+    return escribir_entradas(plantilla, _parte_hoja_informe(plantilla, "FORMATO"), c)
 
 
 def render_limite_contraccion_form(data, assay_id):
@@ -12239,9 +12262,13 @@ def render_assay_form(prueba=False):
                 st.session_state[no_realizado_key] = True
                 st.rerun()
 
+    exportacion_en_revision = assay["tipo"] in EXPORTACIONES_EN_REVISION
+    if not motivo_no_realizado and muestra and exportacion_en_revision:
+        st.info("La descarga de este ensayo está en revisión. Puedes continuar digitando y guardar los datos; estará disponible en una próxima actualización.")
+
     # No se ofrece descarga de Excel para un ensayo marcado "no se pudo realizar" (ver
     # motivo_no_realizado más arriba) -- no hay datos de verdad que exportar.
-    if not motivo_no_realizado and puede_descargar and assay["tipo"] == "granulometria" and muestra:
+    if not motivo_no_realizado and not exportacion_en_revision and puede_descargar and assay["tipo"] == "granulometria" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_granulometria(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -12251,7 +12278,7 @@ def render_assay_form(prueba=False):
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
-    if not motivo_no_realizado and puede_descargar and assay["tipo"] == "pasa200" and muestra:
+    if not motivo_no_realizado and not exportacion_en_revision and puede_descargar and assay["tipo"] == "pasa200" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_pasa200(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -12261,7 +12288,7 @@ def render_assay_form(prueba=False):
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
-    if not motivo_no_realizado and puede_descargar and assay["tipo"] == "humedad" and muestra:
+    if not motivo_no_realizado and not exportacion_en_revision and puede_descargar and assay["tipo"] == "humedad" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_humedad(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -12271,7 +12298,7 @@ def render_assay_form(prueba=False):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
 
-    if not motivo_no_realizado and puede_descargar and assay["tipo"] == "limites" and muestra:
+    if not motivo_no_realizado and not exportacion_en_revision and puede_descargar and assay["tipo"] == "limites" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_limites(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -12281,7 +12308,7 @@ def render_assay_form(prueba=False):
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
-    if not motivo_no_realizado and puede_descargar and assay["tipo"] == "masa-unitaria" and muestra and data.get("mu_metodo") != "Método B":
+    if not motivo_no_realizado and not exportacion_en_revision and puede_descargar and assay["tipo"] == "masa-unitaria" and muestra and data.get("mu_metodo") != "Método B":
         # Parafinado y Método B usan plantillas de Excel distintas (GDA-FLC-004 y GDA-FLC-030) — cada una con su
         # propio botón, más abajo para Método B.
         st.markdown("---")
@@ -12293,7 +12320,7 @@ def render_assay_form(prueba=False):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
 
-    if not motivo_no_realizado and puede_descargar and assay["tipo"] == "masa-unitaria" and muestra and data.get("mu_metodo") == "Método B":
+    if not motivo_no_realizado and not exportacion_en_revision and puede_descargar and assay["tipo"] == "masa-unitaria" and muestra and data.get("mu_metodo") == "Método B":
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -12303,7 +12330,7 @@ def render_assay_form(prueba=False):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_masa_unitaria_b")
 
-    if not motivo_no_realizado and assay["tipo"] == "compresion-inconfinada" and muestra:
+    if not motivo_no_realizado and not exportacion_en_revision and assay["tipo"] == "compresion-inconfinada" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -12312,7 +12339,7 @@ def render_assay_form(prueba=False):
             file_name=f"Compresion_inconfinada_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True, key="dl_compresion_inconfinada")
 
-    if not motivo_no_realizado and assay["tipo"] == "compresion-roca" and muestra:
+    if not motivo_no_realizado and not exportacion_en_revision and assay["tipo"] == "compresion-roca" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -12322,7 +12349,7 @@ def render_assay_form(prueba=False):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_compresion_roca")
 
-    if not motivo_no_realizado and assay["tipo"] == "carga-puntual" and muestra:
+    if not motivo_no_realizado and not exportacion_en_revision and assay["tipo"] == "carga-puntual" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -12332,7 +12359,7 @@ def render_assay_form(prueba=False):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_carga_puntual")
 
-    if not motivo_no_realizado and assay["tipo"] == "solidez-sulfatos" and muestra:
+    if not motivo_no_realizado and not exportacion_en_revision and assay["tipo"] == "solidez-sulfatos" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -12342,7 +12369,7 @@ def render_assay_form(prueba=False):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_solidez_sulfatos")
 
-    if not motivo_no_realizado and assay["tipo"] == "terrones-arcilla" and muestra:
+    if not motivo_no_realizado and not exportacion_en_revision and assay["tipo"] == "terrones-arcilla" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -12352,7 +12379,7 @@ def render_assay_form(prueba=False):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_terrones_arcilla")
 
-    if not motivo_no_realizado and assay["tipo"] == "alargamiento-aplanamiento" and muestra:
+    if not motivo_no_realizado and not exportacion_en_revision and assay["tipo"] == "alargamiento-aplanamiento" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -12362,7 +12389,7 @@ def render_assay_form(prueba=False):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_alargamiento_aplanamiento")
 
-    if not motivo_no_realizado and assay["tipo"] == "consolidacion" and muestra:
+    if not motivo_no_realizado and not exportacion_en_revision and assay["tipo"] == "consolidacion" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -12372,7 +12399,7 @@ def render_assay_form(prueba=False):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_consolidacion")
 
-    if not motivo_no_realizado and assay["tipo"] == "limite-contraccion" and muestra:
+    if not motivo_no_realizado and not exportacion_en_revision and assay["tipo"] == "limite-contraccion" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -12382,7 +12409,7 @@ def render_assay_form(prueba=False):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_limite_contraccion")
 
-    if not motivo_no_realizado and assay["tipo"] == "materia-organica" and muestra:
+    if not motivo_no_realizado and not exportacion_en_revision and assay["tipo"] == "materia-organica" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -12392,7 +12419,7 @@ def render_assay_form(prueba=False):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_materia_organica")
 
-    if not motivo_no_realizado and assay["tipo"] == "proctor" and muestra:
+    if not motivo_no_realizado and not exportacion_en_revision and assay["tipo"] == "proctor" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
@@ -12403,7 +12430,7 @@ def render_assay_form(prueba=False):
         st.caption("Trae el Proctor y su CBR de suelos compactados (3 moldes). El método (A/B/C), la preparación de "
                    "la muestra y el martillo/molde usado no se digitan en la app: se marcan en el Excel.")
 
-    if not motivo_no_realizado and assay["tipo"] == "gravedad-especifica" and muestra:
+    if not motivo_no_realizado and not exportacion_en_revision and assay["tipo"] == "gravedad-especifica" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         sel = data.get("gesp_sel", GESP_OPCIONES[0])
@@ -12429,7 +12456,7 @@ def render_assay_form(prueba=False):
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
                 key="dl_gesp_grueso")
 
-    if not motivo_no_realizado and assay["tipo"] == "corte-directo" and muestra:
+    if not motivo_no_realizado and not exportacion_en_revision and assay["tipo"] == "corte-directo" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
@@ -12442,7 +12469,7 @@ def render_assay_form(prueba=False):
                    "deformación/carga de la máquina no se digitan en la app: el esfuerzo cortante, la cohesión "
                    "y el ángulo de fricción se completan en el Excel.")
 
-    if not motivo_no_realizado and assay["tipo"] == "cbr" and muestra:
+    if not motivo_no_realizado and not exportacion_en_revision and assay["tipo"] == "cbr" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         excel_bytes = generar_excel_cbr(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
