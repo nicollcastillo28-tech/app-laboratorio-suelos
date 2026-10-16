@@ -2147,6 +2147,42 @@ def fecha_emision_hoy():
     return hoy_colombia().isoformat()
 
 
+def _fecha_txt(iso):
+    """'AAAA-MM-DD' -> 'DD/MM/AAAA' ('—' si no hay fecha)."""
+    try:
+        return date.fromisoformat(str(iso)[:10]).strftime("%d/%m/%Y")
+    except (TypeError, ValueError):
+        return "—"
+
+
+def fecha_ejecucion_perf(codigo, perf_codigo, muestras):
+    """'AAAA-MM-DD' en que el laboratorista digitó el primer dato en cualquier muestra de la perforación ('' si todavía ninguno).
+    Es la misma fecha de ejecución que sale en los informes Excel, tomando la más temprana de las muestras."""
+    fechas = []
+    for m in muestras:
+        datas = [a.get("data") or {} for a in st.session_state.get("assays", [])
+                 if a.get("muestra_id") == m.get("id_unico") and tiene_datos_digitados(a.get("data"))]
+        f = fecha_ejecucion_informe(m, datas) if datas else ""
+        if f:
+            fechas.append(f)
+    return min(fechas) if fechas else ""
+
+
+def _marcar_emision(codigo, perf_codigo):
+    """Se llama al descargar un Excel de resultados: deja como fecha de emisión de la perforación el día de la descarga."""
+    perf = next((p for p in st.session_state.perforaciones.get(codigo, []) if p["codigo"] == perf_codigo), None)
+    if not perf:
+        return
+    hoy = fecha_emision_hoy()
+    if perf.get("fecha_emision") == hoy:
+        return
+    perf["fecha_emision"] = hoy
+    try:
+        db.set_perforacion_fecha_emision(perf["id"], hoy)
+    except Exception:
+        st.toast("La fecha de emisión no se pudo guardar: falta aplicar la migración 0037 en Supabase.", icon=":material/warning:")
+
+
 def fmt_prof(v):
     """Profundidad de una muestra para mostrar: sin los ceros/decimales de ruido de punto flotante que dejan
     las sumas del Excel (2.7500000000000004 -> 2.75), y sin ceros de más (0.9, no 0.900)."""
@@ -4501,15 +4537,58 @@ def _fecha_excel(v):
         return v.date()
     if isinstance(v, date):
         return v
+    if isinstance(v, str):
+        # Los clientes a veces la escriben como texto en una sola celda: 16/10/2026, 16-10-26, 16.10.2026, 2026-10-16
+        # o "16 de octubre de 2026".
+        t = v.strip().lower()
+        m = re.fullmatch(r"(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})(?:[ t].*)?", t)
+        if m:
+            return _fecha_valida(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        m = re.fullmatch(r"(\d{1,2})[/\-.\s](\d{1,2})[/\-.\s](\d{2,4})", t)
+        if m:
+            return _fecha_valida(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        m = re.fullmatch(r"(\d{1,2})\s*(?:de\s+)?([a-záéíóú]+)\.?\s*(?:de(?:l)?\s+)?(\d{2,4})", t)
+        if m and m.group(2)[:3] in _MESES_ES:
+            return _fecha_valida(int(m.group(3)), _MESES_ES.index(m.group(2)[:3]) + 1, int(m.group(1)))
     return None
 
 
+_MESES_ES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
+
+
+def _fecha_valida(anio, mes, dia):
+    if anio < 100:
+        anio += 2000
+    try:
+        return date(anio, mes, dia)
+    except ValueError:
+        return None
+
+
+def _fecha_excel_tres_celdas(ws, fila, cols=("E", "F", "G")):
+    """Fecha del encabezado del formato (casillas DD / MM / AAAA). Los clientes rara vez llenan las tres casillas: lo
+    normal es que escriban la fecha completa solo en la primera. Se aceptan las dos formas: si las tres tienen número se
+    arma con ellas; si no, se lee la fecha completa de la primera casilla (fecha de Excel o texto)."""
+    celdas = [ws[f"{c}{fila}"].value for c in cols]
+    try:
+        dia, mes, anio = (int(float(str(c).strip())) for c in celdas)
+        f = _fecha_valida(anio, mes, dia)
+        if f:
+            return f
+    except (TypeError, ValueError):
+        pass
+    f = _fecha_excel(celdas[0])
+    # Un número suelto (p. ej. solo el día "16") en una casilla con formato de fecha lo lee Excel como 16-ene-1900: no es una fecha real.
+    return f if f and f.year >= 2000 else None
+
+
 def _leer_bitacora_cliente_xlsx(file_obj):
-    """Lee el formato GDA-FL-021 (Bitácora de Proyecto) que envía el cliente y devuelve
-    los campos que sirven para precargar Nuevo Proyecto."""
+    """Lee el formato GDA-FL-025 (Bitácora de Proyecto; el GDA-FL-021 anterior tiene las mismas celdas) que envía el cliente
+    y devuelve los campos que sirven para precargar Nuevo Proyecto."""
     wb = load_workbook(file_obj, data_only=True)
-    ws = wb["HOJA1"] if "HOJA1" in wb.sheetnames else wb.active
+    ws = wb["HOJA1"] if "HOJA1" in wb.sheetnames else (wb["FORMATO"] if "FORMATO" in wb.sheetnames else wb.active)
     return {
+        "fecha_bitacora": _fecha_excel_tres_celdas(ws, 7),
         "cliente": _str_excel(ws["E11"].value),
         "nombre": _str_excel(ws["E12"].value),
         "localizacion": _str_excel(ws["E13"].value),
@@ -4563,9 +4642,9 @@ def render_new_project():
     st.markdown('<div class="section-title">Cargar bitácora de proyecto del cliente (opcional)</div>', unsafe_allow_html=True)
     uploaded_cliente_xlsx = st.file_uploader(
         "Bitácora de proyecto del cliente (Excel)", type=["xlsx"], key="cliente_xlsx_uploader",
-        help="Si el cliente te envió el formato GDA-FL-021 (Bitácora de Proyecto), súbelo aquí para "
-             "precargar Cliente, Nombre del proyecto, Localización, Dirección, Teléfono, Correo, "
-             "Nombre de contacto y fechas de inicio/fin del proyecto.",
+        help="Si el cliente te envió el formato GDA-FL-025 (Bitácora de Proyecto), súbelo aquí para "
+             "precargar la fecha de la bitácora, Cliente, Nombre del proyecto, Localización, Dirección, Teléfono, "
+             "Correo, Nombre de contacto y fechas de inicio/fin del proyecto.",
     )
     if uploaded_cliente_xlsx is not None and st.session_state.get("_cliente_xlsx_last") != uploaded_cliente_xlsx.name:
         try:
@@ -4577,6 +4656,8 @@ def render_new_project():
             st.session_state["new_direccion_cliente"] = datos_cliente["direccion_cliente"]
             st.session_state["new_telefono_contacto"] = datos_cliente["telefono_contacto"]
             st.session_state["new_nombre_contacto"] = datos_cliente["nombre_contacto"]
+            if datos_cliente["fecha_bitacora"]:
+                st.session_state["new_fecha_bitacora"] = datos_cliente["fecha_bitacora"]
             if datos_cliente["fecha_inicio_proyecto"]:
                 st.session_state["new_fecha_inicio_proyecto"] = datos_cliente["fecha_inicio_proyecto"]
             if datos_cliente["fecha_final_proyecto"]:
@@ -4584,26 +4665,23 @@ def render_new_project():
             st.session_state["_cliente_xlsx_last"] = uploaded_cliente_xlsx.name
             st.success("Datos del cliente cargados desde el Excel. Revísalos abajo antes de guardar.")
         except Exception:
-            st.error("No se pudo leer el archivo. Verifica que sea el formato GDA-FL-021 (Bitácora de Proyecto).")
+            st.error("No se pudo leer el archivo. Verifica que sea el formato GDA-FL-025 (Bitácora de Proyecto).")
 
     st.markdown('<div class="section-title">Información del proyecto</div>', unsafe_allow_html=True)
     nombre = st.text_input("Nombre del proyecto", key="new_nombre", placeholder="Estudio de suelos vía Bogotá-Medellín")
     localizacion = st.text_input("Localización", key="new_localizacion", placeholder="Km 14+200")
     norma = st.radio("Norma", NORMA_PROYECTO_OPTIONS, horizontal=True)
 
+    if "new_fecha_bitacora" not in st.session_state:
+        st.session_state["new_fecha_bitacora"] = date.today()
     c1, c2 = st.columns(2)
     with c1:
-        fecha_bitacora = st.date_input("Fecha de bitácora", value=date.today(), format="DD/MM/YYYY")
+        fecha_bitacora = st.date_input(
+            "Fecha de la bitácora (cuándo se envió)", key="new_fecha_bitacora", format="DD/MM/YYYY",
+            help="La fecha que trae el encabezado de la bitácora de proyecto (casilla DD / MM / AAAA de arriba). "
+                 "Es distinta de las fechas de inicio y final del proyecto.")
     with c2:
         fecha_ingreso = st.date_input("Fecha de ingreso de muestra", value=date.today(), format="DD/MM/YYYY")
-
-    ec1, ec2, ec3 = st.columns(3)
-    with ec1:
-        fecha_recepcion = st.date_input("Fecha de recepción", value=date.today(), format="DD/MM/YYYY")
-    with ec2:
-        fecha_ejecucion = st.date_input("Fecha de ejecución", value=date.today(), format="DD/MM/YYYY")
-    with ec3:
-        fecha_emision = st.date_input("Fecha de emisión", value=date.today(), format="DD/MM/YYYY")
 
     st.markdown('<div class="section-title">Datos del cliente (para el encabezado de los informes — solo el Jefe los ve)</div>', unsafe_allow_html=True)
     cliente = st.text_input("Cliente", key="new_cliente", placeholder="Nombre del cliente")
@@ -4710,7 +4788,7 @@ def render_new_project():
                 # Cada perforación puede llegar al laboratorio un día distinto aunque sea del mismo proyecto;
                 # arranca con la fecha de ingreso del proyecto y se cambia aquí si esta llegó otro día.
                 fechas_ingreso_perf[perf["codigo"]] = st.date_input(
-                    "Fecha de ingreso de las muestras", value=fecha_ingreso, format="DD/MM/YYYY",
+                    "Fecha de recepción (cuándo entró la orden)", value=fecha_ingreso, format="DD/MM/YYYY",
                     key=f"newperf_fecha_{key}", help="Día en que llegaron al laboratorio las muestras de esta perforación.")
                 df_source = _bitacora_draft_df(key, muestras)
 
@@ -4775,6 +4853,7 @@ def render_new_project():
         # que olvidarlo al salir para que la próxima vez se recalcule contra la lista de proyectos
         # ya actualizada (si no, seguiría sugiriendo el mismo número recién usado).
         st.session_state.pop("new_numero", None)
+        st.session_state.pop("new_fecha_bitacora", None)
         st.session_state.pop("_import_nuevo_msg", None)
         st.session_state.pop("_import_nuevo_adv", None)
 
@@ -4816,7 +4895,6 @@ def render_new_project():
                 "nombre_contacto": nombre_contacto,
                 "fecha_inicio_proyecto": str(fecha_inicio_proyecto), "fecha_final_proyecto": str(fecha_final_proyecto),
                 "fecha_final_real": str(fecha_final_real) if fecha_final_real else "",
-                "fecha_recepcion": str(fecha_recepcion), "fecha_ejecucion": str(fecha_ejecucion), "fecha_emision": str(fecha_emision),
             }, perforaciones_payload)
             # La fecha de ingreso de cada perforación se guarda aparte: commit_new_project (RPC) no la conoce.
             for perf in perforaciones:
@@ -4930,17 +5008,14 @@ def render_project_detail():
         for i, (icono, label, valor) in enumerate(info_rows):
             st.markdown(_info_row(icono, label, valor, i == 0), unsafe_allow_html=True)
 
-        # Fechas agrupadas en paquetes separados (orden/ingreso, plazos del proyecto, ejecución/emisión)
-        # para que no se vean como una sola lista larga y confusa.
+        # Fechas agrupadas en paquetes separados (orden/ingreso, plazos del proyecto) para que no se vean como una sola lista
+        # larga y confusa. Recepción, ejecución y emisión van por perforación (ver la tarjeta de cada una).
         date_groups = [
             [("calendar_month", "Fecha de orden", project.get("fecha_bitacora")),
              ("move_to_inbox", "Ingreso de muestras", project.get("fecha_ingreso_muestra"))],
             [("event", "Fecha inicio proyecto", project.get("fecha_inicio_proyecto")),
              ("event_available", "Fecha final proyecto", project.get("fecha_final_proyecto")),
              ("event_available", "Fecha final real", project.get("fecha_final_real"))],
-            [("inbox", "Fecha de recepción", project.get("fecha_recepcion")),
-             ("science", "Fecha de ejecución", project.get("fecha_ejecucion")),
-             ("outbox", "Fecha de emisión", project.get("fecha_emision"))],
         ]
         for gi, group in enumerate(date_groups):
             margen_inferior = "margin-bottom:6px;" if gi == len(date_groups) - 1 else ""
@@ -5013,10 +5088,8 @@ def render_project_detail():
             estado_badge, estado_label = "badge-success", "Completado"
         else:
             estado_badge, estado_label = "badge-warning", "En progreso"
-        if muestras:
-            prof_txt = f'{min(m["profundidad_de"] for m in muestras):.2f}m – {max(m["profundidad_hasta"] for m in muestras):.2f}m'
-        else:
-            prof_txt = "—"
+        # No todas las muestras de la orden se ensayan: se aclara cuántas sí (las que tienen al menos un ensayo asignado).
+        muestras_con_ensayo = sum(1 for m in muestras if any(v for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS))
 
         with st.container(border=True):
             top = st.columns([1, 3, 1.3])
@@ -5028,10 +5101,26 @@ def render_project_detail():
             with top[2]:
                 st.markdown(f'<div style="text-align:right;"><span class="assigned-chip">{html.escape(perf["tipo"])}</span></div>',
                             unsafe_allow_html=True)
-            st.markdown(f'<div class="cell-muted"><strong>Profundidad</strong> {prof_txt} · {len(muestras)} muestra(s)</div>',
-                        unsafe_allow_html=True)
-            st.markdown(f'<div class="cell-muted">{icon("move_to_inbox", size=13)} <strong>Ingreso</strong> '
-                        f'{fecha_ingreso_perf_txt(perf, project)}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="cell-muted">{icon("science", size=13)} Ensayo de <strong>{muestras_con_ensayo}</strong> '
+                        f'muestra(s) de <strong>{len(muestras)}</strong> de la orden</div>', unsafe_allow_html=True)
+            # Cada perforación puede llegar y entregarse un día distinto: sus tres fechas van aquí, no en el proyecto.
+            #   Recepción: cuándo entró la orden (la fija el Jefe).  Ejecución: primer dato digitado en alguna muestra.
+            #   Emisión: última descarga de un Excel de resultados de esta perforación.
+            fechas_perf = [
+                ("move_to_inbox", "Recepción", fecha_ingreso_perf_txt(perf, project)),
+                ("science", "Ejecución", _fecha_txt(fecha_ejecucion_perf(codigo, perf["codigo"], muestras))),
+                ("outbox", "Emisión", _fecha_txt(perf.get("fecha_emision"))),
+            ]
+            celdas_fechas = "".join(
+                f'<div style="flex:1 1 90px;min-width:90px;">'
+                f'<div class="cell-muted" style="text-transform:uppercase;letter-spacing:0.04em;font-size:11px;">'
+                f'{icon(ico, size=13)} {lbl}</div>'
+                f'<div style="font-weight:600;font-size:14px;">{val}</div></div>'
+                for ico, lbl, val in fechas_perf)
+            st.markdown(
+                f'<div style="display:flex;flex-wrap:wrap;gap:8px 16px;margin:8px 0 6px;padding:10px 12px;border-radius:10px;'
+                f'background:rgba(74,120,98,0.06);border:1px solid rgba(74,120,98,0.16);">{celdas_fechas}</div>',
+                unsafe_allow_html=True)
             # Avance por ENSAYO (no por muestra completa) — antes solo se veía entrando a la
             # perforación ("Avance del sondeo"); se trae acá para no tener que entrar solo para
             # ver esto.
@@ -5100,9 +5189,9 @@ def render_edit_project():
     st.markdown('<div class="section-title">Cargar bitácora de proyecto del cliente (opcional)</div>', unsafe_allow_html=True)
     uploaded_cliente_xlsx_edit = st.file_uploader(
         "Bitácora de proyecto del cliente (Excel)", type=["xlsx"], key=f"cliente_xlsx_uploader_edit_{codigo}",
-        help="Si el cliente te envió el formato GDA-FL-021 (Bitácora de Proyecto), súbelo aquí para "
-             "precargar Cliente, Nombre del proyecto, Localización, Dirección, Teléfono, Correo, "
-             "Nombre de contacto y fechas de inicio/fin del proyecto.",
+        help="Si el cliente te envió el formato GDA-FL-025 (Bitácora de Proyecto), súbelo aquí para "
+             "precargar la fecha de la bitácora, Cliente, Nombre del proyecto, Localización, Dirección, Teléfono, "
+             "Correo, Nombre de contacto y fechas de inicio/fin del proyecto.",
     )
     guard_key = f"_cliente_xlsx_last_edit_{codigo}"
     if uploaded_cliente_xlsx_edit is not None and st.session_state.get(guard_key) != uploaded_cliente_xlsx_edit.name:
@@ -5115,6 +5204,8 @@ def render_edit_project():
             st.session_state[f"edit_direccion_cliente_{codigo}"] = datos_cliente["direccion_cliente"]
             st.session_state[f"edit_telefono_contacto_{codigo}"] = datos_cliente["telefono_contacto"]
             st.session_state[f"edit_nombre_contacto_{codigo}"] = datos_cliente["nombre_contacto"]
+            if datos_cliente["fecha_bitacora"]:
+                st.session_state[f"edit_fecha_bitacora_{codigo}"] = datos_cliente["fecha_bitacora"]
             if datos_cliente["fecha_inicio_proyecto"]:
                 st.session_state[f"edit_fecha_inicio_proyecto_{codigo}"] = datos_cliente["fecha_inicio_proyecto"]
             if datos_cliente["fecha_final_proyecto"]:
@@ -5122,7 +5213,7 @@ def render_edit_project():
             st.session_state[guard_key] = uploaded_cliente_xlsx_edit.name
             st.success("Datos del cliente cargados desde el Excel. Revísalos abajo antes de guardar.")
         except Exception:
-            st.error("No se pudo leer el archivo. Verifica que sea el formato GDA-FL-021 (Bitácora de Proyecto).")
+            st.error("No se pudo leer el archivo. Verifica que sea el formato GDA-FL-025 (Bitácora de Proyecto).")
 
     nombre = st.text_input("Nombre del proyecto", key=f"edit_nombre_{codigo}")
     localizacion = st.text_input("Localización", key=f"edit_localizacion_{codigo}")
@@ -5130,19 +5221,16 @@ def render_edit_project():
     idx = NORMA_PROYECTO_OPTIONS.index(norma_actual) if norma_actual in NORMA_PROYECTO_OPTIONS else 0
     norma = st.radio("Norma", NORMA_PROYECTO_OPTIONS, index=idx, horizontal=True)
 
+    if f"edit_fecha_bitacora_{codigo}" not in st.session_state:
+        st.session_state[f"edit_fecha_bitacora_{codigo}"] = _parse_fecha(project.get("fecha_bitacora"))
     c1, c2 = st.columns(2)
     with c1:
-        fecha_bitacora = st.date_input("Fecha de bitácora", value=_parse_fecha(project.get("fecha_bitacora")), format="DD/MM/YYYY")
+        fecha_bitacora = st.date_input(
+            "Fecha de la bitácora (cuándo se envió)", key=f"edit_fecha_bitacora_{codigo}", format="DD/MM/YYYY",
+            help="La fecha que trae el encabezado de la bitácora de proyecto (casilla DD / MM / AAAA de arriba). "
+                 "Es distinta de las fechas de inicio y final del proyecto.")
     with c2:
         fecha_ingreso = st.date_input("Fecha de ingreso de muestra", value=_parse_fecha(project.get("fecha_ingreso_muestra")), format="DD/MM/YYYY")
-
-    ec1, ec2, ec3 = st.columns(3)
-    with ec1:
-        fecha_recepcion = st.date_input("Fecha de recepción", value=_parse_fecha(project.get("fecha_recepcion")), format="DD/MM/YYYY")
-    with ec2:
-        fecha_ejecucion = st.date_input("Fecha de ejecución", value=_parse_fecha(project.get("fecha_ejecucion")), format="DD/MM/YYYY")
-    with ec3:
-        fecha_emision = st.date_input("Fecha de emisión", value=_parse_fecha(project.get("fecha_emision")), format="DD/MM/YYYY")
 
     st.markdown('<div class="section-title">Datos del cliente (para el encabezado de los informes)</div>', unsafe_allow_html=True)
     cliente = st.text_input("Cliente", key=f"edit_cliente_{codigo}")
@@ -5192,7 +5280,6 @@ def render_edit_project():
                 telefono_contacto=telefono_contacto, nombre_contacto=nombre_contacto,
                 fecha_inicio_proyecto=str(fecha_inicio_proyecto), fecha_final_proyecto=str(fecha_final_proyecto),
                 fecha_final_real=str(fecha_final_real) if fecha_final_real else None,
-                fecha_recepcion=str(fecha_recepcion), fecha_ejecucion=str(fecha_ejecucion), fecha_emision=str(fecha_emision),
             )
             navigate("project-detail")
 
@@ -5306,7 +5393,7 @@ def render_perforacion_detail():
             st.markdown(f'<div class="cell-muted" style="margin-top:10px;">'
                         f'{icon("location_on", size=13)} {html.escape(project.get("localizacion") or "—")}'
                         f'&nbsp;&nbsp;&nbsp;{icon("calendar_month", size=13)} {html.escape(project.get("fecha_bitacora") or "—")}'
-                        f'&nbsp;&nbsp;&nbsp;{icon("move_to_inbox", size=13)} Ingreso {fecha_ingreso_perf_txt(perf, project)}</div>',
+                        f'&nbsp;&nbsp;&nbsp;{icon("move_to_inbox", size=13)} Recepción {fecha_ingreso_perf_txt(perf, project)}</div>',
                         unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         with c1:
@@ -5507,7 +5594,7 @@ def render_bitacora():
                 except ValueError:
                     fecha_valor = date.today()
                 fecha_nueva = st.date_input(
-                    "Fecha de ingreso de las muestras", value=fecha_valor, format="DD/MM/YYYY",
+                    "Fecha de recepción (cuándo entró la orden)", value=fecha_valor, format="DD/MM/YYYY",
                     key=f"fecha_ingreso_{perf['id']}", help="Día en que llegaron al laboratorio las muestras de esta perforación.")
                 if fecha_nueva and str(fecha_nueva) != fecha_actual_perf:
                     try:
@@ -5518,7 +5605,7 @@ def render_bitacora():
                         st.error("No se pudo guardar la fecha de ingreso de esta perforación. Falta aplicar la migración "
                                  "0033 (perforaciones.fecha_ingreso) en Supabase.")
             else:
-                st.caption(f"Fecha de ingreso de las muestras: {fecha_ingreso_perf_txt(perf, project)}")
+                st.caption(f"Fecha de recepción: {fecha_ingreso_perf_txt(perf, project)}")
             # OJO: el DataFrame se crea UNA sola vez y se reutiliza el mismo objeto en cada rerun.
             # Reconstruirlo desde cero (dict -> DataFrame) en cada actualización es lo que causaba
             # que la primera edición se perdiera y tocara escribir dos veces.
@@ -7820,6 +7907,7 @@ def render_descarga_por_lote(codigo, perf_codigo, project, muestras):
                 else:
                     st.download_button(
                         f"Descargar Excel — {cfg['etiqueta']} ({perf_codigo}, {len(pares)} muestras)",
+                        on_click=_marcar_emision, args=(codigo, perf_codigo),
                         data=excel_bytes, file_name=f"{cfg['prefijo']}_{codigo}_{perf_codigo}.{cfg['ext']}",
                         mime=cfg["mime"], use_container_width=True, key=f"lote_dl_{tipo}_{perf_codigo}",
                         icon=":material/download:")
@@ -12260,6 +12348,7 @@ def render_assay_form(prueba=False):
         excel_bytes = generar_excel_granulometria(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
             "Descargar Excel (Granulometría y Límites de Atterberg — mismo archivo por muestra)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
             data=excel_bytes, file_name=f"Clasificacion_de_suelos_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
@@ -12270,6 +12359,7 @@ def render_assay_form(prueba=False):
         excel_bytes = generar_excel_pasa200(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
             "Descargar Excel (Granulometría — mismo archivo por muestra)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
             data=excel_bytes, file_name=f"Clasificacion_de_suelos_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
@@ -12280,6 +12370,7 @@ def render_assay_form(prueba=False):
         excel_bytes = generar_excel_humedad(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
             "Descargar Excel (plantilla oficial de Humedad)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
             data=excel_bytes, file_name=f"Humedad_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
@@ -12290,6 +12381,7 @@ def render_assay_form(prueba=False):
         excel_bytes = generar_excel_limites(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
             "Descargar Excel (Granulometría y Límites de Atterberg — mismo archivo por muestra)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
             data=excel_bytes, file_name=f"Clasificacion_de_suelos_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
@@ -12302,6 +12394,7 @@ def render_assay_form(prueba=False):
         excel_bytes = generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
             "Descargar Excel (plantilla oficial de Peso Unitario Parafinado)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
             data=excel_bytes, file_name=f"Peso_unitario_parafinado_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
@@ -12311,6 +12404,7 @@ def render_assay_form(prueba=False):
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
             "Descargar Excel (plantilla oficial de Peso Unitario Método B)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
             data=generar_excel_masa_unitaria_b(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Peso_unitario_metodo_b_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
@@ -12321,6 +12415,7 @@ def render_assay_form(prueba=False):
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
             "Descargar Excel (plantilla oficial de Compresión Inconfinada)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
             data=generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Compresion_inconfinada_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True, key="dl_compresion_inconfinada")
@@ -12330,6 +12425,7 @@ def render_assay_form(prueba=False):
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
             "Descargar Excel (plantilla oficial de Compresión en Roca)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
             data=generar_excel_compresion_roca(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Compresion_roca_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
@@ -12340,6 +12436,7 @@ def render_assay_form(prueba=False):
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
             "Descargar Excel (plantilla oficial de Carga Puntual)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
             data=generar_excel_carga_puntual(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Carga_puntual_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
@@ -12350,6 +12447,7 @@ def render_assay_form(prueba=False):
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
             "Descargar Excel (plantilla oficial de Solidez en Sulfatos)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
             data=generar_excel_solidez_sulfatos(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Solidez_sulfatos_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
@@ -12360,6 +12458,7 @@ def render_assay_form(prueba=False):
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
             "Descargar Excel (plantilla oficial de Terrones de Arcilla)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
             data=generar_excel_terrones_arcilla(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Terrones_arcilla_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
@@ -12370,6 +12469,7 @@ def render_assay_form(prueba=False):
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
             "Descargar Excel (informe GDA-FLC-026 de Alargamiento y Aplanamiento)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
             data=generar_excel_alargamiento_aplanamiento(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Alargamiento_aplanamiento_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
@@ -12380,6 +12480,7 @@ def render_assay_form(prueba=False):
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
             "Descargar Excel (plantilla oficial de Consolidación)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
             data=generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Consolidacion_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
@@ -12390,6 +12491,7 @@ def render_assay_form(prueba=False):
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
             "Descargar Excel (plantilla oficial de Límite de Contracción)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
             data=generar_excel_limite_contraccion(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Limite_contraccion_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
@@ -12400,6 +12502,7 @@ def render_assay_form(prueba=False):
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
             "Descargar Excel (plantilla oficial de Materia Orgánica)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
             data=generar_excel_materia_organica(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Materia_organica_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
@@ -12410,6 +12513,7 @@ def render_assay_form(prueba=False):
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
         st.download_button(
             "Descargar Excel (plantilla oficial de Proctor)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
             data=generar_excel_proctor(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Proctor_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True, key="dl_proctor")
@@ -12423,6 +12527,7 @@ def render_assay_form(prueba=False):
         if sel in (GESP_OPCIONES[0], GESP_OPCIONES[2]):
             st.download_button(
                 "Descargar Excel (Gravedad específica — agregado fino, INV E-222)", icon=":material/download:",
+                on_click=_marcar_emision, args=(codigo, perf_codigo),
                 data=generar_excel_gravedad_fino(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
                 file_name=f"Gravedad_especifica_fino_{muestra['id_unico']}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
@@ -12430,6 +12535,7 @@ def render_assay_form(prueba=False):
         if sel == GESP_OPCIONES[3]:
             st.download_button(
                 "Descargar Excel (Gravedad específica — arcillas y limos, INV E-128)", icon=":material/download:",
+                on_click=_marcar_emision, args=(codigo, perf_codigo),
                 data=generar_excel_gravedad_arcilla(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
                 file_name=f"Gravedad_especifica_arcilla_{muestra['id_unico']}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
@@ -12437,6 +12543,7 @@ def render_assay_form(prueba=False):
         if sel in (GESP_OPCIONES[1], GESP_OPCIONES[2]):
             st.download_button(
                 "Descargar Excel (Gravedad específica — agregado grueso, INV E-223)", icon=":material/download:",
+                on_click=_marcar_emision, args=(codigo, perf_codigo),
                 data=generar_excel_gravedad_grueso(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
                 file_name=f"Gravedad_especifica_grueso_{muestra['id_unico']}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
@@ -12448,6 +12555,7 @@ def render_assay_form(prueba=False):
         excel_bytes = generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
             "Descargar Excel (plantilla oficial de Corte Directo)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
             data=excel_bytes, file_name=f"Corte_directo_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
@@ -12461,6 +12569,7 @@ def render_assay_form(prueba=False):
         excel_bytes = generar_excel_cbr(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
             "Descargar Excel (plantilla oficial de CBR)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
             data=excel_bytes, file_name=f"CBR_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )

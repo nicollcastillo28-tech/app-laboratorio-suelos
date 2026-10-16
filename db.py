@@ -191,6 +191,13 @@ def set_perforacion_fecha_ingreso(perforacion_id: str, fecha: str | None) -> dic
     return res.data[0]
 
 
+def set_perforacion_fecha_emision(perforacion_id: str, fecha: str | None) -> dict:
+    """Día en que se descargó por última vez un Excel de resultados de ESTA perforación ('YYYY-MM-DD').
+    Requiere la migración 0037 (columna perforaciones.fecha_emision)."""
+    res = get_client().table("perforaciones").update({"fecha_emision": fecha or None}).eq("id", perforacion_id).execute()
+    return res.data[0]
+
+
 def set_perforacion_fecha_ingreso_por_codigo(project_id: str, codigo: str, fecha: str | None):
     """Igual que set_perforacion_fecha_ingreso pero buscando la perforación por (proyecto, código) -- para justo
     después de crear el proyecto, cuando todavía no se conocen los ids de sus perforaciones."""
