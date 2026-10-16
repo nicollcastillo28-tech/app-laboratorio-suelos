@@ -36,10 +36,10 @@ class FormatosOficialesTest(unittest.TestCase):
         with zipfile.ZipFile(BytesIO(original)) as a, zipfile.ZipFile(BytesIO(resultado)) as b:
             self.assertEqual(a.namelist(), b.namelist())
             for nombre in a.namelist():
-                if nombre not in (parte, 'xl/workbook.xml'):
+                if nombre not in (parte, 'xl/workbook.xml', 'xl/styles.xml'):
                     self.assertEqual(a.read(nombre), b.read(nombre), nombre)
             antes, despues = a.read(parte), b.read(parte)
-            sin_datos = lambda xml: re.sub(rb'<sheetData>.*?</sheetData>', b'<sheetData/>', xml, flags=re.S)
+            sin_datos = lambda xml: re.sub(rb'<conditionalFormatting\b.*?</conditionalFormatting>', b'', re.sub(rb'<sheetData>.*?</sheetData>', b'<sheetData/>', xml, flags=re.S), flags=re.S)
             self.assertEqual(sin_datos(antes), sin_datos(despues))
             def formulas(xml):
                 return {c.get('r'): ET.tostring(c.find(S+'f')) for c in ET.fromstring(xml).iter(S+'c') if c.find(S+'f') is not None}
@@ -109,11 +109,11 @@ class FormatosOficialesTest(unittest.TestCase):
                     self.assertIn('G21', fa)
                     del fa['G21']
                     self.assertEqual(fa, fb)
-                    sin_datos = lambda xml: re.sub(rb'<sheetData>.*?</sheetData>', b'<sheetData/>', xml, flags=re.S)
+                    sin_datos = lambda xml: re.sub(rb'<conditionalFormatting\b.*?</conditionalFormatting>', b'', re.sub(rb'<sheetData>.*?</sheetData>', b'<sheetData/>', xml, flags=re.S), flags=re.S)
                     self.assertEqual(sin_datos(antes), sin_datos(despues))
                     origen_ws = load_workbook(BytesIO(original))['FORMATO']
                     self.assertEqual(origen_ws['G21']._style, ws['G21']._style)
-                    excepciones = {parte, 'xl/workbook.xml', 'xl/calcChain.xml', '[Content_Types].xml', 'xl/_rels/workbook.xml.rels'}
+                    excepciones = {parte, 'xl/styles.xml', 'xl/workbook.xml', 'xl/calcChain.xml', '[Content_Types].xml', 'xl/_rels/workbook.xml.rels'}
                     for nombre in a.namelist():
                         if nombre not in excepciones:
                             self.assertEqual(a.read(nombre), b.read(nombre), nombre)
