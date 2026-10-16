@@ -198,6 +198,18 @@ def set_perforacion_fecha_emision(perforacion_id: str, fecha: str | None) -> dic
     return res.data[0]
 
 
+def set_perforacion_muestras_en_orden(perforacion_id: str, total: int | None) -> dict:
+    """Cuántas muestras traía la orden de ESTA perforación, con o sin ensayo marcado (las que no tienen ensayo no se importan).
+    Requiere la migración 0038 (columna perforaciones.muestras_en_orden)."""
+    res = get_client().table("perforaciones").update({"muestras_en_orden": total}).eq("id", perforacion_id).execute()
+    return res.data[0]
+
+
+def set_perforacion_muestras_en_orden_por_codigo(project_id: str, codigo: str, total: int | None):
+    """Igual que set_perforacion_muestras_en_orden pero por (proyecto, código), para justo después de crear el proyecto."""
+    get_client().table("perforaciones").update({"muestras_en_orden": total}).eq("project_id", project_id).eq("codigo", codigo).execute()
+
+
 def set_perforacion_fecha_ingreso_por_codigo(project_id: str, codigo: str, fecha: str | None):
     """Igual que set_perforacion_fecha_ingreso pero buscando la perforación por (proyecto, código) -- para justo
     después de crear el proyecto, cuando todavía no se conocen los ids de sus perforaciones."""

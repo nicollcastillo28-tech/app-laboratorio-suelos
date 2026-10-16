@@ -1678,6 +1678,9 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
         # no solo el uso "de fábrica" de una hoja = un sondeo con varias muestras de profundidad.
         filas_por_codigo, sin_codigo, sin_ensayo = {}, [], 0
         sin_ensayo_nums = []
+        # Números de TODAS las muestras que trae la orden (con o sin ensayo marcado), por perforación: la orden puede traer 15
+        # muestras y marcar ensayos solo en 8; ese total se guarda aparte para mostrar "ensayo de 8 muestras de 15".
+        numeros_orden = {}
         ultimo_codigo = None
         # La plantilla trae 14 filas (18-31) pero el cliente puede insertar más: se lee hasta el "*" del pie
         # (columna B) o hasta BITACORA_XLSX_LECTURA_MAX filas si lo borró.
@@ -1698,6 +1701,7 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
                 perf_r = ultimo_codigo or codigo_encabezado
             if numero is None or str(numero).strip() == "":
                 continue
+            numeros_orden.setdefault(perf_r, set()).add(_normalizar_numero_muestra(numero))
             fila = {
                 "Número": _normalizar_numero_muestra(numero),
                 "Prof. De": round(to_float(ws[f"D{r}"].value, 0.0), 3),
@@ -1731,6 +1735,11 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
             advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': alguna(s) fila(s) no traían código en "
                                  f"la columna N.° DE PERFORACIÓN — se agruparon bajo '{codigo_default}', revísalo.")
 
+        # Muestras sin código de perforación en su fila: van con la perforación que más muestras tiene (igual que las filas).
+        if None in numeros_orden and filas_por_codigo:
+            destino = max(filas_por_codigo, key=lambda c: len(filas_por_codigo[c]))
+            numeros_orden.setdefault(destino, set()).update(numeros_orden.pop(None))
+
         for codigo, filas_codigo in filas_por_codigo.items():
             tipo = tipo_hoja or next((t for t, prefix in TIPO_PERFORACION_PREFIX.items()
                                        if codigo.upper().startswith(prefix)), None)
@@ -1738,7 +1747,8 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
                 tipo = "Sondeo"
                 advertencias.append(f"{nombre_archivo} — hoja '{ws.title}' ({codigo}): no se marcó Sondeo/"
                                      "Apique/Fuente-Cantera — se asumió Sondeo, revísalo antes de guardar.")
-            perforaciones.append({"tipo": tipo, "codigo": codigo, "filas": filas_codigo})
+            perforaciones.append({"tipo": tipo, "codigo": codigo, "filas": filas_codigo,
+                                  "muestras_en_orden": max(len(numeros_orden.get(codigo, ())), len(filas_codigo))})
 
     return perforaciones, advertencias, encabezado
 
@@ -4746,7 +4756,8 @@ def render_new_project():
                             consecutivo = len([p for p in perforaciones if p["tipo"] == pp["tipo"]]) + 1
                             perf_nueva = {"tipo": pp["tipo"], "consecutivo": consecutivo, "codigo": pp["codigo"]}
                             perforaciones.append(perf_nueva)
-                        muestras_perf = st.session_state.setdefault("draft_muestras", {}).setdefault(perf_nueva["codigo"], [])
+                        perf_nueva["muestras_en_orden"] = max(perf_nueva.get("muestras_en_orden") or 0, pp["muestras_en_orden"])
+                        muestras_perf =st.session_state.setdefault("draft_muestras", {}).setdefault(perf_nueva["codigo"], [])
                         key_perf = f"{codigo_interno}::{perf_nueva['codigo']}"
                         df_actual = _bitacora_draft_df(key_perf, muestras_perf)
                         numeros_ya = set(df_actual["Número"].astype(str).str.strip())
@@ -4898,6 +4909,15 @@ def render_new_project():
                 "fecha_inicio_proyecto": str(fecha_inicio_proyecto), "fecha_final_proyecto": str(fecha_final_proyecto),
                 "fecha_final_real": str(fecha_final_real) if fecha_final_real else "",
             }, perforaciones_payload)
+            # Cuántas muestras traía la orden de cada perforación (con o sin ensayo) también se guarda aparte, igual que la fecha.
+            for perf in perforaciones:
+                if perf.get("muestras_en_orden"):
+                    try:
+                        db.set_perforacion_muestras_en_orden_por_codigo(project_id, perf["codigo"], perf["muestras_en_orden"])
+                    except Exception:
+                        st.toast("No se pudo guardar cuántas muestras traía la orden: falta aplicar la migración 0038 en Supabase.",
+                                 icon=":material/warning:")
+                        break
             # La fecha de ingreso de cada perforación se guarda aparte: commit_new_project (RPC) no la conoce.
             for perf in perforaciones:
                 fecha_perf = fechas_ingreso_perf.get(perf["codigo"])
@@ -5105,8 +5125,9 @@ def render_project_detail():
             with top[2]:
                 st.markdown(f'<div style="text-align:right;"><span class="assigned-chip">{html.escape(perf["tipo"])}</span></div>',
                             unsafe_allow_html=True)
+            muestras_en_orden = max(perf.get("muestras_en_orden") or 0, len(muestras))
             st.markdown(f'<div class="cell-muted">{icon("science", size=13)} Ensayo de <strong>{muestras_con_ensayo}</strong> '
-                        f'muestra(s) de <strong>{len(muestras)}</strong> de la orden</div>', unsafe_allow_html=True)
+                        f'muestra(s) de <strong>{muestras_en_orden}</strong> de la orden</div>', unsafe_allow_html=True)
             # Cada perforación puede llegar y entregarse un día distinto: sus tres fechas van aquí, no en el proyecto.
             #   Recepción: cuándo entró la orden (la fija el Jefe).  Ejecución: primer dato digitado en alguna muestra.
             #   Emisión: última descarga de un Excel de resultados de esta perforación.
@@ -5558,6 +5579,14 @@ def render_bitacora():
                             consecutivo = len([p for p in perforaciones if p["tipo"] == pp["tipo"]]) + 1
                             perf = db.restore_or_create_perforacion(project["id"], pp["tipo"], consecutivo, pp["codigo"])
                             perforaciones.append(perf)
+                        total_orden = max(perf.get("muestras_en_orden") or 0, pp["muestras_en_orden"])
+                        if total_orden != perf.get("muestras_en_orden"):
+                            try:
+                                db.set_perforacion_muestras_en_orden(perf["id"], total_orden)
+                                perf["muestras_en_orden"] = total_orden
+                            except Exception:
+                                advertencias_totales.append("No se pudo guardar cuántas muestras traía la orden: falta aplicar la "
+                                                            "migración 0038 (perforaciones.muestras_en_orden) en Supabase.")
                         key = f"{codigo}::{perf['codigo']}"
                         df_actual = _bitacora_draft_df(key, st.session_state.muestras.setdefault(key, []))
                         numeros_ya = set(df_actual["Número"].astype(str).str.strip())
