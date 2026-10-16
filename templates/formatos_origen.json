@@ -1,0 +1,116 @@
+[
+  {
+    "codigo": "GDA-FLC-001",
+    "origen": "GDA-FLC-001 DETERMINACION DE LOS TAMAÑOS DE LOS SUELOS.xlsm",
+    "destino": "CLASIFICACION_DE_SUELOS.xlsm",
+    "sha256": "54cb693fae2ec3bb9a006a8e4357e721a5e836c6401ecfcf6a6e3c2355676a66"
+  },
+  {
+    "codigo": "GDA-FLC-002",
+    "origen": "GDA-FLC-002 INFORME DE RESULTADOS PROCTOR Y CBR METODO 1.xlsm",
+    "destino": "GDA-FLC-002_proctor_cbr.xlsm",
+    "sha256": "991a932cbe8302db50390439197635e633bc064d2ce5742be12500ce3babc146"
+  },
+  {
+    "codigo": "GDA-FLC-003",
+    "origen": "GDA-FLC-003 CONTENIDO DE MATERIAL ORGANICO.xlsx",
+    "destino": "GDA-FLC-003_materia_organica.xlsx",
+    "sha256": "4b426c543a88f1323ca6efad909aaf12c6e11405a966a30b20e500233d39d2c7"
+  },
+  {
+    "codigo": "GDA-FLC-004",
+    "origen": "GDA-FLC-004 PESOS UNITARIO.xlsx",
+    "destino": "GDA-FLC-004_masa_unitaria.xlsx",
+    "sha256": "d7509efa13205cbff747e41f89572ebe3c395933251b4870add1dbb255f9eab7"
+  },
+  {
+    "codigo": "GDA-FLC-006",
+    "origen": "GDA-FLC-006 GRAVEDAD ESPECIFICA .xlsx",
+    "destino": "GDA-FLC-006_gravedad_arcilla.xlsx",
+    "sha256": "bf522adba124eafa38ad240e3a78615daa111e80f29191a0ffa908ab4e0c0c1a"
+  },
+  {
+    "codigo": "GDA-FLC-007",
+    "origen": "GDA-FLC-007 CORTE DIRECTO.xlsx",
+    "destino": "GDA-FLC-007_corte_directo.xlsx",
+    "sha256": "d793a323b7cca4da995157df56da0d9a74711ff388a68ba3ac3b8ddb2520b066"
+  },
+  {
+    "codigo": "GDA-FLC-008",
+    "origen": "Versión vigente anterior; actualización pendiente",
+    "destino": "GDA-FLC-008_compresion_inconfinada.xlsm",
+    "sha256": "24fb536c7645fe606052b14b15e2e989a1fc256f539b267845b63878854a6f9f"
+  },
+  {
+    "codigo": "GDA-FLC-009",
+    "origen": "GDA-FLC-009 CONSOLIDACIÓN UNIDIMENSIONAL.xlsx",
+    "destino": "GDA-FLC-009_consolidacion.xlsx",
+    "sha256": "9f541ef5c9cbc5b918e423e748a69afd02bb8d5cef8438a1a94b65a1f1e4b4d4"
+  },
+  {
+    "codigo": "GDA-FLC-013",
+    "origen": "GDA-FLC-013 CBR INALTERADO .xlsx",
+    "destino": "GDA-FLC-013_cbr.xlsx",
+    "sha256": "c3feac009ac747a2247cb23cf2c69a2ec50e61809cc6140d2faf5642a030b079"
+  },
+  {
+    "codigo": "GDA-FLC-014",
+    "origen": "GDA-FLC-014 CONTENIDO DE HUMEDAD NATURAL.xlsx",
+    "destino": "GDA-FLC-014_humedad_natural.xlsx",
+    "sha256": "a5cda6e4320eeff164eef4973e382c3bb27dd3856abdee975222f4485780b4a3"
+  },
+  {
+    "codigo": "GDA-FLC-018",
+    "origen": "GDA-FLC-018 INFORME DE RESULTADOS PRUEBA ESTÁNDAR PARA LA DETERMINACIÓN DEL ÍNDICE DE FUERZA DE CARGA PUNTUAL DE LA ROCA.xlsx",
+    "destino": "GDA-FLC-018_carga_puntual.xlsx",
+    "sha256": "8985c321caafad7f29c95ea9321850862c42f55d0554bfcf8be7e070ed8255c0"
+  },
+  {
+    "codigo": "GDA-FLC-022",
+    "origen": "GDA-FLC-022 LIMITE DE CONTRACCIÓN.xlsx",
+    "destino": "GDA-FLC-022_limite_contraccion.xlsx",
+    "sha256": "0fe35200b20bcaff709f4e5cdcbaad7f85c5f99574e4f99177f71bcf8518f8c5"
+  },
+  {
+    "codigo": "GDA-FLC-026",
+    "origen": "GDA-FLC-026 ALARGAMIENTO Y APLANAMIENTO.xlsx",
+    "destino": "GDA-FLC-026_alargamiento_aplanamiento.xlsx",
+    "sha256": "2f3b75a17f389994b933cd279a0e714c5c9f275de7273999ecbb6e6aca499f7b"
+  },
+  {
+    "codigo": "GDA-FLC-027",
+    "origen": "GDA-FLC-027 DENSIDAD RELATIVA (GRAVEDAD ESPECÍFICA) Y ABSORCIÓN DEL AGREGADO FINO INV E - 222-13 .xlsx",
+    "destino": "GDA-FLC-027_gravedad_fino.xlsx",
+    "sha256": "2d7c1f57e266b297d64e95e4f500103dc48ae9226d1ab7c057f1432621c50748"
+  },
+  {
+    "codigo": "GDA-FLC-028",
+    "origen": "GDA-FLC-028 DENSIDAD RELATIVA (GRAVEDAD ESPECÍFICA) Y ABSORCIÓN DEL AGREGADO GRUESO INV E – 223 – 13 .xlsx",
+    "destino": "GDA-FLC-028_gravedad_grueso.xlsx",
+    "sha256": "18c265ad3d97faa5dab15bd3082ae3014d4419696fc09832fa35e5eeac1fc1a4"
+  },
+  {
+    "codigo": "GDA-FLC-030",
+    "origen": "GDA-FLC-030 INFORME DE RESULTADOS PESOS UNITARIO POR VOLUMEN METODO B.xlsx",
+    "destino": "GDA-FLC-030_peso_unitario_b.xlsx",
+    "sha256": "ff270531964ca810520bf68e2046c6200f8b286c9c638e47085265c96eb00519"
+  },
+  {
+    "codigo": "GDA-FLC-033",
+    "origen": "GDA-FLC-033 SOLIDEZ DE LOS AGREGADOS FRENTE A LA ACCIÓN DE SOLUCIONES DE SULFATO DE SODIO O DE MAGNESIO.xlsx",
+    "destino": "GDA-FLC-033_solidez_sulfatos.xlsx",
+    "sha256": "f9f3eefda948017c813cb00298aa7ae15887635afaaab3806173562b78368018"
+  },
+  {
+    "codigo": "GDA-FLC-034",
+    "origen": "GDA-FLC-034 DETERMINACIÓN DE TERRONES DE ARCILLA Y PARTÍCULAS DELEZNABLES EN LOS AGREGADOS.xlsx",
+    "destino": "GDA-FLC-034_terrones_arcilla.xlsx",
+    "sha256": "69a755556b8f17c3cd5d9b26c9f4f03994f275b1c390b28c62b7c38e4c6be515"
+  },
+  {
+    "codigo": "GDA-FLC-043",
+    "origen": "GDA-FLC-043 INFORME DE RESULTADOS COMPRESION EN ROCA METODO B.xlsx",
+    "destino": "GDA-FLC-043_compresion_roca.xlsx",
+    "sha256": "7d968a3c7004e3ed73aabb0fdae59344e64e03e04f63e361a3a512e827ec0b38"
+  }
+]
