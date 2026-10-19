@@ -1108,7 +1108,7 @@ GESP_GRUESOS_CAMPOS = [
 # informe oficial) y siguen la nomenclatura estándar de descripción visual-manual de suelos
 # (INV E-102 / ASTM D2488), no una lista inventada. No hay campo de texto libre — la frase final
 # se arma solo con lo elegido en estos menús (ver descripcion_visual_estructurada).
-DESC_TIPO_SUELO_OPTIONS = ["", "GRAVA", "ARENA", "LIMO", "ARCILLA", "ORGÁNICO", "OTROS"]
+DESC_TIPO_SUELO_OPTIONS = ["", "GRAVA", "ARENA", "LIMO", "ARCILLA", "ORGÁNICO", "NÚCLEO DE ROCA", "BOLO", "OTROS"]
 # Componentes secundarios, con las reglas del INV E-102-13 (13.8.2, 13.8.3 y 14.6): entre 15 y 25 % de otro material se nombra "CON ARENA /
 # CON GRAVA"; con 30 % o más pasa a adjetivo: "ARCILLA ARENOSA", "LIMO GRAVOSO". Mismas opciones que el tipo principal (se filtra el principal
 # para no dejar armar "grava con grava"). Se guardan separados por coma; un "*" al final marca el de 30 % o más (ARENA*).
@@ -1127,6 +1127,9 @@ DESC_INTENSIDAD_OPTIONS = ["", "CLARO", "OSCURO"]
 # despliega una u otra según el tipo de grano elegido (ver _es_grueso).
 DESC_CEMENTACION_OPTIONS = ["", "DÉBIL", "MODERADA", "FUERTE"]
 DESC_CONSISTENCIA_OPTIONS = ["", "MUY BLANDA", "BLANDA", "FIRME", "DURA", "MUY DURA"]
+# Plasticidad (INV E-102-13, Tabla 102-2): solo en suelos finos plásticos, limo y arcilla (columna desc_plasticidad, migración 0039).
+DESC_PLASTICIDAD_OPTIONS = ["", "NO PLÁSTICA", "BAJA", "MEDIA", "ALTA"]
+DESC_TIPOS_CON_PLASTICIDAD = ("LIMO", "ARCILLA")
 # Forma solo aplica a grava (partículas lo bastante grandes para juzgar su forma a ojo);
 # angulosidad aplica a cualquier suelo grueso (grava o arena).
 DESC_FORMA_OPTIONS = ["", "PLANAS", "ALARGADAS", "PLANAS Y ALARGADAS"]
@@ -1142,16 +1145,16 @@ DESC_ESTRUCTURA_OPTIONS = ["", "ESTRATIFICADA", "LAMINADA", "FISURADA", "LISA", 
 DESC_HCL_OPTIONS = ["", "NULA", "DÉBIL", "FUERTE"]
 DESC_OLOR_OPTIONS = ["", "ORGÁNICO", "INUSUAL"]
 # Columnas agregadas por migraciones recientes: si aún no están en la base, se guarda igual lo demás (ver _guardar_descripcion_visual).
-DESC_COLUMNAS_NUEVAS = ("desc_intensidad", "desc_estructura", "desc_hcl", "desc_olor")
+DESC_COLUMNAS_NUEVAS = ("desc_intensidad", "desc_estructura", "desc_hcl", "desc_olor", "desc_plasticidad")
 # Adjetivo con que la norma (13.8.3) nombra un componente que pasa del 30 %: "arcilla ARENOSA", "limo GRAVOSO" -> (femenino, masculino).
 _ADJETIVO_SUELO = {"GRAVA": ("GRAVOSA", "GRAVOSO"), "ARENA": ("ARENOSA", "ARENOSO"), "LIMO": ("LIMOSA", "LIMOSO"),
                    "ARCILLA": ("ARCILLOSA", "ARCILLOSO"), "ORGÁNICO": ("ORGÁNICA", "ORGÁNICO")}
 
 
 def _es_grueso(tipo_suelo):
-    """Grava/Arena = grano grueso (cementación, angulosidad); Limo/Arcilla/Orgánico = grano fino
+    """Grava/Arena (y bolo / núcleo de roca) = grano grueso (cementación, angulosidad); Limo/Arcilla/Orgánico = grano fino
     (consistencia). Ver INV E-102."""
-    return tipo_suelo in ("GRAVA", "ARENA")
+    return tipo_suelo in ("GRAVA", "ARENA", "NÚCLEO DE ROCA", "BOLO")
 
 
 def _partes_color(muestra):
@@ -1223,7 +1226,7 @@ def descripcion_visual_estructurada(muestra, tipo_override=None):
         con = [x for x in con if x[:4] not in tipo_override]
         adj = [x for x in adj if x[:4] not in tipo_override]
     if base:
-        masculino = base.split()[0] in ("LIMO", "ORGÁNICO")
+        masculino = base.split()[0] in ("LIMO", "ORGÁNICO", "NÚCLEO", "BOLO")
         adjetivos = [_ADJETIVO_SUELO[x][1 if masculino else 0] for x in adj]
         partes.append(base + (f" {_lista_y(adjetivos)}" if adjetivos else ""))
     if con:
@@ -1245,6 +1248,11 @@ def descripcion_visual_estructurada(muestra, tipo_override=None):
         if cementacion:
             partes.append(f"CON CEMENTACIÓN {cementacion}")
     else:
+        plasticidad = (muestra.get("desc_plasticidad") or "").upper() if tipo in DESC_TIPOS_CON_PLASTICIDAD else None
+        if plasticidad == "NO PLÁSTICA":
+            partes.append("NO PLÁSTICO" if tipo == "LIMO" else "NO PLÁSTICA")
+        elif plasticidad:
+            partes.append(f"DE PLASTICIDAD {plasticidad}")
         consistencia = (muestra.get("desc_consistencia") or "").upper() or None
         if consistencia:
             partes.append(f"DE CONSISTENCIA {consistencia}")
@@ -5982,8 +5990,8 @@ def _seleccion_multiple(label, opciones, actuales, key):
 
 
 def _guardar_descripcion_visual(muestra_id, campos):
-    """Guarda los campos de la descripción visual. Si la base aún no tiene las columnas de las migraciones 0034/0035 (intensidad, estructura,
-    HCl, olor), se guarda todo lo demás y se avisa; la intensidad se funde en la subtonalidad (como se guardaba antes) para no perderla."""
+    """Guarda los campos de la descripción visual. Si la base aún no tiene las columnas de las migraciones 0034/0035/0039 (intensidad, estructura,
+    HCl, olor, plasticidad), se guarda todo lo demás y se avisa; la intensidad se funde en la subtonalidad (como se guardaba antes) para no perderla."""
     try:
         db.update_muestra(muestra_id, **campos)
     except Exception:
@@ -5994,7 +6002,7 @@ def _guardar_descripcion_visual(muestra_id, campos):
         if inten and not campos.get("desc_subtonalidad"):
             campos["desc_subtonalidad"] = inten
         db.update_muestra(muestra_id, **campos)
-        st.toast("Guardado, pero faltan las migraciones 0034 y 0035 en Supabase para guardar intensidad, estructura, HCl y olor.",
+        st.toast("Guardado, pero faltan las migraciones 0034, 0035 y 0039 en Supabase para guardar intensidad, estructura, HCl, olor y plasticidad.",
                  icon=":material/warning:")
 
 
@@ -6070,7 +6078,7 @@ def render_muestra_detail():
                             descripcion_visual=texto.strip().upper(),
                             desc_tipo_suelo=None, desc_tipo_secundario=None, desc_color=None, desc_subtonalidad=None, desc_intensidad=None,
                             desc_forma=None, desc_angulosidad=None, desc_cementacion=None, desc_consistencia=None,
-                            desc_humedad=None, desc_estructura=None, desc_hcl=None, desc_olor=None))
+                            desc_humedad=None, desc_estructura=None, desc_hcl=None, desc_olor=None, desc_plasticidad=None))
                     st.session_state[desc_edit_key] = False
                     st.toast("Descripción visual guardada.", icon=":material/check_circle:")
                     st.rerun()
@@ -6126,6 +6134,8 @@ def render_muestra_detail():
                 campos = []
                 if desc_tipo == "GRAVA":
                     campos.append(("Forma", DESC_FORMA_OPTIONS, "desc_forma", "forma"))
+                if desc_tipo in DESC_TIPOS_CON_PLASTICIDAD:
+                    campos.append(("Plasticidad", DESC_PLASTICIDAD_OPTIONS, "desc_plasticidad", "plast"))
                 campos.append(("Cementación", DESC_CEMENTACION_OPTIONS, "desc_cementacion", "cem") if grueso
                                else ("Consistencia", DESC_CONSISTENCIA_OPTIONS, "desc_consistencia", "cons"))
                 campos.append(("Condición de humedad", DESC_HUMEDAD_OPTIONS, "desc_humedad", "hum"))
@@ -6154,7 +6164,7 @@ def render_muestra_detail():
                     # Los campos que no aparecieron arriba para este tipo de grano (ej. forma si
                     # no es grava) se limpian en vez de dejar guardado un valor viejo que ya no
                     # se ve.
-                    for campo_db in ("desc_forma", "desc_angulosidad", "desc_cementacion", "desc_consistencia"):
+                    for campo_db in ("desc_forma", "desc_angulosidad", "desc_cementacion", "desc_consistencia", "desc_plasticidad"):
                         guardar.setdefault(campo_db, None)
                     _guardar_descripcion_visual(muestra["id"], guardar)
                     st.session_state[desc_edit_key] = False
