@@ -3824,9 +3824,13 @@ def _render_pendientes_laboratorista(pendientes):
                      and (sel_tipo == "Todos" or ASSAY_LABELS[a["tipo"]] == sel_tipo)]
         # Los totales son del proyecto elegido (no de todos los proyectos): con un proyecto filtrado "7 de 106" mezclaba ensayos ajenos.
         base = [a for a in pendientes if sel_proy == "Todos" or a["codigo_interno"] == sel_proy]
-        en_ejec_base = sum(1 for a in base if a["status"] == "en-proceso")
+        # Los contadores de arriba siguen la selección (proyecto, perforación y ensayo); el estado no se aplica porque ellos mismos lo reparten.
+        para_contar = [a for a in base
+                       if (sel_sondeo == "Todos" or a["perforacion_codigo"] == sel_sondeo)
+                       and (sel_tipo == "Todos" or ASSAY_LABELS[a["tipo"]] == sel_tipo)]
+        en_ejec_base = sum(1 for a in para_contar if a["status"] == "en-proceso")
         contadores.markdown(f'<div style="text-align:right;"><span class="badge badge-warning">En ejecución: {en_ejec_base}</span> '
-                            f'<span class="badge badge-muted">Por iniciar: {len(base) - en_ejec_base}</span></div>', unsafe_allow_html=True)
+                            f'<span class="badge badge-muted">Por iniciar: {len(para_contar) - en_ejec_base}</span></div>', unsafe_allow_html=True)
         st.markdown(f'<div class="activity-footer">Mostrando {len(filtrados)} de {len(base)} ensayo(s)</div>', unsafe_allow_html=True)
         if not filtrados:
             st.info("Ningún ensayo pendiente con esos filtros.")
