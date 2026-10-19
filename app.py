@@ -3769,9 +3769,10 @@ def _render_pendientes_laboratorista(pendientes):
 
         # El proyecto va solo en su fila, a todo el ancho: con el código y el nombre no cabía en una tableta si compartía fila con los otros dos.
         sel_proy = st.selectbox("Proyecto", ["Todos"] + proyectos, key="home_f_proy", format_func=_nombre_proy)
-        f1, f2, f3 = st.columns(3)
-        sel_sondeo = f1.selectbox("Perforación", ["Todos"] + sondeos, key="home_f_sondeo", disabled=not proyecto_elegido,
-                                  help=None if proyecto_elegido else "Elige primero un proyecto.")
+        # Estado tiene palabras cortas: va más angosto, y Perforación y Ensayo (nombres más largos) más anchos; así los tres
+        # desplegables quedan en la misma línea (con la ayuda de Perforación el rótulo se partía y bajaba el desplegable).
+        f1, f2, f3 = st.columns([1.25, 0.9, 1.6])
+        sel_sondeo = f1.selectbox("Perforación", ["Todos"] + sondeos, key="home_f_sondeo", disabled=not proyecto_elegido)
         sel_estado = f2.selectbox("Estado", ["Todos", "Por iniciar", "En ejecución"], key="home_f_estado")
         sel_tipo = f3.selectbox("Ensayo", ["Todos"] + tipos, key="home_f_tipo")
         filtrados = [a for a in pendientes
