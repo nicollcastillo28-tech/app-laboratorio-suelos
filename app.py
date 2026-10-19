@@ -5314,7 +5314,7 @@ def render_project_detail():
 
             fila_estado = "".join([
                 _celda_perf("assignment", "Orden de ensayo", _si_no(hay_orden)),
-                _celda_perf("biotech", "Muestras en laboratorio", _si_no(en_laboratorio), "SÍ cuando hay fecha de recepción"),
+                _celda_perf("biotech", "Muestras en laboratorio", _si_no(en_laboratorio)),
             ])
             fila_fechas = "".join([
                 _celda_perf("move_to_inbox", "Recepción", fecha_ingreso_perf_txt(perf, project), "= fecha orden de ensayo"),
