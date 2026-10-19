@@ -1296,6 +1296,12 @@ def descripcion_visual_para_excel(muestra):
     return descripcion_visual_estructurada(muestra) or (muestra.get("descripcion_visual") or "").strip() or None
 
 
+def descripcion_completa(muestra):
+    """True si la muestra ya tiene descripción visual (elegida con los menús, o texto libre de antes). Mientras no la tenga, el laboratorista no
+    puede iniciar los ensayos de esa muestra: primero se describe el material."""
+    return bool(descripcion_visual_para_excel(muestra))
+
+
 def descripcion_visual_calculada(muestra):
     """Segunda versión de la descripción visual, con el tipo de suelo que de verdad salió en la
     clasificación USCS (calculada con los datos ya digitados de Granulometría/Límites, ver
@@ -5519,20 +5525,24 @@ def _render_tabla_muestras_con_semaforo(muestras, codigo, perf_codigo):
     # "Tipo"/"Profundidad" sin que sus encabezados se partan en varias líneas.
     # Tres columnas (muestra con su tipo y profundidad apilados | ensayos | botón) en vez de cinco: en una tableta las columnas con botones no
     # se encogen (ver el CSS de .assigned-th) y con cinco el "Abrir" se salía de la pantalla, dejando deslizar toda la página a la derecha.
-    col_ratios = [1.4, 2.6, 1.0]
+    col_ratios = [1.4, 1.0, 2.6]
     headers = st.columns(col_ratios)
-    for col, label in zip(headers, ["Muestra", "Ensayos asignados", "Acción"]):
+    for col, label in zip(headers, ["Muestra", "Acción", "Ensayos asignados"]):
         col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
+    es_lab = st.session_state.role == "laboratorista"
     for i, m in enumerate(muestras):
         if i:
             st.markdown(f'<hr style="margin:8px 0;border-color:{BORDER};">', unsafe_allow_html=True)
         cols = st.columns(col_ratios, vertical_alignment="center")
+        # El laboratorista no puede abrir los ensayos de una muestra hasta que digite su descripción visual (el botón "Iniciar" lo lleva a ella).
+        bloqueada = es_lab and not descripcion_completa(m)
+        aviso_desc = (f'<div class="cell-muted" style="color:{DANGER};font-weight:600;">Falta la descripción</div>' if bloqueada else "")
         cols[0].markdown(f'<span class="cell-id">M-{html.escape(str(m["numero"]))}</span>'
                          f'<div class="cell-muted">{html.escape(m["tipo_muestra"])}</div>'
-                         f'<div class="cell-muted">{fmt_prof(m["profundidad_de"])}–{fmt_prof(m["profundidad_hasta"])} m</div>',
+                         f'<div class="cell-muted">{fmt_prof(m["profundidad_de"])}–{fmt_prof(m["profundidad_hasta"])} m</div>{aviso_desc}',
                          unsafe_allow_html=True)
         ensayos_sol = unificar_ensayos([e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS])
-        with cols[1]:
+        with cols[2]:
             if not ensayos_sol:
                 st.markdown('<span class="cell-muted">—</span>', unsafe_allow_html=True)
             # Cada ensayo es un chip de color (estado de ESE ensayo) que, al tocarlo, abre directamente el ensayo: así no hace falta entrar
@@ -5548,7 +5558,9 @@ def _render_tabla_muestras_con_semaforo(muestras, codigo, perf_codigo):
                         continue
                     slug = re.sub(r"[^a-z0-9]+", "-", e.lower())
                     with st.container(key=f"chipens-{clase}-{m['id_unico']}-{slug}"):
-                        if st.button(e, key=f"chip_abrir_{m['id_unico']}_{slug}", help=f"Abrir {e} · {STATUS_LABELS[estado]}"):
+                        if st.button(e, key=f"chip_abrir_{m['id_unico']}_{slug}", disabled=bloqueada,
+                                     help=("Primero digita la descripción visual de la muestra (botón Iniciar)" if bloqueada
+                                           else f"Abrir {e} · {STATUS_LABELS[estado]}")):
                             st.session_state.selected_codigo = codigo
                             st.session_state.selected_perforacion = perf_codigo
                             st.session_state.selected_muestra_id = m["id_unico"]
@@ -5563,8 +5575,9 @@ def _render_tabla_muestras_con_semaforo(muestras, codigo, perf_codigo):
                                     st.stop()
                             st.session_state.selected_assay_type = tipo_interno
                             navigate("assay-form")
-        with cols[2]:
-            if st.button("Abrir", key=f"open_muestra_{m['id_unico']}", use_container_width=True):
+        with cols[1]:
+            if st.button("Iniciar" if es_lab else "Abrir", key=f"open_muestra_{m['id_unico']}", use_container_width=True,
+                         type="primary" if bloqueada else "secondary"):
                 # También proyecto y perforación: desde el desplegable de Detalle de Proyecto la perforación
                 # seleccionada era otra (o ninguna) y el detalle de muestra no encontraba la muestra -> volvía al Inicio.
                 st.session_state.selected_codigo = codigo
@@ -6508,6 +6521,9 @@ def render_muestra_detail():
             st.info("Verifica que todas las aprobaciones del Director Técnico estén completas antes de dar "
                      "esta muestra por lista para el cliente.")
 
+        bloqueo_lab = st.session_state.role == "laboratorista" and not descripcion_completa(muestra)
+        if bloqueo_lab:
+            st.warning("Para iniciar los ensayos primero digita la descripción visual de la muestra (arriba). Cuando la guardes se habilitan.")
         for ensayo_label in solicitados:
             tipo_interno = SUPPORTED_ASSAY_MAP.get(ensayo_label)
             existing = get_assay(muestra_id, tipo_interno) if tipo_interno else None
@@ -6550,7 +6566,7 @@ def render_muestra_detail():
                             st.markdown(status_badge_html(status), unsafe_allow_html=True)
 
                     with cols[3]:
-                        if st.button("Abrir", key=f"open_ensayo_{ensayo_label}", use_container_width=True):
+                        if st.button("Abrir", key=f"open_ensayo_{ensayo_label}", use_container_width=True, disabled=bloqueo_lab):
                             if existing:
                                 st.session_state.selected_assay_id = existing["id"]
                             else:
@@ -12326,6 +12342,14 @@ def render_assay_form(prueba=False):
                 f'<span class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(assay["lastModified"])}'
                 + (f' · {html.escape(assay["laboratorist"])}' if assay.get("laboratorist") else "") + '</span></div>',
                 unsafe_allow_html=True)
+    if st.session_state.role == "laboratorista" and not prueba and muestra is not None and assay["status"] != "finalizado"             and not descripcion_completa(muestra):
+        st.warning("Antes de iniciar este ensayo debes digitar la descripción visual de la muestra. Cuando la guardes, el ensayo se habilita.")
+        if st.button("Ir a la descripción de la muestra", type="primary", icon=":material/visibility:", use_container_width=True):
+            st.session_state.selected_codigo = codigo
+            st.session_state.selected_perforacion = perf_codigo
+            st.session_state.selected_muestra_id = muestra_id
+            navigate("muestra-detail")
+        return
     # Se llena más abajo, cuando ya están calculados los resultados (en edición, DESPUÉS de dibujar el formulario, para
     # que la alerta siga lo que se acaba de digitar); el contenedor lo deja arriba, donde se ve de una vez.
     slot_alertas = st.container()
