@@ -5151,7 +5151,7 @@ def render_new_project():
             _limpiar_borrador()
             navigate("home")
     with col2:
-        if st.button("Guardar bitácora", type="primary", use_container_width=True, icon=":material/save:",
+        if st.button("Guardar y continuar al proyecto →", type="primary", use_container_width=True, icon=":material/folder_open:",
                       disabled=not codigo_valido or not nombre):
             perforaciones_payload = []
             for perf in perforaciones:
@@ -6030,33 +6030,50 @@ def render_bitacora():
 
 
 
+    def _guardar_bitacora():
+        for perf in perforaciones:
+            key = f"{codigo}::{perf['codigo']}"
+            df_rows = edited_frames.get(key)
+            rows = df_rows.to_dict("records") if df_rows is not None else []
+            nuevas = []
+            for row in rows:
+                numero = str(row.get("Número", "")).strip()
+                if not numero or numero.lower() == "none" or numero == "nan":
+                    continue
+                id_unico = f"{codigo}-{perf['codigo']}-M{numero}"
+                nuevas.append({
+                    "numero": numero, "id_unico": id_unico,
+                    "profundidad_de": round(row.get("Prof. De") or 0.0, 3), "profundidad_hasta": round(row.get("Prof. A") or 0.0, 3),
+                    "tipo_muestra": row.get("Tipo de muestra") or TIPO_MUESTRA_OPTIONS[0],
+                    "ensayos": {e: bool(row.get(e, False)) for e in BITACORA_ENSAYOS},
+                    "observaciones": row.get("Observaciones") or "",
+                })
+            _sync_muestras_perforacion(perf["id"], codigo, perf["codigo"], nuevas)
+            # Se descarta el draft cacheado para que, si se vuelve a abrir esta perforación,
+            # se reconstruya desde las muestras recién guardadas (evita mostrar/pisar con una
+            # tabla vieja lo que ya se guardó).
+            st.session_state.bitacora_draft.pop(key, None)
+
     if es_jefe:
         st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("Guardar bitácora", type="primary", use_container_width=True, icon=":material/save:"):
-            for perf in perforaciones:
-                key = f"{codigo}::{perf['codigo']}"
-                df_rows = edited_frames.get(key)
-                rows = df_rows.to_dict("records") if df_rows is not None else []
-                nuevas = []
-                for row in rows:
-                    numero = str(row.get("Número", "")).strip()
-                    if not numero or numero.lower() == "none" or numero == "nan":
-                        continue
-                    id_unico = f"{codigo}-{perf['codigo']}-M{numero}"
-                    nuevas.append({
-                        "numero": numero, "id_unico": id_unico,
-                        "profundidad_de": round(row.get("Prof. De") or 0.0, 3), "profundidad_hasta": round(row.get("Prof. A") or 0.0, 3),
-                        "tipo_muestra": row.get("Tipo de muestra") or TIPO_MUESTRA_OPTIONS[0],
-                        "ensayos": {e: bool(row.get(e, False)) for e in BITACORA_ENSAYOS},
-                        "observaciones": row.get("Observaciones") or "",
-                    })
-                _sync_muestras_perforacion(perf["id"], codigo, perf["codigo"], nuevas)
-                # Se descarta el draft cacheado para que, si se vuelve a abrir esta perforación,
-                # se reconstruya desde las muestras recién guardadas (evita mostrar/pisar con una
-                # tabla vieja lo que ya se guardó).
-                st.session_state.bitacora_draft.pop(key, None)
-            st.success("Bitácora guardada. Los laboratoristas ya pueden ver y digitar las muestras.")
-            st.rerun()
+        if perforaciones:
+            # Con perforaciones ya agregadas se puede guardar y pasar directo al proyecto (antes había que volver y buscarlo en Proyectos).
+            g1, g2 = st.columns(2)
+            with g1:
+                if st.button("Guardar bitácora", use_container_width=True, icon=":material/save:"):
+                    _guardar_bitacora()
+                    st.success("Bitácora guardada. Los laboratoristas ya pueden ver y digitar las muestras.")
+                    st.rerun()
+            with g2:
+                if st.button("Guardar y ver proyecto →", type="primary", use_container_width=True, icon=":material/folder_open:"):
+                    _guardar_bitacora()
+                    st.session_state.selected_codigo = codigo
+                    navigate("project-detail")
+        else:
+            if st.button("Guardar bitácora", type="primary", use_container_width=True, icon=":material/save:"):
+                _guardar_bitacora()
+                st.success("Bitácora guardada. Los laboratoristas ya pueden ver y digitar las muestras.")
+                st.rerun()
 
 
 # ════════════════════════════════════════════════════════════════════
