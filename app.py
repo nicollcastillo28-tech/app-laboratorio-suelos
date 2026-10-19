@@ -3768,13 +3768,28 @@ def _render_pendientes_laboratorista(pendientes):
             return c if c == "Todos" or not p else f'{c} — {p["nombre"]}'
 
         # El proyecto va solo en su fila, a todo el ancho: con el código y el nombre no cabía en una tableta si compartía fila con los otros dos.
-        sel_proy = st.selectbox("Proyecto", ["Todos"] + proyectos, key="home_f_proy", format_func=_nombre_proy)
+        def _rotulo(texto):
+            # Rótulo propio en una sola línea (sin partirse) y selectbox sin rótulo: así los tres desplegables quedan alineados sin
+            # importar lo angosta que sea la columna ni el ancho de la pantalla.
+            st.markdown(f'<div class="cell-muted" style="white-space:nowrap;overflow:hidden;font-size:14px;line-height:20px;'
+                        f'height:20px;margin:4px 0 2px;">{texto}</div>', unsafe_allow_html=True)
+
+        _rotulo("Proyecto")
+        sel_proy = st.selectbox("Proyecto", ["Todos"] + proyectos, key="home_f_proy", format_func=_nombre_proy,
+                                label_visibility="collapsed")
         # Estado tiene palabras cortas: va más angosto, y Perforación y Ensayo (nombres más largos) más anchos; así los tres
         # desplegables quedan en la misma línea (con la ayuda de Perforación el rótulo se partía y bajaba el desplegable).
         f1, f2, f3 = st.columns([1.25, 0.9, 1.6])
-        sel_sondeo = f1.selectbox("Perforación", ["Todos"] + sondeos, key="home_f_sondeo", disabled=not proyecto_elegido)
-        sel_estado = f2.selectbox("Estado", ["Todos", "Por iniciar", "En ejecución"], key="home_f_estado")
-        sel_tipo = f3.selectbox("Ensayo", ["Todos"] + tipos, key="home_f_tipo")
+        with f1:
+            _rotulo("Perforación")
+            sel_sondeo = st.selectbox("Perforación", ["Todos"] + sondeos, key="home_f_sondeo", disabled=not proyecto_elegido,
+                                      label_visibility="collapsed")
+        with f2:
+            _rotulo("Estado")
+            sel_estado = st.selectbox("Estado", ["Todos", "Por iniciar", "En ejecución"], key="home_f_estado", label_visibility="collapsed")
+        with f3:
+            _rotulo("Ensayo")
+            sel_tipo = st.selectbox("Ensayo", ["Todos"] + tipos, key="home_f_tipo", label_visibility="collapsed")
         filtrados = [a for a in pendientes
                      if (sel_proy == "Todos" or a["codigo_interno"] == sel_proy)
                      and (sel_sondeo == "Todos" or a["perforacion_codigo"] == sel_sondeo)
