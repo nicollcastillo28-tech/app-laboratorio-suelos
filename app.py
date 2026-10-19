@@ -205,6 +205,7 @@ st.markdown(f"""
     @media (max-width: 1180px) {{
         div[data-testid="stLayoutWrapper"]:has(> .st-key-back-sticky) {{ bottom: 84px; }}
     }}
+    div[data-testid="stVerticalBlock"].st-key-back-sticky {{ background: transparent !important; border: none !important; box-shadow: none !important; padding: 0 !important; }}
     .st-key-back-sticky button {{
         background: {PRIMARY_CONTAINER} !important; color: #FFFFFF !important; border: none !important; border-radius: 999px !important;
         padding: 10px 20px !important; box-shadow: 0 3px 12px rgba(11,28,48,0.35) !important;
@@ -276,7 +277,7 @@ st.markdown(f"""
     estuviera bien. Se excluyen los mismos contenedores de "no son una tarjeta" que ya excluía la
     regla del acento izquierdo, más "logout-btn" (el ícono de cerrar sesión, invisible cuando su
     contenedor quedaba con este fondo blanco por detrás). */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-back-sticky):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
         border-radius: 12px !important; border: 1px solid {BORDER} !important;
         box-shadow: 0 1px 4px rgba(11,28,48,0.08) !important; background: {SURFACE} !important;
     }}
@@ -357,7 +358,7 @@ st.markdown(f"""
        borde tapando el grupo entero en vez de resaltar una sola tarjeta. bell-alert/bell-quiet
        (el botón-contenedor de la campana en el topbar) tampoco: es un ícono, no una tarjeta —
        se veía como una rayita verde suelta pegada a la campana. */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-back-sticky):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
         border-left: 4px solid {PRIMARY} !important;
     }}
     /* Tarjetas de "Ensayos asignados" (una por ensayo): más separación entre sí y sombra
