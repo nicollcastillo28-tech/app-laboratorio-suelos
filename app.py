@@ -12304,15 +12304,24 @@ def render_assay_form(prueba=False):
     muestra = get_muestra(codigo, perf_codigo, muestra_id)
     es_jefe = st.session_state.role == "jefe"
     es_supervisor = st.session_state.role in ("jefe", "ingeniero")
-    # El Jefe y el Director Técnico solo consultan los ensayos — quien digita los datos de laboratorio es el laboratorista.
-    read_only = es_supervisor or (st.session_state.role == "laboratorista" and project_status(codigo) == "ejecutado")
+    # Quién puede editar un ensayo:
+    #  - El laboratorista, mientras no lo haya entregado. Al "Enviar a revisión" el ensayo queda finalizado y se bloquea para él; solo vuelve a
+    #    abrirse si el Jefe lo devuelve (jefe_devolver) o habilita la edición.
+    #  - El Jefe de Laboratorio, cuando el ensayo está entregado y en revisión (finalizado y sin la aprobación final del Director Técnico):
+    #    si ve algo raro lo corrige él mismo; queda en el historial.
+    #  - El Director Técnico solo consulta (y confirma o devuelve desde la muestra).
+    entregado = assay["status"] == "finalizado" and not prueba
+    jefe_edita = es_jefe and entregado and assay.get("etapa_revision") != "aprobado"
+    lab_entregado = st.session_state.role == "laboratorista" and entregado
+    read_only = ((es_supervisor and not jefe_edita) or lab_entregado
+                 or (st.session_state.role == "laboratorista" and project_status(codigo) == "ejecutado"))
 
     if not prueba and _boton_atras():
         go_back(fallback="muestra-detail")
     puede_descargar = es_supervisor or prueba
 
     st.markdown(f"## {ASSAY_LABELS[assay['tipo']]}")
-    st.caption("Resultados de Ensayo" if read_only else "Registro de Ensayo")
+    st.caption("Resultados de Ensayo" if read_only else ("Revisión del Jefe de Laboratorio" if jefe_edita else "Registro de Ensayo"))
     st.markdown(f'<div style="margin-bottom:10px;">{status_badge_html(assay_estado_display(assay))}&nbsp;&nbsp;'
                 f'<span class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(assay["lastModified"])}'
                 + (f' · {html.escape(assay["laboratorist"])}' if assay.get("laboratorist") else "") + '</span></div>',
@@ -12390,8 +12399,14 @@ def render_assay_form(prueba=False):
                     f'{icon("block", size=18)} <b>No se pudo realizar este ensayo.</b> {html.escape(motivo_no_realizado)}</div>',
                     unsafe_allow_html=True)
 
+    if jefe_edita:
+        st.info("Estás revisando este ensayo como Jefe de Laboratorio: si ves algo raro puedes corregirlo aquí. Los cambios se guardan solos y "
+                "quedan registrados en el historial.")
     if read_only:
-        if es_supervisor:
+        if lab_entregado:
+            st.info("Ya entregaste este ensayo: queda en revisión del Jefe de Laboratorio y no lo puedes editar. Si hay que corregir algo, "
+                    "el Jefe te lo devuelve.")
+        elif es_supervisor:
             st.info("Estás viendo el ensayo en modo consulta — solo el laboratorista puede digitar estos datos.")
         else:
             st.info("Este proyecto ya fue ejecutado. Estás en modo consulta — no puedes editar estos datos.")
@@ -12482,6 +12497,11 @@ def render_assay_form(prueba=False):
         # (no debería pasar acá, esta rama solo la ve un laboratorista con sesión activa), se
         # cae al valor que ya tuviera guardado el ensayo en vez de dejarlo en blanco.
         laboratorist = (st.session_state.profile or {}).get("full_name") or assay.get("laboratorist", "")
+        if jefe_edita:
+            # El nombre del laboratorista no se pisa con el del Jefe: él solo corrige, quien hizo el ensayo sigue siendo el laboratorista.
+            laboratorist = assay.get("laboratorist", "")
+        actor_edicion = ((f"{(st.session_state.profile or {}).get('full_name') or 'Jefe de Laboratorio'} (Jefe de Laboratorio)") if jefe_edita
+                         else (f"{laboratorist} (Laboratorista)" if laboratorist else "Laboratorista"))
         st.markdown(f'<div style="font-weight:600;">{html.escape(laboratorist or "—")}</div>', unsafe_allow_html=True)
 
         # Autoguardado: si el laboratorista digita y se le olvida darle a "Guardar borrador"
@@ -12511,7 +12531,7 @@ def render_assay_form(prueba=False):
                 assay["laboratorist"] = laboratorist
                 assay["status"] = nuevo_status
                 # Si el ensayo ya se había enviado a revisión, lo que se cambia desde entonces queda registrado en el historial.
-                registrar_edicion_en_curso(assay, data, observations, f"{laboratorist} (Laboratorista)" if laboratorist else "Laboratorista")
+                registrar_edicion_en_curso(assay, data, observations, actor_edicion)
             except Exception:
                 st.error("No se pudo guardar el último cambio (revisa tu conexión). Sigue en pantalla — vuelve a intentarlo "
                           "digitando algo más o dale a \"Guardar borrador\".")
@@ -12519,9 +12539,21 @@ def render_assay_form(prueba=False):
                     unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
-        col1, col2 = st.columns(2)
+        if jefe_edita:
+            if st.button("Guardar cambios", type="primary", use_container_width=True, icon=":material/save:"):
+                try:
+                    with st.spinner("Guardando…"):
+                        db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status="finalizado")
+                        if pasa200_gran_sibling:
+                            db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
+                    assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado")
+                    registrar_edicion_en_curso(assay, data, observations, actor_edicion)
+                    st.toast("Cambios guardados.", icon=":material/check_circle:")
+                except Exception:
+                    st.error("No se pudo guardar (revisa tu conexión) — vuelve a intentarlo.")
+        col1, col2 = st.columns(2) if not jefe_edita else (st.container(), st.container())
         with col1:
-            if st.button("Guardar borrador", use_container_width=True, icon=":material/save:"):
+            if not jefe_edita and st.button("Guardar borrador", use_container_width=True, icon=":material/save:"):
                 try:
                     with st.spinner("Guardando…"):
                         db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status="en-proceso")
@@ -12532,7 +12564,7 @@ def render_assay_form(prueba=False):
                 except Exception:
                     st.error("No se pudo guardar (revisa tu conexión) — vuelve a intentarlo.")
         with col2:
-            if st.button("Enviar a revisión", type="primary", use_container_width=True, icon=":material/send:"):
+            if not jefe_edita and st.button("Enviar a revisión", type="primary", use_container_width=True, icon=":material/send:"):
                 faltantes = campos_faltantes(assay["tipo"], data)
                 if faltantes:
                     st.session_state[intento_incompleto_key] = True
@@ -12567,7 +12599,9 @@ def render_assay_form(prueba=False):
         # igual de visible y trazable que un ensayo terminado normal -- ver assay_estado_display,
         # que es lo único que distingue este caso en pantalla.
         no_realizado_key = f"_nr_intento_{assay_id}"
-        if st.session_state.get(no_realizado_key):
+        if jefe_edita:
+            pass   # "No se pudo realizar" lo marca el laboratorista; el Jefe solo corrige datos
+        elif st.session_state.get(no_realizado_key):
             motivo_valor = st.text_area(
                 "Motivo por el que no se pudo realizar el ensayo", key=f"_nr_motivo_{assay_id}",
                 placeholder="Ej.: los especímenes no cumplían las dimensiones mínimas que exige la norma.")
