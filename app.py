@@ -870,7 +870,7 @@ NORMAS_ENSAYO = {
     "terrones-arcilla": ["INV E-211-13"],
     "alargamiento-aplanamiento": ["INV E-230-13"],
 }
-STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En proceso", "finalizado": "Finalizado", "no-realizado": "No realizado"}
+STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En ejecución", "finalizado": "Finalizado", "no-realizado": "No realizado"}
 STATUS_BADGE = {"sin-iniciar": "badge-danger", "en-proceso": "badge-warning", "finalizado": "badge-success", "no-realizado": "badge-muted"}
 STATUS_ICON = {"sin-iniciar": "radio_button_unchecked", "en-proceso": "autorenew", "finalizado": "check_circle", "no-realizado": "block"}
 
@@ -5087,7 +5087,7 @@ def render_project_detail():
         st.progress(pct_general / 100)
         cols = st.columns(3)
         for col, status_key, label in zip(cols, ["sin-iniciar", "en-proceso", "finalizado"],
-                                           ["Sin iniciar", "En proceso", "Finalizado"]):
+                                           ["Sin iniciar", "En ejecución", "Finalizado"]):
             with col:
                 st.markdown(f'''
                     <div style="background:{SECONDARY_CONTAINER};border-radius:8px;
@@ -12795,7 +12795,7 @@ def render_continue():
     st.markdown("## Continuar ensayo")
     in_progress = [a for a in st.session_state.assays if a["status"] == "en-proceso"]
     if not in_progress:
-        st.info("No hay ensayos en proceso.")
+        st.info("No hay ensayos en ejecución.")
     for a in in_progress:
         with st.container(border=True):
             cols = st.columns([3, 2, 2, 1])
