@@ -2299,6 +2299,17 @@ def resultados_humedad(data):
             ("Humedad (%)", fmt_num(pct, 2) if pct is not None else "—")]
 
 
+def _tiene_datos_ll(data):
+    """True si hay algún dato numérico del Límite Líquido digitado."""
+    return any(to_float(v) is not None for k, v in (data or {}).items()
+               if k.startswith("lim_ll_") and "recipiente" not in k and not k.endswith("_lastsync") and isinstance(v, str))
+
+
+def limites_sin_limites(data):
+    """True si el suelo se reporta N.L. – N.P. sin datos: se marcó "No líquido" o "No plástico" sin haber digitado el Límite Líquido."""
+    return bool((data or {}).get("lim_nl")) or (bool((data or {}).get("lim_np")) and not _tiene_datos_ll(data))
+
+
 def calcular_limites(data):
     """Límite Líquido / Plástico / Índice de Plasticidad con las fórmulas de la plantilla oficial
     (CLASIFICACION_DE_SUELOS.xlsm): humedad = (húmedo−seco)/(seco−recipiente)·100; LL = ROUNDDOWN(promedio de
@@ -2324,6 +2335,8 @@ def calcular_limites(data):
     lps = [w for w in plasticos if w is not None]
     lp = math.floor(sum(lps) / len(lps)) if lps else None
     ip = ll - lp if ll is not None and lp is not None else None
+    if np_ and not nl and ll is None:
+        nl = True   # no plástico sin Límite Líquido digitado: se reporta igual que un suelo sin límites
     if nl:
         ll, lp, ip = "N.L.", "N.P.", "N.L. - N.P."
     elif np_:
@@ -6911,7 +6924,7 @@ def _escribir_limites(ws, data):
                     num = to_float(valor)
                     if num is not None:
                         ws[cell] = num
-    if data.get("lim_nl"):
+    if limites_sin_limites(data):
         # La plantilla ya sabe reportar "N.L. - N.P." cuando el Límite Líquido dice "NO LÍQUIDO" (R42) y "NO PLÁSTICO" cuando
         # el Límite Plástico está vacío (R41): no se escribe ningún dato.
         ws["R40"] = "NO LÍQUIDO"
@@ -7693,7 +7706,7 @@ def _quitar_hojas_ajenas(xlsx_bytes, hojas_a_quitar):
 def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_data=None, lim_data=None, observaciones_ensayo=""):
     """Granulometría y límites comparten el formato 001 completo. Se llenan las entradas de FORMATO y se conservan sus fórmulas y objetos originales."""
     # NP/NL sólo sustituyen sus casillas de resultado, por autorización del laboratorio.
-    editables = ('R40', 'R41') if (lim_data or {}).get('lim_nl') else ('R41', 'R42') if (lim_data or {}).get('lim_np') else ()
+    editables = ('R40', 'R41') if limites_sin_limites(lim_data) else ('R41', 'R42') if (lim_data or {}).get('lim_np') else ()
     wb = _cargar_plantilla_informe(TEMPLATE_GRANULOMETRIA, keep_vba=True,
                                   celdas_formula_editables={'FORMATO': editables})
     ws = wb["FORMATO"]
@@ -8576,8 +8589,8 @@ def campos_faltantes(tipo, data):
         return []
     campos = CAMPOS_REQUERIDOS_POR_TIPO.get(tipo, [])
     if tipo == "limites":
-        # "No líquido" no pide nada; "No plástico" no pide el Límite Plástico.
-        if data.get("lim_nl"):
+        # Sin límites (No líquido, o No plástico) no se pide nada; con No plástico y el Límite Líquido ya digitado no se pide el Plástico.
+        if limites_sin_limites(data) or data.get("lim_nl"):
             campos = []
         elif data.get("lim_np"):
             campos = [c for c in campos if not c[0].startswith("lim_lp_")]
@@ -11614,14 +11627,15 @@ def render_limites_form(data, assay_id):
             data["lim_nl"] = conmutador(f"lim_nl_{assay_id}", "No líquido (NL) — no llenar nada", data.get("lim_nl"))
         with cnp:
             data["lim_np"] = conmutador(f"lim_np_{assay_id}", "No plástico (NP) — sin Límite Plástico", data.get("lim_np"))
+        sin_limites = bool(data["lim_nl"] or data["lim_np"])
         if data["lim_nl"]:
             st.info("Suelo no líquido: se reporta N.L. – N.P. y no hay que digitar ningún dato de Límites; el método y los equipos no aplican.")
         elif data["lim_np"]:
-            st.info("Suelo no plástico: solo se digita el Límite Líquido; el Límite Plástico y el IP se reportan N.P.")
+            st.info("Suelo no plástico: se reporta N.P. y no hay que digitar ningún dato de Límites; el método y los equipos no aplican.")
         metodo_actual = data.get("lim_metodo", METODO_HUMEDAD[0])
         midx = METODO_HUMEDAD.index(metodo_actual) if metodo_actual in METODO_HUMEDAD else 0
         data["lim_metodo"] = st.radio("Método de Ensayo", METODO_HUMEDAD, index=midx, horizontal=True, key=f"lim_metodo_{assay_id}",
-                                      disabled=bool(data["lim_nl"]))
+                                      disabled=sin_limites)
 
     def _tabla_limite(icono, titulo, filas, n):
         with st.container(border=True):
@@ -11657,12 +11671,12 @@ def render_limites_form(data, assay_id):
                                 data[hkey] = current_val
                             data[lastsync_key] = current_val
 
-    if not data["lim_nl"]:
+    sin_limites = bool(data["lim_nl"] or data["lim_np"])
+    if not sin_limites:
         _tabla_limite("water_drop", "Límite Líquido (INV. 125 - 13)", LIMITE_LIQUIDO_FILAS, LIMITE_LIQUIDO_N)
-        if not data["lim_np"]:
-            _tabla_limite("gesture", "Límite Plástico (INV. 126 - 13)", LIMITE_PLASTICO_FILAS, LIMITE_PLASTICO_N)
+        _tabla_limite("gesture", "Límite Plástico (INV. 126 - 13)", LIMITE_PLASTICO_FILAS, LIMITE_PLASTICO_N)
 
-    if data["lim_nl"]:
+    if sin_limites:
         # Sin límites no se usó ningún equipo: se muestra bloqueado y se limpia lo que hubiera quedado marcado.
         data["lim_equipos"] = []
         with st.container(border=True):
@@ -11739,9 +11753,9 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             st.markdown(param_table_html(lab_rows, header_left="DATO", header_right="VALOR"), unsafe_allow_html=True)
         equipos, norma = data.get("hum_equipos", []), data.get("hum_norma", "—")
     elif tipo == "limites":
-        sin_limites = bool(data.get("lim_nl"))
-        # Sin datos que mostrar no se dibujan tablas de puros guiones: con NL (sin límites) van directo los resultados; con NP no hay tabla del
-        # Límite Plástico.
+        sin_limites = limites_sin_limites(data)
+        # Sin datos que mostrar no se dibujan tablas de puros guiones: sin límites (NL, o NP sin datos) van directo los resultados; con NP y el
+        # Límite Líquido digitado no hay tabla del Límite Plástico.
         if not sin_limites:
             with st.container(border=True):
                 st.markdown(card_header_html("water_drop", "Límite Líquido (INV. 125 - 13)"), unsafe_allow_html=True)
@@ -12127,7 +12141,7 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             resultados_corte_directo(data)
         equipos, norma = data.get("corte_equipos", []), data.get("corte_norma", "—")
 
-    if tipo == "limites" and data.get("lim_nl"):
+    if tipo == "limites" and limites_sin_limites(data):
         return   # sin límites no hay norma ni equipos que mostrar
     with st.container(border=True):
         st.markdown(card_header_html("rule", "Norma Aplicada"), unsafe_allow_html=True)
