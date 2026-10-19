@@ -12339,6 +12339,76 @@ def alertas_de_ensayo(tipo, data, muestra):
         return [], None
 
 
+def _motivo_sin_limites(muestra):
+    """Texto por defecto de las observaciones cuando se marca que el suelo no tiene límites: la razón, según lo que dice la descripción visual
+    (o, si no hay, la clasificación): las gravas y arenas limpias no tienen finos plásticos, así que los límites no se realizan."""
+    try:
+        desc = (muestra.get("desc_tipo_suelo") or "").upper()
+        material = {"GRAVA": "grava", "ARENA": "arena"}.get(desc) or _material_de_muestra(muestra)[0]
+    except Exception:
+        material = None
+    if material in ("grava", "arena"):
+        return (f"No se realizan los límites de Atterberg: el material es {material} (suelo granular sin finos plásticos), "
+                "no líquido y no plástico.")
+    return "No se realizan los límites de Atterberg: el suelo es no líquido y no plástico."
+
+
+def _avisos_coherencia_limites(muestra, data):
+    """Avisos cuando lo que dice la descripción visual o la clasificación no cuadra con los límites: grava o arena limpia pero hay datos de límites,
+    o suelo fino (arcilla, limo, o 50 % o más de finos) pero se marcó que no tiene límites. Solo avisan; nunca bloquean."""
+    if not muestra or not data or data.get("_no_realizado"):
+        return []
+    sin = limites_sin_limites(data)
+    hay_datos = _tiene_datos_ll(data) or any(
+        to_float(v) is not None for k, v in data.items()
+        if k.startswith("lim_lp_") and "recipiente" not in k and not k.endswith("_lastsync") and isinstance(v, str))
+    desc = (muestra.get("desc_tipo_suelo") or "").upper()
+    finos_secundarios = any(x in ("LIMO", "ARCILLA") for x in _tipos_secundarios(muestra, desc))
+    uscs, pct_finos = None, None
+    try:
+        gran = get_assay(muestra["id_unico"], "granulometria")
+        if gran and gran.get("data") and not gran["data"].get("_no_realizado"):
+            r = clasificar_uscs(gran["data"], data)
+            uscs, pct_finos = r.get("simbolo"), r.get("pct_finos")
+    except Exception:
+        pass
+    avisos = []
+    if hay_datos and not sin:
+        if desc in ("GRAVA", "ARENA") and not finos_secundarios:
+            avisos.append(f"La descripción visual dice {desc.lower()} (material granular sin finos plásticos), que normalmente no tiene límites, "
+                          "pero hay datos de límites digitados. Revisa la descripción o los datos.")
+        if uscs in ("GW", "GP", "SW", "SP"):
+            avisos.append(f"La clasificación USCS ({uscs}) es de un material granular limpio, que normalmente no tiene límites, "
+                          "pero hay datos de límites digitados. Revisa la clasificación o los datos.")
+    if sin:
+        if desc in ("LIMO", "ARCILLA"):
+            avisos.append(f"La descripción visual dice {desc.lower()} (suelo fino), que normalmente sí tiene límites, "
+                          "pero se marcó que el suelo no tiene límites. Revisa la descripción o la marca.")
+        if _num_finos_altos(pct_finos):
+            avisos.append(f"La granulometría da {pct_finos:.0f} % de finos (suelo fino), que normalmente sí tiene límites, "
+                          "pero se marcó que el suelo no tiene límites. Revisa la granulometría o la marca.")
+    return avisos
+
+
+def _num_finos_altos(pct):
+    return isinstance(pct, (int, float)) and pct >= 50
+
+
+def render_avisos_coherencia(tipo, data, muestra):
+    """Tarjeta de aviso con las incoherencias entre la descripción / clasificación y los límites (solo en el ensayo de Límites)."""
+    if tipo != "limites":
+        return
+    avisos = _avisos_coherencia_limites(muestra, data)
+    if not avisos:
+        return
+    items = "".join(f'<li style="margin-bottom:6px;">{html.escape(a)}</li>' for a in avisos)
+    st.markdown(
+        f'<div style="background:{WARNING_LIGHT};color:{WARNING};border-radius:12px;padding:14px 18px;margin-bottom:12px;">'
+        f'<div style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:16px;">{icon("fact_check", size=20)} '
+        f'Revisa: la descripción o la clasificación no cuadra con los límites</div>'
+        f'<ul style="margin:8px 0 0;padding-left:20px;font-size:14px;">{items}</ul></div>', unsafe_allow_html=True)
+
+
 def render_alertas_resultados(alertas, info_material):
     """Tarjeta 'Consultar resultados' con las alertas del ensayo, el material con que se compararon y las fuentes."""
     if not alertas:
@@ -12506,6 +12576,7 @@ def render_assay_form(prueba=False):
             st.info("Este proyecto ya fue ejecutado. Estás en modo consulta — no puedes editar estos datos.")
         render_read_only_summary(assay["tipo"], data, assay.get("laboratorist") or "—", muestra_id=muestra_id)
         with slot_alertas:
+            render_avisos_coherencia(assay["tipo"], data, muestra)
             render_alertas_resultados(*alertas_de_ensayo(assay["tipo"], data, muestra))
         with st.container(border=True):
             st.markdown(card_header_html("notes", "Observaciones"), unsafe_allow_html=True)
@@ -12578,10 +12649,15 @@ def render_assay_form(prueba=False):
             render_alargamiento_aplanamiento_form(data, assay_id)
 
         with slot_alertas:
+            render_avisos_coherencia(assay["tipo"], data, muestra)
             render_alertas_resultados(*alertas_de_ensayo(assay["tipo"], data, muestra))
 
-        with st.expander("Observaciones (opcional)", icon=":material/notes:", expanded=bool(assay.get("observations"))):
-            observations = st.text_area("Observaciones", value=assay.get("observations", ""), label_visibility="collapsed",
+        # Si el suelo no tiene límites, las observaciones traen por defecto la razón (se puede cambiar); no se pisa lo que ya esté escrito.
+        obs_inicial = assay.get("observations", "")
+        if assay["tipo"] == "limites" and limites_sin_limites(data) and not (obs_inicial or "").strip():
+            obs_inicial = _motivo_sin_limites(muestra)
+        with st.expander("Observaciones (opcional)", icon=":material/notes:", expanded=bool(obs_inicial)):
+            observations = st.text_area("Observaciones", value=obs_inicial, label_visibility="collapsed",
                                          placeholder="Observaciones generales del ensayo, en caso de que se requiera…")
 
         st.markdown('<div class="section-title">Laboratorista</div>', unsafe_allow_html=True)
