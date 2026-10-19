@@ -6465,8 +6465,8 @@ def render_muestra_detail():
                         f'{icon("hourglass_empty", size=18)} {html.escape(razon)}</div>' for razon in razones_aashto
                     ) + '</div>', unsafe_allow_html=True)
 
-    with st.container(border=True):
-        st.markdown('<div class="section-title">Observaciones</div>', unsafe_allow_html=True)
+    # Desplegable (cerrado salvo que ya haya una observación escrita): el cuadro ocupaba mucho espacio de la pantalla de la muestra.
+    with st.expander("Observaciones", icon=":material/notes:", expanded=bool((muestra.get("observaciones") or "").strip())):
         st.caption("El laboratorista la digita si la muestra presenta fisuras o no se puede realizar el ensayo "
                    "por alguna razón.")
         if st.session_state.role == "laboratorista":
