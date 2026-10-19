@@ -196,6 +196,11 @@ st.markdown(f"""
        como una pastilla blanca; los otros dos quedan en menta translúcido, sin borde propio (el
        borde verde por defecto de los botones "secondary" se pierde contra el fondo oscuro). */
     .st-key-topbar-nav {{ background: rgba(255,255,255,0.08); border-radius: 14px; padding: 5px; }}
+    /* Botón "← Atrás" pegado arriba mientras se desliza la pantalla: así no hay que volver al principio de la página para regresar. */
+    .st-key-back-sticky {{
+        position: sticky; top: 8px; z-index: 900; width: fit-content;
+    }}
+    .st-key-back-sticky button {{ box-shadow: 0 2px 8px rgba(11,28,48,0.22) !important; }}
     .st-key-topbar-nav .stButton button {{
         border: none !important; background: transparent !important; color: #CFE6D6 !important; border-radius: 10px !important;
     }}
@@ -3531,6 +3536,39 @@ def render_accesos_rapidos(tiles):
                     navigate(pantalla)
 
 
+def _calcular_pendientes():
+    """Ensayos sin terminar de todas las muestras, del más reciente al más antiguo (los usa el Inicio del laboratorista y la vista
+    "Ensayos pendientes" del Jefe y del Director Técnico)."""
+    pendientes = []
+    for key, muestras_perf in st.session_state.muestras.items():
+        codigo_proyecto, perf_codigo = key.split("::", 1)
+        for m in muestras_perf:
+            for ensayo_label in unificar_ensayos([e for e, v in m["ensayos"].items() if v]):
+                tipo_interno = SUPPORTED_ASSAY_MAP.get(ensayo_label)
+                if not tipo_interno:
+                    continue  # sin formulario propio, no hay nada que "Abrir"
+                existing = get_assay(m["id_unico"], tipo_interno)
+                status = existing["status"] if existing else "sin-iniciar"
+                if status == "finalizado":
+                    continue
+                pendientes.append({
+                    "id": existing["id"] if existing else None,
+                    "codigo_interno": codigo_proyecto, "perforacion_codigo": perf_codigo,
+                    "muestra_id": m["id_unico"], "muestra_db_id": m["id"], "muestra_numero": m["numero"],
+                    "tipo": tipo_interno, "status": status,
+                    "lastModified": existing["lastModified"] if existing else m.get("updated_at", ""),
+                })
+    pendientes.sort(key=lambda a: a["lastModified"], reverse=True)
+    return pendientes
+
+
+def _boton_atras():
+    """Botón "← Atrás" que se queda pegado arriba mientras se desliza la pantalla (ver .st-key-back-sticky), para no tener que subir
+    hasta el principio de la página solo para volver."""
+    with st.container(key="back-sticky"):
+        return st.button("← Atrás", key="back_btn_sticky")
+
+
 def render_home():
     es_jefe = st.session_state.role == "jefe"
     es_ingeniero = st.session_state.role == "ingeniero"
@@ -3627,13 +3665,22 @@ def render_home():
     todos_los_ensayos = sorted(st.session_state.assays, key=lambda a: a["lastModified"], reverse=True)
 
     if es_supervisor:
+        # Dos vistas: lo último que se hizo, o lo que falta por hacer (con los mismos filtros del laboratorista).
+        vista = st.radio("Vista", ["Actividad reciente", "Ensayos pendientes"], horizontal=True, key="home_vista_sup",
+                         label_visibility="collapsed")
+    if es_supervisor and vista == "Ensayos pendientes":
+        _render_pendientes_laboratorista(_calcular_pendientes())
+    elif es_supervisor:
         recientes = todos_los_ensayos[:5]
         with st.container(border=True):
-            h1, h2 = st.columns([4, 1])
+            h1, h2, h3 = st.columns([3, 1.6, 1.4], vertical_alignment="center")
             with h1:
                 st.markdown(f'<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">'
                             f'{icon("history", size=15)} Actividad reciente</div>', unsafe_allow_html=True)
             with h2:
+                st.markdown(f'<div style="text-align:right;"><span class="badge badge-muted">Total: {len(todos_los_ensayos)} ensayo(s)</span></div>',
+                            unsafe_allow_html=True)
+            with h3:
                 if st.button("Ver todo →", key="cta_ver_todo_actividad", use_container_width=True):
                     navigate("search")
 
@@ -3674,26 +3721,7 @@ def render_home():
         # que YA tienen una fila creada, es decir que alguien ya abrió al menos una vez), para que
         # un ensayo recién marcado en la bitácora aparezca aquí de inmediato aunque nadie lo haya
         # abierto todavía.
-        pendientes = []
-        for key, muestras_perf in st.session_state.muestras.items():
-            codigo_proyecto, perf_codigo = key.split("::", 1)
-            for m in muestras_perf:
-                for ensayo_label in unificar_ensayos([e for e, v in m["ensayos"].items() if v]):
-                    tipo_interno = SUPPORTED_ASSAY_MAP.get(ensayo_label)
-                    if not tipo_interno:
-                        continue  # sin formulario propio, no hay nada que "Abrir"
-                    existing = get_assay(m["id_unico"], tipo_interno)
-                    status = existing["status"] if existing else "sin-iniciar"
-                    if status == "finalizado":
-                        continue
-                    pendientes.append({
-                        "id": existing["id"] if existing else None,
-                        "codigo_interno": codigo_proyecto, "perforacion_codigo": perf_codigo,
-                        "muestra_id": m["id_unico"], "muestra_db_id": m["id"], "muestra_numero": m["numero"],
-                        "tipo": tipo_interno, "status": status,
-                        "lastModified": existing["lastModified"] if existing else m.get("updated_at", ""),
-                    })
-        pendientes.sort(key=lambda a: a["lastModified"], reverse=True)
+        pendientes = _calcular_pendientes()
         _render_pendientes_laboratorista(pendientes)
 
 
@@ -4151,7 +4179,7 @@ def render_usuarios():
     """Administración de cuentas (solo Jefe de Laboratorio): crear, restablecer clave, dar de baja / reactivar y eliminar. Las operaciones
     de db.admin_* usan la service-role key del servidor y vuelven a comprobar que quien las pide es Jefe."""
     require_role("jefe")
-    if st.button("← Atrás"):
+    if _boton_atras():
         go_back(fallback="home")
     st.markdown("## Usuarios del laboratorio")
     st.caption("Cada persona entra con un código corto (ej. jperez) y su clave. Aquí creas las cuentas, restableces claves olvidadas "
@@ -4311,7 +4339,7 @@ def render_balanzas():
     # El mockup es un tablero de ~1440 px: se reduce el margen lateral de Streamlit solo en esta pantalla.
     st.markdown("<style>[data-testid='stMainBlockContainer']{padding-left:1rem !important;"
                 "padding-right:1rem !important;max-width:none !important;}</style>", unsafe_allow_html=True)
-    if st.button("← Atrás"):
+    if _boton_atras():
         go_back(fallback="home")
 
     # Selecciones pedidas en el run anterior (no se pueden asignar después de crear el selector).
@@ -4574,7 +4602,7 @@ def generar_excel_balanza(check, balanza, control=None):
 
 
 def render_projects_active():
-    if st.button("← Atrás"):
+    if _boton_atras():
         go_back()
     st.markdown("## Proyectos en ejecución")
     st.caption("Monitoreo técnico de sondeos y análisis geotécnico.")
@@ -4645,7 +4673,7 @@ def render_projects_active():
 
 
 def render_projects_done():
-    if st.button("← Atrás"):
+    if _boton_atras():
         go_back()
     st.markdown("## Proyectos ejecutados")
     if st.session_state.role == "laboratorista":
@@ -4740,7 +4768,7 @@ def _leer_bitacora_cliente_xlsx(file_obj):
 
 def render_new_project():
     require_role("jefe")
-    if st.button("← Atrás"):
+    if _boton_atras():
         go_back()
     st.markdown("## Bitácora de proyecto")
 
@@ -5073,7 +5101,7 @@ def render_project_detail():
         navigate("home")
         return
 
-    if st.button("← Atrás"):
+    if _boton_atras():
         go_back()
 
     progreso = project_progress(codigo)
@@ -5318,7 +5346,7 @@ def render_edit_project():
         navigate("home")
         return
 
-    if st.button("← Atrás"):
+    if _boton_atras():
         go_back(fallback="project-detail")
     st.markdown("## Editar proyecto")
     st.markdown(f'<span class="code-badge">{html.escape(codigo)}</span>', unsafe_allow_html=True)
@@ -5530,7 +5558,7 @@ def render_perforacion_detail():
         navigate("home")
         return
 
-    if st.button("← Atrás"):
+    if _boton_atras():
         go_back(fallback="project-detail")
 
     perf = next((p for p in st.session_state.perforaciones.get(codigo, []) if p["codigo"] == perf_codigo), None)
@@ -5666,7 +5694,7 @@ def _sync_muestras_perforacion(perforacion_id, codigo, perf_codigo, nuevas_rows)
 
 def render_bitacora():
     require_role("jefe")
-    if st.button("← Atrás"):
+    if _boton_atras():
         go_back()
     st.markdown("## Orden de ensayos para laboratorio")
 
@@ -6133,7 +6161,7 @@ def render_muestra_detail():
         return
 
     project = get_project(codigo)
-    if st.button("← Atrás"):
+    if _boton_atras():
         go_back(fallback="perforacion-detail")
 
     estado = compute_muestra_estado(muestra)
@@ -12251,7 +12279,7 @@ def render_assay_form(prueba=False):
     # El Jefe y el Director Técnico solo consultan los ensayos — quien digita los datos de laboratorio es el laboratorista.
     read_only = es_supervisor or (st.session_state.role == "laboratorista" and project_status(codigo) == "ejecutado")
 
-    if not prueba and st.button("← Atrás"):
+    if not prueba and _boton_atras():
         go_back(fallback="muestra-detail")
     puede_descargar = es_supervisor or prueba
 
@@ -12876,7 +12904,7 @@ def _pruebas_rellenar(est, tipo):
 
 
 def render_pruebas():
-    if st.button("← Atrás"):
+    if _boton_atras():
         go_back()
     st.markdown("## Modo de prueba")
     st.markdown(
@@ -12945,7 +12973,7 @@ def render_pruebas():
 # CONTINUAR / BUSCAR
 # ════════════════════════════════════════════════════════════════════
 def render_continue():
-    if st.button("← Atrás"):
+    if _boton_atras():
         go_back()
     st.markdown("## Continuar ensayo")
     in_progress = [a for a in st.session_state.assays if a["status"] == "en-proceso"]
@@ -12971,7 +12999,7 @@ SEARCH_PAGE_SIZE = 8
 
 
 def render_search():
-    if st.button("← Atrás"):
+    if _boton_atras():
         go_back()
     st.markdown("## Buscar ensayos")
 
