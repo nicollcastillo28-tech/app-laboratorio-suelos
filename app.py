@@ -196,13 +196,20 @@ st.markdown(f"""
        como una pastilla blanca; los otros dos quedan en menta translúcido, sin borde propio (el
        borde verde por defecto de los botones "secondary" se pierde contra el fondo oscuro). */
     .st-key-topbar-nav {{ background: rgba(255,255,255,0.08); border-radius: 14px; padding: 5px; }}
-    /* Botón "← Atrás" pegado arriba mientras se desliza la pantalla: así no hay que volver al principio de la página para regresar. */
-    /* Se pega el contenedor que envuelve al botón (stLayoutWrapper), no el botón: ese envoltorio mide solo lo que el botón y un sticky
-       solo se mueve dentro de su padre, así que no tendría recorrido. El padre es el bloque con toda la página. */
+    /* Botón "← Atrás" flotante: fijo en la esquina inferior izquierda, siempre al alcance del pulgar, para no tener que subir hasta el
+       principio de la página solo para volver. Se fija el contenedor que lo envuelve (stLayoutWrapper), no el botón. En celular y tableta
+       va por encima de la barra de navegación inferior. */
     div[data-testid="stLayoutWrapper"]:has(> .st-key-back-sticky) {{
-        position: sticky; top: 8px; z-index: 900; width: fit-content;
+        position: fixed; left: 14px; bottom: 18px; z-index: 900; width: fit-content;
     }}
-    .st-key-back-sticky button {{ box-shadow: 0 2px 8px rgba(11,28,48,0.22) !important; }}
+    @media (max-width: 1180px) {{
+        div[data-testid="stLayoutWrapper"]:has(> .st-key-back-sticky) {{ bottom: 84px; }}
+    }}
+    .st-key-back-sticky button {{
+        background: {PRIMARY_CONTAINER} !important; color: #FFFFFF !important; border: none !important; border-radius: 999px !important;
+        padding: 10px 20px !important; box-shadow: 0 3px 12px rgba(11,28,48,0.35) !important;
+    }}
+    .st-key-back-sticky button p {{ color: #FFFFFF !important; font-weight: 700 !important; font-size: 15px !important; }}
     .st-key-topbar-nav .stButton button {{
         border: none !important; background: transparent !important; color: #CFE6D6 !important; border-radius: 10px !important;
     }}
@@ -841,8 +848,33 @@ components.html("""
     new MutationObserver(function() { applyInputMode(); programarCopias(); }).observe(window.parent.document.body, {childList: true, subtree: true});
     window.parent.document.addEventListener('keydown', focusNextOnEnter, true);
     window.parent.addEventListener('popstate', function() {
+        window.parent.__gdPopAt = Date.now();
         window.parent.location.reload();
     });
+
+    // Gesto de "atrás": deslizar el dedo hacia la derecha empezando cerca del borde izquierdo aprieta el botón "← Atrás" de la pantalla
+    // (si la pantalla lo tiene). Si el propio navegador ya hizo su gesto de atrás (popstate), no se repite para no retroceder dos veces.
+    if (!window.parent.__gdSwipeAtras) {
+        window.parent.__gdSwipeAtras = true;
+        var doc = window.parent.document, sx = 0, sy = 0, st = 0, activo = false;
+        doc.addEventListener('touchstart', function(e) {
+            var t = e.touches[0];
+            activo = e.touches.length === 1 && t.clientX <= 90;
+            if (activo) { sx = t.clientX; sy = t.clientY; st = Date.now(); }
+        }, {passive: true});
+        doc.addEventListener('touchend', function(e) {
+            if (!activo) return;
+            activo = false;
+            var t = e.changedTouches[0];
+            if (t.clientX - sx > 100 && Math.abs(t.clientY - sy) < 70 && Date.now() - st < 900) {
+                setTimeout(function() {
+                    if (Date.now() - (window.parent.__gdPopAt || 0) < 1500) return;
+                    var b = doc.querySelector('.st-key-back-sticky button');
+                    if (b) b.click();
+                }, 300);
+            }
+        }, {passive: true});
+    }
 })();
 </script>
 """, height=0)
