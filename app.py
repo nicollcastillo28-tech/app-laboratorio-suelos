@@ -3752,7 +3752,13 @@ def _render_pendientes_laboratorista(pendientes):
         # Filtros. Si lo elegido ya no existe (se terminó el último ensayo de ese proyecto), vuelve a "Todos".
         proyectos = sorted({a["codigo_interno"] for a in pendientes})
         tipos = sorted({ASSAY_LABELS[a["tipo"]] for a in pendientes})
-        for clave, opciones in (("home_f_proy", ["Todos"] + proyectos), ("home_f_tipo", ["Todos"] + tipos)):
+        if st.session_state.get("home_f_proy") not in ["Todos"] + proyectos:
+            st.session_state["home_f_proy"] = "Todos"
+        # Sondeos: los del proyecto elegido (o de todos), con ensayos pendientes.
+        sondeos = sorted({a["perforacion_codigo"] for a in pendientes
+                          if st.session_state["home_f_proy"] in ("Todos", a["codigo_interno"])},
+                         key=lambda c: [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", c)])
+        for clave, opciones in (("home_f_sondeo", ["Todos"] + sondeos), ("home_f_tipo", ["Todos"] + tipos)):
             if st.session_state.get(clave) not in opciones:
                 st.session_state[clave] = "Todos"
 
@@ -3762,11 +3768,13 @@ def _render_pendientes_laboratorista(pendientes):
 
         # El proyecto va solo en su fila, a todo el ancho: con el código y el nombre no cabía en una tableta si compartía fila con los otros dos.
         sel_proy = st.selectbox("Proyecto", ["Todos"] + proyectos, key="home_f_proy", format_func=_nombre_proy)
-        f2, f3 = st.columns(2)
+        f1, f2, f3 = st.columns(3)
+        sel_sondeo = f1.selectbox("Sondeo", ["Todos"] + sondeos, key="home_f_sondeo")
         sel_estado = f2.selectbox("Estado", ["Todos", "Por iniciar", "En ejecución"], key="home_f_estado")
         sel_tipo = f3.selectbox("Ensayo", ["Todos"] + tipos, key="home_f_tipo")
         filtrados = [a for a in pendientes
                      if (sel_proy == "Todos" or a["codigo_interno"] == sel_proy)
+                     and (sel_sondeo == "Todos" or a["perforacion_codigo"] == sel_sondeo)
                      and (sel_estado == "Todos" or (a["status"] == "en-proceso") == (sel_estado == "En ejecución"))
                      and (sel_tipo == "Todos" or ASSAY_LABELS[a["tipo"]] == sel_tipo)]
         st.markdown(f'<div class="activity-footer">Mostrando {len(filtrados)} de {len(pendientes)} ensayo(s)</div>', unsafe_allow_html=True)
