@@ -1233,6 +1233,8 @@ def descripcion_visual_estructurada(muestra, tipo_override=None):
         partes.append(f"CON {_lista_y(con)}")
 
     angulosidades = _angulosidades(muestra) if _es_grueso(tipo) else []
+    if tipo in ("BOLO", "NÚCLEO DE ROCA"):   # nombres masculinos: "BOLO ANGULOSO", no "BOLO ANGULOSA"
+        angulosidades = [a[:-1] + "O" if a.endswith("A") else a for a in angulosidades]
     if angulosidades:
         partes.append(_lista_y(angulosidades))
     forma = (muestra.get("desc_forma") or "").upper() if tipo == "GRAVA" else None
