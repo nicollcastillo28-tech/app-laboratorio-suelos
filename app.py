@@ -6226,8 +6226,12 @@ def render_muestra_detail():
 
     with st.container(border=True):
         st.markdown('<div class="section-title">Descripción visual de la muestra</div>', unsafe_allow_html=True)
-        st.caption("Cómo se ve la muestra a ojo — para comparar con la clasificación USCS calculada de "
-                   "los datos de laboratorio, justo abajo.")
+        # La nota de "comparar con la clasificación USCS de abajo" solo tiene sentido si abajo salen las clasificaciones, es decir, si la muestra tiene
+        # una Granulometría realizada; en las demás la descripción visual es lo único que hay (y lo que va al Excel).
+        _gran_nota = get_assay(muestra_id, "granulometria")
+        if muestra["ensayos"].get("Granulometría") and _gran_nota and not (_gran_nota.get("data") or {}).get("_no_realizado"):
+            st.caption("Cómo se ve la muestra a ojo — para comparar con la clasificación USCS calculada de "
+                       "los datos de laboratorio, justo abajo.")
         descripcion_val = descripcion_visual_para_excel(muestra)
         desc_edit_key = f"desc_editando_{muestra_id}"
         # Con la descripción ya guardada se ve como texto (igual que la ven el Jefe y el Director Técnico), no con
