@@ -8109,12 +8109,44 @@ def generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, obs
 # ════════════════════════════════════════════════════════════════════
 # FORMULARIOS DE ENSAYO (solo captura de datos, sin cálculos)
 # ════════════════════════════════════════════════════════════════════
+# Equipos de los que solo se puede usar uno por ensayo (una balanza, un horno...): al elegir otro de la misma categoría, el anterior se
+# suelta. Los demás (tamices, termómetro, celdas de carga...) se pueden combinar. La categoría es el nombre sin el código GDA-E.
+EQUIPO_CATEGORIAS_UNICAS = ("Balanza", "Horno", "Cazuela Casagrande", "Martillo", "Máquina de corte")
+
+
+def _categoria_equipo(equipo):
+    nombre = split_equipo_codigo(equipo)[0]
+    return next((c for c in EQUIPO_CATEGORIAS_UNICAS if nombre == c), None)
+
+
+def _alternar_equipo(skey, lista, equipo):
+    """Prende o apaga un equipo (se ejecuta al tocar el botón, antes de redibujar). Un segundo disparo del mismo toque (visto en pantallas
+    táctiles) se ignora con la salvaguarda de 400 ms, igual que la navegación."""
+    ahora = time.monotonic()
+    if ahora - st.session_state.get(f"{skey}_ts", 0) > 0.4:
+        elegidos = set(st.session_state[skey])
+        if equipo in elegidos:
+            elegidos.discard(equipo)
+        else:
+            categoria = _categoria_equipo(equipo)
+            if categoria:
+                elegidos = {e for e in elegidos if _categoria_equipo(e) != categoria}
+            elegidos.add(equipo)
+        st.session_state[skey] = [e for e in lista if e in elegidos]
+    st.session_state[f"{skey}_ts"] = ahora
+
+
+# Fragmento: al tocar un equipo solo se redibuja esta lista, no toda la página (antes cada toque recargaba la pantalla entera).
+_fragmento = st.fragment if hasattr(st, "fragment") else (lambda f: f)
+
+
+@_fragmento
 def equipos_selector(skey, lista, actuales):
-    """Selección múltiple de equipos con botones que se prenden y se apagan (en vez de casillas de verificación, que en la
-    tableta no respondían bien al toque). Los botones son el mismo widget que usa el resto de la app en la tableta, y un
-    segundo disparo del mismo toque (visto en pantallas táctiles) se ignora con la misma salvaguarda de 400 ms que la
-    navegación. `skey` debe ser único por ensayo y lista (así no se arrastra la selección de otro ensayo).
-    Devuelve la lista seleccionada, en el orden de `lista`."""
+    """Selección de equipos con botones que se prenden y se apagan (en vez de casillas de verificación, que en la tableta no respondían
+    bien al toque). Solo se puede elegir uno por categoría (una balanza, un horno...; ver EQUIPO_CATEGORIAS_UNICAS). Al tocar un botón solo se
+    redibuja esta lista (fragmento), sin recargar la página. `skey` debe ser único por ensayo y lista (así no se arrastra la selección de otro
+    ensayo). Devuelve la lista seleccionada, en el orden de `lista` (el valor solo llega a quien la llama cuando la página entera se redibuja,
+    p. ej. al guardar; mientras tanto la selección vive en st.session_state[skey])."""
     if skey not in st.session_state:
         st.session_state[skey] = [e for e in lista if e in set(actuales or [])]
     elegidos = set(st.session_state[skey])
@@ -8122,13 +8154,9 @@ def equipos_selector(skey, lista, actuales):
     for i, equipo in enumerate(lista):
         activo = equipo in elegidos
         with cols[i % 2]:
-            if st.button(equipo, key=f"{skey}_{i}", use_container_width=True, type="primary" if activo else "secondary",
-                         icon=":material/check_box:" if activo else ":material/check_box_outline_blank:"):
-                ahora = time.monotonic()
-                if ahora - st.session_state.get(f"{skey}_ts", 0) > 0.4:
-                    st.session_state[skey] = [e for e in lista if (e in elegidos) != (e == equipo)]
-                st.session_state[f"{skey}_ts"] = ahora
-                st.rerun()
+            st.button(equipo, key=f"{skey}_{i}", use_container_width=True, type="primary" if activo else "secondary",
+                      icon=":material/check_box:" if activo else ":material/check_box_outline_blank:",
+                      on_click=_alternar_equipo, args=(skey, lista, equipo))
     return [e for e in lista if e in set(st.session_state[skey])]
 
 
