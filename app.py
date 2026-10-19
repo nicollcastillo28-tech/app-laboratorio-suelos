@@ -2104,9 +2104,9 @@ def fmt_num(v, decimals=3):
 
 
 def fecha_ingreso_perf(perf, project):
-    """Fecha de ingreso (ISO) de las muestras de una perforación: la propia si ya se registró -- un mismo
-    proyecto puede recibir las muestras de cada sondeo/apique en días distintos --, si no la del proyecto."""
-    return (perf or {}).get("fecha_ingreso") or (project or {}).get("fecha_ingreso_muestra") or ""
+    """Fecha de recepción (ISO) de una perforación: solo la que se registró para ELLA ('' si no hay). Ya no hereda la fecha de ingreso del proyecto
+    ni se rellena con la de hoy: sin fecha registrada las muestras todavía no están en el laboratorio."""
+    return (perf or {}).get("fecha_ingreso") or ""
 
 
 def fecha_ingreso_perf_txt(perf, project):
@@ -4963,7 +4963,7 @@ def render_new_project():
                 # Cada perforación puede llegar al laboratorio un día distinto aunque sea del mismo proyecto;
                 # arranca con la fecha de ingreso del proyecto y se cambia aquí si esta llegó otro día.
                 if f"newperf_fecha_{key}" not in st.session_state:
-                    st.session_state[f"newperf_fecha_{key}"] = fecha_ingreso
+                    st.session_state[f"newperf_fecha_{key}"] = None   # vacía: sin fecha registrada = muestras aún no en el laboratorio
                 fechas_ingreso_perf[perf["codigo"]] = st.date_input(
                     "Fecha de recepción (cuándo entró la orden)", format="DD/MM/YYYY",
                     key=f"newperf_fecha_{key}", help="Día en que llegaron al laboratorio las muestras de esta perforación. "
@@ -5296,20 +5296,37 @@ def render_project_detail():
             # Cada perforación puede llegar y entregarse un día distinto: sus tres fechas van aquí, no en el proyecto.
             #   Recepción: cuándo entró la orden (la fija el Jefe).  Ejecución: primer dato digitado en alguna muestra.
             #   Emisión: última descarga de un Excel de resultados de esta perforación.
-            fechas_perf = [
-                ("move_to_inbox", "Recepción", fecha_ingreso_perf_txt(perf, project)),
-                ("science", "Ejecución", _fecha_txt(fecha_ejecucion_perf(codigo, perf["codigo"], muestras))),
-                ("outbox", "Emisión", _fecha_txt(perf.get("fecha_emision"))),
-            ]
-            celdas_fechas = "".join(
-                f'<div style="flex:1 1 90px;min-width:90px;">'
-                f'<div class="cell-muted" style="text-transform:uppercase;letter-spacing:0.04em;font-size:11px;">'
-                f'{icon(ico, size=13)} {lbl}</div>'
-                f'<div style="font-weight:600;font-size:14px;">{val}</div></div>'
-                for ico, lbl, val in fechas_perf)
+            # Lo mismo que lleva a mano el Excel de seguimiento (APIQUE / SONDEO | ORDEN DE ENSAYO | MUESTRAS EN LABORATORIO | FECHA ORDEN DE
+            # ENSAYO | FECHA INICIO ENSAYOS): la orden existe si hay muestras con ensayos marcados; las muestras están en el laboratorio solo si se
+            # registró su fecha de recepción; esa misma fecha es la "fecha orden de ensayo" y la ejecución es la "fecha inicio ensayos".
+            hay_orden = muestras_con_ensayo > 0
+            en_laboratorio = bool(fecha_ingreso_perf(perf, project))
+
+            def _si_no(v):
+                return f'<span style="color:{SUCCESS if v else NEUTRAL};">{"SÍ" if v else "NO"}</span>'
+
+            def _celda_perf(ico, lbl, val, pista=""):
+                pista_html = f'<div class="cell-muted" style="font-size:11px;">{pista}</div>' if pista else ""
+                return (f'<div style="flex:1 1 90px;min-width:90px;">'
+                        f'<div class="cell-muted" style="text-transform:uppercase;letter-spacing:0.04em;font-size:11px;">'
+                        f'{icon(ico, size=13)} {lbl}</div>'
+                        f'<div style="font-weight:700;font-size:15px;">{val}</div>{pista_html}</div>')
+
+            fila_estado = "".join([
+                _celda_perf("assignment", "Orden de ensayo", _si_no(hay_orden)),
+                _celda_perf("biotech", "Muestras en laboratorio", _si_no(en_laboratorio), "SÍ cuando hay fecha de recepción"),
+            ])
+            fila_fechas = "".join([
+                _celda_perf("move_to_inbox", "Recepción", fecha_ingreso_perf_txt(perf, project), "= fecha orden de ensayo"),
+                _celda_perf("science", "Ejecución", _fecha_txt(fecha_ejecucion_perf(codigo, perf["codigo"], muestras)), "= inicio de ensayos"),
+                _celda_perf("outbox", "Emisión", _fecha_txt(perf.get("fecha_emision"))),
+            ])
             st.markdown(
-                f'<div style="display:flex;flex-wrap:wrap;gap:8px 16px;margin:8px 0 6px;padding:10px 12px;border-radius:10px;'
-                f'background:rgba(74,120,98,0.06);border:1px solid rgba(74,120,98,0.16);">{celdas_fechas}</div>',
+                f'<div style="margin:8px 0 6px;padding:10px 12px;border-radius:10px;background:rgba(74,120,98,0.06);'
+                f'border:1px solid rgba(74,120,98,0.16);">'
+                f'<div style="display:flex;flex-wrap:wrap;gap:8px 16px;">{fila_estado}</div>'
+                f'<div style="display:flex;flex-wrap:wrap;gap:8px 16px;margin-top:10px;padding-top:10px;'
+                f'border-top:1px solid rgba(74,120,98,0.16);">{fila_fechas}</div></div>',
                 unsafe_allow_html=True)
             # Avance por ENSAYO (no por muestra completa) — antes solo se veía entrando a la
             # perforación ("Avance del sondeo"); se trae acá para no tener que entrar solo para
@@ -5587,7 +5604,8 @@ def render_perforacion_detail():
             ubicacion_txt = ("" if st.session_state.role == "laboratorista" else
                              f'{icon("location_on", size=13)} {html.escape(project.get("localizacion") or "—")}&nbsp;&nbsp;&nbsp;')
             st.markdown(f'<div class="cell-muted" style="margin-top:10px;">{ubicacion_txt}'
-                        f'{icon("move_to_inbox", size=13)} Recepción {fecha_ingreso_perf_txt(perf, project)}'
+                        f'{icon("biotech", size=13)} Muestras en laboratorio: {"SÍ" if fecha_ingreso_perf(perf, project) else "NO"}'
+                        f'&nbsp;&nbsp;&nbsp;{icon("move_to_inbox", size=13)} Recepción {fecha_ingreso_perf_txt(perf, project)}'
                         f'&nbsp;&nbsp;&nbsp;{icon("science", size=13)} Ejecución {_fecha_txt(fecha_ejecucion_perf(codigo, perf_codigo, muestras))}'
                         f'&nbsp;&nbsp;&nbsp;{icon("outbox", size=13)} Emisión {_fecha_txt((perf or {}).get("fecha_emision"))}</div>',
                         unsafe_allow_html=True)
@@ -5810,18 +5828,22 @@ def render_bitacora():
             # Se guarda sola al cambiarla -- no depende del botón "Guardar bitácora" de abajo.
             fecha_actual_perf = fecha_ingreso_perf(perf, project)
             if es_jefe:
-                try:
-                    fecha_valor = date.fromisoformat(fecha_actual_perf)
-                except ValueError:
-                    fecha_valor = date.today()
-                fecha_nueva = st.date_input(
-                    "Fecha de recepción (cuándo entró la orden)", value=fecha_valor, format="DD/MM/YYYY",
-                    key=f"fecha_ingreso_{perf['id']}", help="Día en que llegaron al laboratorio las muestras de esta perforación.")
-                if fecha_nueva and str(fecha_nueva) != fecha_actual_perf:
+                if f"fecha_ingreso_{perf['id']}" not in st.session_state:
                     try:
-                        db.set_perforacion_fecha_ingreso(perf["id"], str(fecha_nueva))
-                        perf["fecha_ingreso"] = str(fecha_nueva)
-                        st.toast(f"Fecha de ingreso de {perf['codigo']} guardada.", icon=":material/check_circle:")
+                        st.session_state[f"fecha_ingreso_{perf['id']}"] = date.fromisoformat(fecha_actual_perf)
+                    except ValueError:
+                        st.session_state[f"fecha_ingreso_{perf['id']}"] = None   # sin fecha registrada: vacía, no la de hoy
+                fecha_nueva = st.date_input(
+                    "Fecha de recepción (cuándo entró la orden)", format="DD/MM/YYYY",
+                    key=f"fecha_ingreso_{perf['id']}",
+                    help="Día en que llegaron al laboratorio las muestras de esta perforación. Si la dejas vacía, las muestras "
+                         "todavía no están en el laboratorio.")
+                if (str(fecha_nueva) if fecha_nueva else "") != fecha_actual_perf:
+                    try:
+                        db.set_perforacion_fecha_ingreso(perf["id"], str(fecha_nueva) if fecha_nueva else None)
+                        perf["fecha_ingreso"] = str(fecha_nueva) if fecha_nueva else None
+                        st.toast(f"Fecha de recepción de {perf['codigo']} " + ("guardada." if fecha_nueva else "borrada."),
+                                 icon=":material/check_circle:")
                     except Exception:
                         st.error("No se pudo guardar la fecha de ingreso de esta perforación. Falta aplicar la migración "
                                  "0033 (perforaciones.fecha_ingreso) en Supabase.")
