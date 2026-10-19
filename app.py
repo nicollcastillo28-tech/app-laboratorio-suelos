@@ -3736,16 +3736,12 @@ def _render_pendientes_laboratorista(pendientes):
     """Inicio del laboratorista: los ensayos pendientes organizados para no ver 100 filas seguidas. Arriba, filtros (proyecto, estado, tipo de
     ensayo); luego "En ejecución" (lo que ya empezó, para retomarlo) y, debajo, una tarjeta por proyecto que se abre de a una y muestra sus
     perforaciones y muestras con el mismo semáforo de ensayos del resto de la app."""
-    en_ejec_total = sum(1 for a in pendientes if a["status"] == "en-proceso")
     with st.container(border=True):
         h1, h2 = st.columns([3, 2])
         with h1:
             st.markdown(f'<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">'
                         f'{icon("assignment", size=15)} Ensayos pendientes</div>', unsafe_allow_html=True)
-        with h2:
-            st.markdown(f'<div style="text-align:right;"><span class="badge badge-warning">En ejecución: {en_ejec_total}</span> '
-                        f'<span class="badge badge-muted">Por iniciar: {len(pendientes) - en_ejec_total}</span></div>',
-                        unsafe_allow_html=True)
+        contadores = h2.empty()   # se llena abajo, cuando ya se sabe si hay un proyecto elegido
         if not pendientes:
             st.info("No hay ensayos pendientes por ahora.")
             return
@@ -3796,7 +3792,12 @@ def _render_pendientes_laboratorista(pendientes):
                      and (sel_sondeo == "Todos" or a["perforacion_codigo"] == sel_sondeo)
                      and (sel_estado == "Todos" or (a["status"] == "en-proceso") == (sel_estado == "En ejecución"))
                      and (sel_tipo == "Todos" or ASSAY_LABELS[a["tipo"]] == sel_tipo)]
-        st.markdown(f'<div class="activity-footer">Mostrando {len(filtrados)} de {len(pendientes)} ensayo(s)</div>', unsafe_allow_html=True)
+        # Los totales son del proyecto elegido (no de todos los proyectos): con un proyecto filtrado "7 de 106" mezclaba ensayos ajenos.
+        base = [a for a in pendientes if sel_proy == "Todos" or a["codigo_interno"] == sel_proy]
+        en_ejec_base = sum(1 for a in base if a["status"] == "en-proceso")
+        contadores.markdown(f'<div style="text-align:right;"><span class="badge badge-warning">En ejecución: {en_ejec_base}</span> '
+                            f'<span class="badge badge-muted">Por iniciar: {len(base) - en_ejec_base}</span></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="activity-footer">Mostrando {len(filtrados)} de {len(base)} ensayo(s)</div>', unsafe_allow_html=True)
         if not filtrados:
             st.info("Ningún ensayo pendiente con esos filtros.")
             return
