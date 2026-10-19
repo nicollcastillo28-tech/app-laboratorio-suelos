@@ -5454,19 +5454,22 @@ def _render_tabla_muestras_con_semaforo(muestras, codigo, perf_codigo):
     # Los ensayos asignados van apilados uno debajo del otro (ver .assigned-chip-row), así que la
     # columna ya no necesita ancho para 3 chips lado a lado — se le puede devolver espacio a
     # "Tipo"/"Profundidad" sin que sus encabezados se partan en varias líneas.
-    col_ratios = [0.8, 1.3, 1.4, 2.6, 1.0]
+    # Tres columnas (muestra con su tipo y profundidad apilados | ensayos | botón) en vez de cinco: en una tableta las columnas con botones no
+    # se encogen (ver el CSS de .assigned-th) y con cinco el "Abrir" se salía de la pantalla, dejando deslizar toda la página a la derecha.
+    col_ratios = [1.4, 2.6, 1.0]
     headers = st.columns(col_ratios)
-    for col, label in zip(headers, ["ID", "Tipo", "Profundidad", "Ensayos asignados", "Acción"]):
+    for col, label in zip(headers, ["Muestra", "Ensayos asignados", "Acción"]):
         col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
     for i, m in enumerate(muestras):
         if i:
             st.markdown(f'<hr style="margin:8px 0;border-color:{BORDER};">', unsafe_allow_html=True)
         cols = st.columns(col_ratios, vertical_alignment="center")
-        cols[0].markdown(f'<span class="cell-id">M-{html.escape(str(m["numero"]))}</span>', unsafe_allow_html=True)
-        cols[1].markdown(f'<span class="cell-muted">{html.escape(m["tipo_muestra"])}</span>', unsafe_allow_html=True)
-        cols[2].markdown(f'<span class="cell-muted">{fmt_prof(m["profundidad_de"])}–{fmt_prof(m["profundidad_hasta"])} m</span>', unsafe_allow_html=True)
+        cols[0].markdown(f'<span class="cell-id">M-{html.escape(str(m["numero"]))}</span>'
+                         f'<div class="cell-muted">{html.escape(m["tipo_muestra"])}</div>'
+                         f'<div class="cell-muted">{fmt_prof(m["profundidad_de"])}–{fmt_prof(m["profundidad_hasta"])} m</div>',
+                         unsafe_allow_html=True)
         ensayos_sol = unificar_ensayos([e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS])
-        with cols[3]:
+        with cols[1]:
             if not ensayos_sol:
                 st.markdown('<span class="cell-muted">—</span>', unsafe_allow_html=True)
             # Cada ensayo es un chip de color (estado de ESE ensayo) que, al tocarlo, abre directamente el ensayo: así no hace falta entrar
@@ -5497,7 +5500,7 @@ def _render_tabla_muestras_con_semaforo(muestras, codigo, perf_codigo):
                                     st.stop()
                             st.session_state.selected_assay_type = tipo_interno
                             navigate("assay-form")
-        with cols[4]:
+        with cols[2]:
             if st.button("Abrir", key=f"open_muestra_{m['id_unico']}", use_container_width=True):
                 # También proyecto y perforación: desde el desplegable de Detalle de Proyecto la perforación
                 # seleccionada era otra (o ninguna) y el detalle de muestra no encontraba la muestra -> volvía al Inicio.
