@@ -1311,8 +1311,8 @@ def descripcion_visual_calculada(muestra):
     descripcion_visual_estructurada, no en su lugar — la inicial a ojo se conserva tal cual.
     None mientras no haya datos suficientes para calcular la USCS."""
     gran_assay = get_assay(muestra["id_unico"], "granulometria")
-    if not gran_assay:
-        return None
+    if not gran_assay or (gran_assay.get("data") or {}).get("_no_realizado"):
+        return None   # sin Granulometría no hay clasificación: queda solo la descripción visual del laboratorista
     lim_assay = get_assay(muestra["id_unico"], "limites")
     resultado = clasificar_uscs(gran_assay.get("data"), lim_assay.get("data") if lim_assay else None)
     simbolo = resultado.get("simbolo")
@@ -6384,7 +6384,10 @@ def render_muestra_detail():
                     st.session_state[desc_edit_key] = True
                     st.rerun()
 
-    if muestra["ensayos"].get("Granulometría"):
+    # Las clasificaciones USCS y AASHTO salen de la Granulometría: las muestras que no la tienen (no se pidió, todavía no se abrió o se marcó
+    # "no se pudo realizar") muestran solo la descripción visual, que es la que va al Excel.
+    _gran_muestra = get_assay(muestra_id, "granulometria")
+    if muestra["ensayos"].get("Granulometría") and _gran_muestra and not (_gran_muestra.get("data") or {}).get("_no_realizado"):
         with st.container(border=True):
             st.markdown('<div class="section-title">Clasificación USCS</div>', unsafe_allow_html=True)
             st.caption("Calculada en la app con los datos ya digitados de Granulometría y Límites de "
