@@ -3831,17 +3831,17 @@ def _render_pendientes_laboratorista(pendientes):
             n_muestras = len({a["muestra_id"] for a in items})
             esta_abierto = abierto == codigo
             with st.container(border=True, key=f"home_proy_{codigo}"):
-                c1, c2 = st.columns([3.4, 1.4], vertical_alignment="center")
-                # Más grande que el resto de la lista: en la tableta el código y el nombre del proyecto se leían muy pequeños.
-                c1.markdown(f'<div style="padding:12px 0;"><span class="code-badge" style="font-size:20px;padding:6px 14px;">{html.escape(codigo)}</span> '
+                # Más grande que el resto de la lista: en la tableta el código y el nombre del proyecto se leían muy pequeños. Texto y botón
+                # van uno bajo el otro (no en dos columnas): las columnas con botón no se encogen y, con el texto grande, empujaban el botón
+                # fuera de la pantalla (se podía deslizar toda la página a la derecha).
+                st.markdown(f'<div style="padding:8px 0 4px;"><span class="code-badge" style="font-size:20px;padding:6px 14px;">{html.escape(codigo)}</span> '
                             f'<span style="font-weight:700;font-size:23px;line-height:1.5;">{html.escape(p["nombre"] if p else "")}</span>'
                             f'<div class="cell-muted" style="font-size:17px;margin-top:8px;">{len(items)} ensayo(s) pendiente(s) en {n_muestras} muestra(s)'
                             f'{f" · {n_ej} en ejecución" if n_ej else ""}</div></div>', unsafe_allow_html=True)
-                with c2:
-                    if sel_proy == "Todos":
-                        st.button("Ocultar" if esta_abierto else "Ver ensayos", key=f"home_proy_btn_{codigo}", use_container_width=True,
-                                  icon=":material/expand_less:" if esta_abierto else ":material/expand_more:",
-                                  on_click=_alternar_proyecto_abierto, args=(codigo,))
+                if sel_proy == "Todos":
+                    st.button("Ocultar ensayos" if esta_abierto else "Ver ensayos", key=f"home_proy_btn_{codigo}", use_container_width=True,
+                              icon=":material/expand_less:" if esta_abierto else ":material/expand_more:",
+                              on_click=_alternar_proyecto_abierto, args=(codigo,))
                 if esta_abierto:
                     por_perf = {}
                     for a in items:
