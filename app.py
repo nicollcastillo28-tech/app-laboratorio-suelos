@@ -3819,7 +3819,18 @@ def _render_pendientes_laboratorista(pendientes):
 
         # 2) Por proyecto: una tarjeta por proyecto, abierta de a una (con un proyecto filtrado se abre sola).
         # Botón de la tarjeta más alto y con letra grande (tableta).
-        st.markdown('<style>[class*="st-key-home_proy_"] button{min-height:56px;font-size:18px;font-weight:600;}</style>', unsafe_allow_html=True)
+        # Todo lo de la tarjeta (también la tabla de muestras y los chips de ensayo cuando se abre) a un tamaño cómodo para la tableta.
+        st.markdown(
+            '<style>'
+            '[class*="st-key-home_proy_"] button{min-height:52px;}'
+            '[class*="st-key-home_proy_"] button p{font-size:17px !important;font-weight:600 !important;}'
+            '[class*="st-key-home_proy_"] .cell-id{font-size:19px !important;}'
+            '[class*="st-key-home_proy_"] .cell-muted, [class*="st-key-home_proy_"] .cell-sub{font-size:16px !important;}'
+            '[class*="st-key-home_proy_"] .assigned-th{font-size:13px !important;padding:10px 12px !important;}'
+            '[class*="st-key-home_proy_"] .section-title{font-size:16px !important;}'
+            '[class*="st-key-home_proy_"] [class*="st-key-chipens-"] button{padding:9px 14px !important;}'
+            '[class*="st-key-home_proy_"] [class*="st-key-chipens-"] button p{font-size:16px !important;}'
+            '</style>', unsafe_allow_html=True)
         st.markdown(f'<div class="section-title" style="margin-top:18px;">{icon("folder", size=15)} Por proyecto</div>', unsafe_allow_html=True)
         por_proyecto = {}
         for a in filtrados:
