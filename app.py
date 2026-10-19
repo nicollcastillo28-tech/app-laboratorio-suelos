@@ -4704,7 +4704,8 @@ def render_new_project():
     with dc2:
         correo_cliente = st.text_input("Correo electrónico", key="new_correo_cliente", placeholder="correo@cliente.com")
     nombre_contacto = st.text_input("Nombre de contacto", key="new_nombre_contacto", placeholder="Nombre de quien coordina con el cliente")
-    muestra_tomada_por = st.text_input("Muestra tomada por", placeholder="Nombre de quien tomó la muestra")
+    muestra_tomada_por = st.text_input("Muestra tomada por", value="CLIENTE", placeholder="Nombre de quien tomó la muestra")
+    muestra_tomada_por = muestra_tomada_por.strip() or "CLIENTE"   # si se deja vacío, por defecto la tomó el cliente
 
     dc3, dc4 = st.columns(2)
     with dc3:
@@ -5266,7 +5267,8 @@ def render_edit_project():
     with dc2:
         correo_cliente = st.text_input("Correo electrónico", key=f"edit_correo_cliente_{codigo}")
     nombre_contacto = st.text_input("Nombre de contacto", key=f"edit_nombre_contacto_{codigo}")
-    muestra_tomada_por = st.text_input("Muestra tomada por", value=project.get("muestra_tomada_por", ""))
+    muestra_tomada_por = st.text_input("Muestra tomada por", value=project.get("muestra_tomada_por") or "CLIENTE")
+    muestra_tomada_por = muestra_tomada_por.strip() or "CLIENTE"   # si se deja vacío, por defecto la tomó el cliente
 
     if f"edit_fecha_inicio_proyecto_{codigo}" not in st.session_state:
         st.session_state[f"edit_fecha_inicio_proyecto_{codigo}"] = _parse_fecha(project.get("fecha_inicio_proyecto"))
