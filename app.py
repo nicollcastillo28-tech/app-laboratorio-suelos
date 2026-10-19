@@ -197,7 +197,9 @@ st.markdown(f"""
        borde verde por defecto de los botones "secondary" se pierde contra el fondo oscuro). */
     .st-key-topbar-nav {{ background: rgba(255,255,255,0.08); border-radius: 14px; padding: 5px; }}
     /* Botón "← Atrás" pegado arriba mientras se desliza la pantalla: así no hay que volver al principio de la página para regresar. */
-    .st-key-back-sticky {{
+    /* Se pega el contenedor que envuelve al botón (stLayoutWrapper), no el botón: ese envoltorio mide solo lo que el botón y un sticky
+       solo se mueve dentro de su padre, así que no tendría recorrido. El padre es el bloque con toda la página. */
+    div[data-testid="stLayoutWrapper"]:has(> .st-key-back-sticky) {{
         position: sticky; top: 8px; z-index: 900; width: fit-content;
     }}
     .st-key-back-sticky button {{ box-shadow: 0 2px 8px rgba(11,28,48,0.22) !important; }}
