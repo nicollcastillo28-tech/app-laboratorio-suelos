@@ -3754,9 +3754,10 @@ def _render_pendientes_laboratorista(pendientes):
         tipos = sorted({ASSAY_LABELS[a["tipo"]] for a in pendientes})
         if st.session_state.get("home_f_proy") not in ["Todos"] + proyectos:
             st.session_state["home_f_proy"] = "Todos"
-        # Sondeos: los del proyecto elegido (o de todos), con ensayos pendientes.
-        sondeos = sorted({a["perforacion_codigo"] for a in pendientes
-                          if st.session_state["home_f_proy"] in ("Todos", a["codigo_interno"])},
+        # Perforaciones: solo las del proyecto elegido (con ensayos pendientes). Sin proyecto elegido el filtro queda deshabilitado:
+        # "S-1" de un proyecto no es la "S-1" de otro, y juntarlas mezclaba perforaciones distintas.
+        proyecto_elegido = st.session_state["home_f_proy"] != "Todos"
+        sondeos = sorted({a["perforacion_codigo"] for a in pendientes if a["codigo_interno"] == st.session_state["home_f_proy"]},
                          key=lambda c: [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", c)])
         for clave, opciones in (("home_f_sondeo", ["Todos"] + sondeos), ("home_f_tipo", ["Todos"] + tipos)):
             if st.session_state.get(clave) not in opciones:
@@ -3769,7 +3770,8 @@ def _render_pendientes_laboratorista(pendientes):
         # El proyecto va solo en su fila, a todo el ancho: con el código y el nombre no cabía en una tableta si compartía fila con los otros dos.
         sel_proy = st.selectbox("Proyecto", ["Todos"] + proyectos, key="home_f_proy", format_func=_nombre_proy)
         f1, f2, f3 = st.columns(3)
-        sel_sondeo = f1.selectbox("Sondeo", ["Todos"] + sondeos, key="home_f_sondeo")
+        sel_sondeo = f1.selectbox("Perforación", ["Todos"] + sondeos, key="home_f_sondeo", disabled=not proyecto_elegido,
+                                  help=None if proyecto_elegido else "Elige primero un proyecto.")
         sel_estado = f2.selectbox("Estado", ["Todos", "Por iniciar", "En ejecución"], key="home_f_estado")
         sel_tipo = f3.selectbox("Ensayo", ["Todos"] + tipos, key="home_f_tipo")
         filtrados = [a for a in pendientes
@@ -3802,6 +3804,8 @@ def _render_pendientes_laboratorista(pendientes):
                     st.rerun()
 
         # 2) Por proyecto: una tarjeta por proyecto, abierta de a una (con un proyecto filtrado se abre sola).
+        # Botón de la tarjeta más alto y con letra grande (tableta).
+        st.markdown('<style>[class*="st-key-home_proy_"] button{min-height:56px;font-size:18px;font-weight:600;}</style>', unsafe_allow_html=True)
         st.markdown(f'<div class="section-title" style="margin-top:18px;">{icon("folder", size=15)} Por proyecto</div>', unsafe_allow_html=True)
         por_proyecto = {}
         for a in filtrados:
@@ -3815,9 +3819,9 @@ def _render_pendientes_laboratorista(pendientes):
             with st.container(border=True, key=f"home_proy_{codigo}"):
                 c1, c2 = st.columns([3.4, 1.4], vertical_alignment="center")
                 # Más grande que el resto de la lista: en la tableta el código y el nombre del proyecto se leían muy pequeños.
-                c1.markdown(f'<div style="padding:6px 0;"><span class="code-badge" style="font-size:16px;padding:5px 12px;">{html.escape(codigo)}</span> '
-                            f'<span style="font-weight:700;font-size:18px;line-height:1.5;">{html.escape(p["nombre"] if p else "")}</span>'
-                            f'<div class="cell-muted" style="font-size:15px;margin-top:6px;">{len(items)} ensayo(s) pendiente(s) en {n_muestras} muestra(s)'
+                c1.markdown(f'<div style="padding:12px 0;"><span class="code-badge" style="font-size:20px;padding:6px 14px;">{html.escape(codigo)}</span> '
+                            f'<span style="font-weight:700;font-size:23px;line-height:1.5;">{html.escape(p["nombre"] if p else "")}</span>'
+                            f'<div class="cell-muted" style="font-size:17px;margin-top:8px;">{len(items)} ensayo(s) pendiente(s) en {n_muestras} muestra(s)'
                             f'{f" · {n_ej} en ejecución" if n_ej else ""}</div></div>', unsafe_allow_html=True)
                 with c2:
                     if sel_proy == "Todos":
