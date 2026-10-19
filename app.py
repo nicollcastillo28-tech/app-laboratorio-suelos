@@ -3616,6 +3616,40 @@ def _calcular_pendientes():
     return pendientes
 
 
+def _calcular_por_revisar():
+    """Ensayos que el laboratorista ya entregó (finalizados) y que el Jefe todavía no confirma ni devuelve, del más reciente al más antiguo."""
+    out = [a for a in st.session_state.get("assays", []) if a.get("status") == "finalizado" and not a.get("etapa_revision")]
+    return sorted(out, key=lambda a: a.get("lastModified") or "", reverse=True)
+
+
+def _render_por_revisar(por_revisar):
+    """Vista "Por revisar" del Jefe: lo que el laboratorista acaba de enviar. Desde aquí se abre el ensayo y se puede corregir lo que se vea raro."""
+    with st.container(border=True):
+        st.markdown(f'<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">'
+                    f'{icon("fact_check", size=15)} Por revisar — entregados por el laboratorista</div>', unsafe_allow_html=True)
+        if not por_revisar:
+            st.info("No hay ensayos entregados esperando tu revisión.")
+            return
+        st.caption("Ábrelos para revisarlos: si ves algo raro puedes corregirlo ahí mismo; luego confirma o devuelve el ensayo desde la muestra.")
+        for a in por_revisar:
+            proyecto = get_project(a["codigo_interno"])
+            cols = st.columns([3, 1.4], vertical_alignment="center")
+            cols[0].markdown(
+                f'<span class="cell-id">{html.escape(a["codigo_interno"])}-{html.escape(a["perforacion_codigo"])}-M{html.escape(str(a["muestra_numero"]))}</span>'
+                f'<div class="cell-title">{html.escape(proyecto["nombre"] if proyecto else a["codigo_interno"])}</div>'
+                f'<div class="cell-sub">{html.escape(ASSAY_LABELS.get(a["tipo"], a["tipo"]))} · {html.escape(format_dt(a["lastModified"]))}'
+                f'{" · " + html.escape(a["laboratorist"]) if a.get("laboratorist") else ""}</div>', unsafe_allow_html=True)
+            with cols[1]:
+                if st.button("Revisar", key=f"revisar_jefe_{a['id']}", use_container_width=True, icon=":material/rate_review:"):
+                    st.session_state.selected_assay_id = a["id"]
+                    st.session_state.selected_codigo = a["codigo_interno"]
+                    st.session_state.selected_perforacion = a["perforacion_codigo"]
+                    st.session_state.selected_muestra_id = a["muestra_id"]
+                    st.session_state.selected_assay_type = a["tipo"]
+                    navigate("assay-form")
+            st.markdown(f'<hr style="margin:6px 0;border-color:{BORDER};">', unsafe_allow_html=True)
+
+
 def _boton_atras():
     """Botón "← Atrás" que se queda pegado arriba mientras se desliza la pantalla (ver .st-key-back-sticky), para no tener que subir
     hasta el principio de la página solo para volver."""
@@ -3720,10 +3754,18 @@ def render_home():
 
     if es_supervisor:
         # Dos vistas: lo último que se hizo, o lo que falta por hacer (con los mismos filtros del laboratorista).
-        vista = st.radio("Vista", ["Actividad reciente", "Ensayos pendientes"], horizontal=True, key="home_vista_sup",
-                         label_visibility="collapsed")
+        _por_revisar = _calcular_por_revisar() if es_jefe else []
+        _opciones_vista = ["Actividad reciente", "Ensayos pendientes"] + ([f"Por revisar ({len(_por_revisar)})"] if es_jefe else [])
+        if st.session_state.get("home_vista_sup") not in _opciones_vista:   # el contador de "Por revisar" cambia: se conserva la elección
+            if str(st.session_state.get("home_vista_sup", "")).startswith("Por revisar"):
+                st.session_state["home_vista_sup"] = _opciones_vista[-1]
+            else:
+                st.session_state["home_vista_sup"] = _opciones_vista[0]
+        vista = st.radio("Vista", _opciones_vista, horizontal=True, key="home_vista_sup", label_visibility="collapsed")
     if es_supervisor and vista == "Ensayos pendientes":
         _render_pendientes_laboratorista(_calcular_pendientes())
+    elif es_supervisor and vista.startswith("Por revisar"):
+        _render_por_revisar(_por_revisar)
     elif es_supervisor:
         recientes = todos_los_ensayos[:5]
         with st.container(border=True):
@@ -6253,6 +6295,11 @@ def render_muestra_detail():
     if _boton_atras():
         go_back(fallback="perforacion-detail")
 
+    # La descripción visual y las observaciones las digita el laboratorista; el Jefe de Laboratorio también puede corregirlas apenas el laboratorista
+    # entrega (envía a revisión) algún ensayo de la muestra, igual que los datos del ensayo.
+    _hay_entregado = any(a.get("muestra_id") == muestra_id and a.get("status") == "finalizado" for a in st.session_state.get("assays", []))
+    puede_editar_muestra = st.session_state.role == "laboratorista" or (st.session_state.role == "jefe" and _hay_entregado)
+
     estado = compute_muestra_estado(muestra)
     with st.container(border=True, key="muestra-header-card"):
         top = st.columns([3, 1])
@@ -6285,7 +6332,7 @@ def render_muestra_detail():
         # Con la descripción ya guardada se ve como texto (igual que la ven el Jefe y el Director Técnico), no con
         # los menús abiertos para editar -- se ve mucho más ordenado; "Editar descripción" vuelve a abrir los menús.
         editando_desc = st.session_state.get(desc_edit_key, False)
-        if st.session_state.role == "laboratorista" and (editando_desc or not descripcion_val):
+        if puede_editar_muestra and (editando_desc or not descripcion_val):
             if descripcion_val and st.button("Cancelar edición", icon=":material/close:", key=f"desc_cancelar_{muestra_id}"):
                 st.session_state[desc_edit_key] = False
                 st.rerun()
@@ -6430,7 +6477,7 @@ def render_muestra_detail():
                              f'<div><div class="cell-muted" style="margin-bottom:2px;">Según la clasificación USCS calculada</div>'
                              f'<div style="font-weight:600;line-height:1.5;color:{PRIMARY};">{html.escape(descripcion_calc)}</div></div></div>',
                              unsafe_allow_html=True)
-            if st.session_state.role == "laboratorista" and descripcion_val:
+            if puede_editar_muestra and descripcion_val:
                 st.markdown('<div style="height:14px;"></div>', unsafe_allow_html=True)
                 if st.button("Editar descripción", icon=":material/edit:", key=f"desc_editar_{muestra_id}"):
                     st.session_state[desc_edit_key] = True
@@ -6521,7 +6568,7 @@ def render_muestra_detail():
     with st.expander("Observaciones", icon=":material/notes:", expanded=bool((muestra.get("observaciones") or "").strip())):
         st.caption("El laboratorista la digita si la muestra presenta fisuras o no se puede realizar el ensayo "
                    "por alguna razón.")
-        if st.session_state.role == "laboratorista":
+        if puede_editar_muestra:
             with st.container(key="muestra-obs-box"):
                 observacion = st.text_area(
                     "Observaciones", value=muestra.get("observaciones", ""), label_visibility="collapsed",
