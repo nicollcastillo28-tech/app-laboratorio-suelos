@@ -6065,17 +6065,19 @@ def _calcular_curva_granulometrica(gran_data):
 
 
 def _interpolar_diametro(puntos, objetivo):
-    """Diámetro (mm) para un % que pasa dado, interpolando log-lineal sobre la curva granulométrica
-    (igual que se lee a mano sobre el papel semilogarítmico). None si el % pedido queda fuera del
-    rango de tamices digitados."""
-    crecientes = sorted(puntos, key=lambda t: t[0])  # de tamiz más chico a más grande
-    for (d1, p1), (d2, p2) in zip(crecientes, crecientes[1:]):
-        if p1 == p2 == objetivo:
-            return d1
-        if p1 <= objetivo <= p2 and p2 > p1:
-            frac = (objetivo - p1) / (p2 - p1)
-            return 10 ** (math.log10(d1) + frac * (math.log10(d2) - math.log10(d1)))
-    return None
+    """Diámetro (mm) para un % que pasa dado (D10, D30, D60), calculado EXACTAMENTE como la plantilla CLASIFICACION_DE_SUELOS.xlsm (celdas F53:F60 y
+    E54/E57/E60): se toma el tamiz de menor abertura que deja pasar MÁS del % pedido (F53) y el de mayor abertura que deja pasar MENOS (F54), y se
+    interpola en LÍNEA RECTA entre los dos (D = D1 − (ΔD/Δ%)·(%1 − objetivo)), en valor absoluto. Antes se interpolaba en escala logarítmica
+    (como sobre el papel semilogarítmico): da diámetros algo distintos y, cerca de los límites de Cu y Cc, cambiaba la clasificación (GW/GP, SW/SP)
+    respecto a la del Excel. None si falta un tamiz a un lado del % pedido (en la plantilla da #N/A y se muestra '-'); un tamiz que pasa justo
+    el % pedido no cuenta para ningún lado (la plantilla usa > y < estrictos)."""
+    superiores = [(d, pct) for d, pct in puntos if pct > objetivo]
+    inferiores = [(d, pct) for d, pct in puntos if pct < objetivo]
+    if not superiores or not inferiores:
+        return None
+    d_sup, p_sup = min(superiores, key=lambda t: t[0])
+    d_inf, p_inf = max(inferiores, key=lambda t: t[0])
+    return abs(d_sup - ((d_sup - d_inf) / (p_sup - p_inf)) * (p_sup - objetivo))
 
 
 def clasificar_uscs(gran_data, lim_data):
