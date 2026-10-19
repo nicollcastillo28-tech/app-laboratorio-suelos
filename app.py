@@ -3711,18 +3711,19 @@ def _abrir_ensayo_pendiente(a):
     navigate("assay-form")
 
 
-def _fila_pendiente_laboratorista(a, col_ratios):
+def _fila_pendiente_laboratorista(a):
+    """Una fila por ensayo en ejecución, en solo tres columnas (datos apilados | estado | botón): con las seis columnas de antes, en una
+    tableta o pantalla angosta el botón "Abrir" no cabía y toda la página se podía deslizar hacia la derecha."""
     proyecto = get_project(a["codigo_interno"])
-    cols = st.columns(col_ratios, vertical_alignment="center")
+    cols = st.columns([3, 0.8, 1.5], vertical_alignment="center")
     ensayo_id = f'{a["codigo_interno"]}-{a["perforacion_codigo"]}-M{a["muestra_numero"]}'
-    cols[0].markdown(f'<span class="cell-id">{html.escape(ensayo_id)}</span>', unsafe_allow_html=True)
-    cols[1].markdown(f'<div class="cell-title">{html.escape(proyecto["nombre"] if proyecto else a["codigo_interno"])}</div>',
+    cols[0].markdown(f'<span class="cell-id">{html.escape(ensayo_id)}</span>'
+                     f'<div class="cell-title">{html.escape(proyecto["nombre"] if proyecto else a["codigo_interno"])}</div>'
+                     f'<div class="cell-sub">{html.escape(ASSAY_LABELS[a["tipo"]])} · {html.escape(format_dt(a["lastModified"]))}</div>',
                      unsafe_allow_html=True)
-    cols[2].markdown(f'<div class="cell-sub">{html.escape(ASSAY_LABELS[a["tipo"]])}</div>', unsafe_allow_html=True)
-    cols[3].markdown(f'<span class="cell-muted">{html.escape(format_dt(a["lastModified"]))}</span>', unsafe_allow_html=True)
-    with cols[4]:
+    with cols[1]:
         st.markdown(f'<div style="text-align:center;">{status_circle_html(a["status"], size=16)}</div>', unsafe_allow_html=True)
-    with cols[5]:
+    with cols[2]:
         if st.button("Abrir", key=f"open_assigned_{a['muestra_id']}_{a['tipo']}", use_container_width=True):
             _abrir_ensayo_pendiente(a)
 
@@ -3779,7 +3780,7 @@ def _render_pendientes_laboratorista(pendientes):
                                 label_visibility="collapsed")
         # Estado tiene palabras cortas: va más angosto, y Perforación y Ensayo (nombres más largos) más anchos; así los tres
         # desplegables quedan en la misma línea (con la ayuda de Perforación el rótulo se partía y bajaba el desplegable).
-        f1, f2, f3 = st.columns([1.25, 0.9, 1.6])
+        f1, f2, f3 = st.columns([1.1, 0.75, 1.15])
         with f1:
             _rotulo("Perforación")
             sel_sondeo = st.selectbox("Perforación", ["Todos"] + sondeos, key="home_f_sondeo", disabled=not proyecto_elegido,
@@ -3805,15 +3806,12 @@ def _render_pendientes_laboratorista(pendientes):
         if ejecucion:
             st.markdown(f'<div class="section-title" style="margin-top:14px;">{icon("pending", size=15)} Continuar donde ibas ({len(ejecucion)})</div>',
                         unsafe_allow_html=True)
-            col_ratios = [1.2, 2.0, 1.9, 1.5, 1.1, 0.9]
-            for col, label in zip(st.columns(col_ratios), ["ID ensayo", "Proyecto", "Tipo de ensayo", "Última actualización", "Estado", "Acción"]):
-                col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
             ver_todos = st.session_state.get("home_pendientes_todos", False)
             visibles = ejecucion if ver_todos else ejecucion[:HOME_PENDIENTES_LIMITE]
             for i, a in enumerate(visibles):
                 if i:
                     st.markdown(f'<hr style="margin:8px 0;border-color:{BORDER};">', unsafe_allow_html=True)
-                _fila_pendiente_laboratorista(a, col_ratios)
+                _fila_pendiente_laboratorista(a)
             if len(ejecucion) > HOME_PENDIENTES_LIMITE:
                 if st.button("Ver menos" if ver_todos else f"Ver todos ({len(ejecucion)})", key="home_pendientes_toggle"):
                     st.session_state["home_pendientes_todos"] = not ver_todos
