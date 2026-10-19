@@ -1664,6 +1664,9 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
                 "numero_anio": ws["AG8"].value or "",
             }
 
+        # Fecha de la orden (encabezado, fila 8): completa en la primera casilla (E8) o repartida en día (E8), mes (F8) y año (H8).
+        # Es la fecha en que entró la orden: queda como fecha de recepción de las perforaciones de esta hoja.
+        fecha_orden = _fecha_excel_tres_celdas(ws, 8, ("E", "F", "H"))
         celda_tipo = next((celda for t, celda in BITACORA_XLSX_TIPO_CELL.items() if _celda_marcada(ws[celda].value)), None)
         tipo_hoja = next((t for t, celda in BITACORA_XLSX_TIPO_CELL.items() if celda == celda_tipo), None)
         # Muchos clientes no ponen una "X" en la casilla de SONDEO/APIQUE/FUENTE sino que escriben ahí el código
@@ -1747,7 +1750,7 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
                 tipo = "Sondeo"
                 advertencias.append(f"{nombre_archivo} — hoja '{ws.title}' ({codigo}): no se marcó Sondeo/"
                                      "Apique/Fuente-Cantera — se asumió Sondeo, revísalo antes de guardar.")
-            perforaciones.append({"tipo": tipo, "codigo": codigo, "filas": filas_codigo,
+            perforaciones.append({"tipo": tipo, "codigo": codigo, "filas": filas_codigo, "fecha_orden": fecha_orden,
                                   "muestras_en_orden": max(len(numeros_orden.get(codigo, ())), len(filas_codigo))})
 
     return perforaciones, advertencias, encabezado
@@ -4758,6 +4761,8 @@ def render_new_project():
                             perf_nueva = {"tipo": pp["tipo"], "consecutivo": consecutivo, "codigo": pp["codigo"]}
                             perforaciones.append(perf_nueva)
                         perf_nueva["muestras_en_orden"] = max(perf_nueva.get("muestras_en_orden") or 0, pp["muestras_en_orden"])
+                        if pp.get("fecha_orden"):   # la fecha que trae la orden es la de recepción de esta perforación
+                            st.session_state[f"newperf_fecha_{codigo_interno}::{perf_nueva['codigo']}"] = pp["fecha_orden"]
                         muestras_perf =st.session_state.setdefault("draft_muestras", {}).setdefault(perf_nueva["codigo"], [])
                         key_perf = f"{codigo_interno}::{perf_nueva['codigo']}"
                         df_actual = _bitacora_draft_df(key_perf, muestras_perf)
@@ -4801,9 +4806,12 @@ def render_new_project():
             with st.expander(f"**{perf['codigo']}** — {perf['tipo']}  ·  {len(muestras)} muestra(s)", expanded=True):
                 # Cada perforación puede llegar al laboratorio un día distinto aunque sea del mismo proyecto;
                 # arranca con la fecha de ingreso del proyecto y se cambia aquí si esta llegó otro día.
+                if f"newperf_fecha_{key}" not in st.session_state:
+                    st.session_state[f"newperf_fecha_{key}"] = fecha_ingreso
                 fechas_ingreso_perf[perf["codigo"]] = st.date_input(
-                    "Fecha de recepción (cuándo entró la orden)", value=fecha_ingreso, format="DD/MM/YYYY",
-                    key=f"newperf_fecha_{key}", help="Día en que llegaron al laboratorio las muestras de esta perforación.")
+                    "Fecha de recepción (cuándo entró la orden)", format="DD/MM/YYYY",
+                    key=f"newperf_fecha_{key}", help="Día en que llegaron al laboratorio las muestras de esta perforación. "
+                    "Al subir la orden se toma la fecha que trae.")
                 df_source = _bitacora_draft_df(key, muestras)
 
                 column_config = {
@@ -5590,6 +5598,14 @@ def render_bitacora():
                             consecutivo = len([p for p in perforaciones if p["tipo"] == pp["tipo"]]) + 1
                             perf = db.restore_or_create_perforacion(project["id"], pp["tipo"], consecutivo, pp["codigo"])
                             perforaciones.append(perf)
+                        if pp.get("fecha_orden") and str(pp["fecha_orden"]) != perf.get("fecha_ingreso"):
+                            try:   # la fecha que trae la orden es la de recepción de esta perforación
+                                db.set_perforacion_fecha_ingreso(perf["id"], str(pp["fecha_orden"]))
+                                perf["fecha_ingreso"] = str(pp["fecha_orden"])
+                                st.session_state.pop(f"fecha_ingreso_{perf['id']}", None)
+                            except Exception:
+                                advertencias_totales.append("No se pudo guardar la fecha de recepción de la orden: falta aplicar la "
+                                                            "migración 0033 (perforaciones.fecha_ingreso) en Supabase.")
                         total_orden = max(perf.get("muestras_en_orden") or 0, pp["muestras_en_orden"])
                         if total_orden != perf.get("muestras_en_orden"):
                             try:
