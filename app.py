@@ -3760,8 +3760,9 @@ def _render_pendientes_laboratorista(pendientes):
             p = get_project(c)
             return c if c == "Todos" or not p else f'{c} — {p["nombre"]}'
 
-        f1, f2, f3 = st.columns([2, 1.3, 1.5])
-        sel_proy = f1.selectbox("Proyecto", ["Todos"] + proyectos, key="home_f_proy", format_func=_nombre_proy)
+        # El proyecto va solo en su fila, a todo el ancho: con el código y el nombre no cabía en una tableta si compartía fila con los otros dos.
+        sel_proy = st.selectbox("Proyecto", ["Todos"] + proyectos, key="home_f_proy", format_func=_nombre_proy)
+        f2, f3 = st.columns(2)
         sel_estado = f2.selectbox("Estado", ["Todos", "Por iniciar", "En ejecución"], key="home_f_estado")
         sel_tipo = f3.selectbox("Ensayo", ["Todos"] + tipos, key="home_f_tipo")
         filtrados = [a for a in pendientes
