@@ -3694,65 +3694,137 @@ def render_home():
                         "lastModified": existing["lastModified"] if existing else m.get("updated_at", ""),
                     })
         pendientes.sort(key=lambda a: a["lastModified"], reverse=True)
-        with st.container(border=True):
-            h1, h2 = st.columns([4, 1])
-            with h1:
-                st.markdown(f'<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">'
-                            f'{icon("assignment", size=15)} Ensayos pendientes</div>', unsafe_allow_html=True)
-            with h2:
-                st.markdown(f'<div style="text-align:right;"><span class="badge badge-muted">Total: {len(pendientes)}</span></div>',
-                            unsafe_allow_html=True)
+        _render_pendientes_laboratorista(pendientes)
 
-            if not pendientes:
-                st.info("No hay ensayos pendientes por ahora.")
-            else:
-                col_ratios = [1.2, 2.0, 1.9, 1.5, 1.1, 0.9]
-                headers = st.columns(col_ratios)
-                for col, label in zip(headers, ["ID ensayo", "Proyecto", "Tipo de ensayo", "Última actualización", "Estado", "Acción"]):
-                    col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
-                # Solo los más recientes: con muchos proyectos la lista se hacía interminable y obligaba a bajar
-                # y bajar para llegar al resto de la pantalla. "Ver todos" la despliega completa.
-                ver_todos = st.session_state.get("home_pendientes_todos", False)
-                visibles = pendientes if ver_todos else pendientes[:HOME_PENDIENTES_LIMITE]
-                for i, a in enumerate(visibles):
-                    if i:
-                        st.markdown(f'<hr style="margin:8px 0;border-color:{BORDER};">', unsafe_allow_html=True)
-                    proyecto = get_project(a["codigo_interno"])
-                    cols = st.columns(col_ratios, vertical_alignment="center")
-                    ensayo_id = f'{a["codigo_interno"]}-{a["perforacion_codigo"]}-M{a["muestra_numero"]}'
-                    cols[0].markdown(f'<span class="cell-id">{html.escape(ensayo_id)}</span>', unsafe_allow_html=True)
-                    titulo = html.escape(proyecto["nombre"] if proyecto else a["codigo_interno"])
-                    subtitulo = html.escape(proyecto.get("localizacion", "")) if proyecto and st.session_state.role != "laboratorista" else ""
-                    cols[1].markdown(f'<div class="cell-title">{titulo}</div><div class="cell-sub">{subtitulo}</div>',
-                                      unsafe_allow_html=True)
-                    # Texto plano (mismo estilo que "Sondeo / Muestra" en Actividad reciente del
-                    # Jefe, .cell-sub) en vez del chip con borde de antes — se ve más liviano.
-                    cols[2].markdown(f'<div class="cell-sub">{html.escape(ASSAY_LABELS[a["tipo"]])}</div>', unsafe_allow_html=True)
-                    cols[3].markdown(f'<span class="cell-muted">{html.escape(format_dt(a["lastModified"]))}</span>',
-                                      unsafe_allow_html=True)
-                    with cols[4]:
-                        st.markdown(f'<div style="text-align:center;">{status_circle_html(a["status"], size=16)}</div>', unsafe_allow_html=True)
-                    with cols[5]:
-                        if st.button("Abrir", key=f"open_assigned_{a['muestra_id']}_{a['tipo']}", use_container_width=True):
-                            if a["id"]:
-                                st.session_state.selected_assay_id = a["id"]
-                            else:
-                                nuevo = db.create_assay(a["muestra_db_id"], a["tipo"])
-                                st.session_state.selected_assay_id = nuevo["id"]
-                            st.session_state.selected_codigo = a["codigo_interno"]
-                            st.session_state.selected_perforacion = a["perforacion_codigo"]
-                            st.session_state.selected_muestra_id = a["muestra_id"]
-                            st.session_state.selected_assay_type = a["tipo"]
-                            navigate("assay-form")
-                pie1, pie2 = st.columns([3, 1], vertical_alignment="center")
-                pie1.markdown(f'<div class="activity-footer">Mostrando {len(visibles)} de {len(pendientes)} ensayo(s)</div>',
-                              unsafe_allow_html=True)
-                if len(pendientes) > HOME_PENDIENTES_LIMITE:
-                    with pie2:
-                        if st.button("Ver menos" if ver_todos else f"Ver todos ({len(pendientes)})",
-                                     key="home_pendientes_toggle", use_container_width=True):
-                            st.session_state["home_pendientes_todos"] = not ver_todos
-                            st.rerun()
+
+def _abrir_ensayo_pendiente(a):
+    """Abre el formulario de un ensayo pendiente (lo crea si nadie lo había abierto todavía)."""
+    if a["id"]:
+        st.session_state.selected_assay_id = a["id"]
+    else:
+        nuevo = db.create_assay(a["muestra_db_id"], a["tipo"])
+        st.session_state.selected_assay_id = nuevo["id"]
+    st.session_state.selected_codigo = a["codigo_interno"]
+    st.session_state.selected_perforacion = a["perforacion_codigo"]
+    st.session_state.selected_muestra_id = a["muestra_id"]
+    st.session_state.selected_assay_type = a["tipo"]
+    navigate("assay-form")
+
+
+def _fila_pendiente_laboratorista(a, col_ratios):
+    proyecto = get_project(a["codigo_interno"])
+    cols = st.columns(col_ratios, vertical_alignment="center")
+    ensayo_id = f'{a["codigo_interno"]}-{a["perforacion_codigo"]}-M{a["muestra_numero"]}'
+    cols[0].markdown(f'<span class="cell-id">{html.escape(ensayo_id)}</span>', unsafe_allow_html=True)
+    cols[1].markdown(f'<div class="cell-title">{html.escape(proyecto["nombre"] if proyecto else a["codigo_interno"])}</div>',
+                     unsafe_allow_html=True)
+    cols[2].markdown(f'<div class="cell-sub">{html.escape(ASSAY_LABELS[a["tipo"]])}</div>', unsafe_allow_html=True)
+    cols[3].markdown(f'<span class="cell-muted">{html.escape(format_dt(a["lastModified"]))}</span>', unsafe_allow_html=True)
+    with cols[4]:
+        st.markdown(f'<div style="text-align:center;">{status_circle_html(a["status"], size=16)}</div>', unsafe_allow_html=True)
+    with cols[5]:
+        if st.button("Abrir", key=f"open_assigned_{a['muestra_id']}_{a['tipo']}", use_container_width=True):
+            _abrir_ensayo_pendiente(a)
+
+
+def _alternar_proyecto_abierto(codigo):
+    st.session_state["home_proy_abierto"] = None if st.session_state.get("home_proy_abierto") == codigo else codigo
+
+
+def _render_pendientes_laboratorista(pendientes):
+    """Inicio del laboratorista: los ensayos pendientes organizados para no ver 100 filas seguidas. Arriba, filtros (proyecto, estado, tipo de
+    ensayo); luego "En ejecución" (lo que ya empezó, para retomarlo) y, debajo, una tarjeta por proyecto que se abre de a una y muestra sus
+    perforaciones y muestras con el mismo semáforo de ensayos del resto de la app."""
+    en_ejec_total = sum(1 for a in pendientes if a["status"] == "en-proceso")
+    with st.container(border=True):
+        h1, h2 = st.columns([3, 2])
+        with h1:
+            st.markdown(f'<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">'
+                        f'{icon("assignment", size=15)} Ensayos pendientes</div>', unsafe_allow_html=True)
+        with h2:
+            st.markdown(f'<div style="text-align:right;"><span class="badge badge-warning">En ejecución: {en_ejec_total}</span> '
+                        f'<span class="badge badge-muted">Por iniciar: {len(pendientes) - en_ejec_total}</span></div>',
+                        unsafe_allow_html=True)
+        if not pendientes:
+            st.info("No hay ensayos pendientes por ahora.")
+            return
+
+        # Filtros. Si lo elegido ya no existe (se terminó el último ensayo de ese proyecto), vuelve a "Todos".
+        proyectos = sorted({a["codigo_interno"] for a in pendientes})
+        tipos = sorted({ASSAY_LABELS[a["tipo"]] for a in pendientes})
+        for clave, opciones in (("home_f_proy", ["Todos"] + proyectos), ("home_f_tipo", ["Todos"] + tipos)):
+            if st.session_state.get(clave) not in opciones:
+                st.session_state[clave] = "Todos"
+
+        def _nombre_proy(c):
+            p = get_project(c)
+            return c if c == "Todos" or not p else f'{c} — {p["nombre"]}'
+
+        f1, f2, f3 = st.columns([2, 1.3, 1.5])
+        sel_proy = f1.selectbox("Proyecto", ["Todos"] + proyectos, key="home_f_proy", format_func=_nombre_proy)
+        sel_estado = f2.selectbox("Estado", ["Todos", "Por iniciar", "En ejecución"], key="home_f_estado")
+        sel_tipo = f3.selectbox("Ensayo", ["Todos"] + tipos, key="home_f_tipo")
+        filtrados = [a for a in pendientes
+                     if (sel_proy == "Todos" or a["codigo_interno"] == sel_proy)
+                     and (sel_estado == "Todos" or (a["status"] == "en-proceso") == (sel_estado == "En ejecución"))
+                     and (sel_tipo == "Todos" or ASSAY_LABELS[a["tipo"]] == sel_tipo)]
+        st.markdown(f'<div class="activity-footer">Mostrando {len(filtrados)} de {len(pendientes)} ensayo(s)</div>', unsafe_allow_html=True)
+        if not filtrados:
+            st.info("Ningún ensayo pendiente con esos filtros.")
+            return
+
+        # 1) En ejecución: lo que ya empezaste, para retomarlo de un toque.
+        ejecucion = [a for a in filtrados if a["status"] == "en-proceso"]
+        if ejecucion:
+            st.markdown(f'<div class="section-title" style="margin-top:14px;">{icon("pending", size=15)} Continuar donde ibas ({len(ejecucion)})</div>',
+                        unsafe_allow_html=True)
+            col_ratios = [1.2, 2.0, 1.9, 1.5, 1.1, 0.9]
+            for col, label in zip(st.columns(col_ratios), ["ID ensayo", "Proyecto", "Tipo de ensayo", "Última actualización", "Estado", "Acción"]):
+                col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
+            ver_todos = st.session_state.get("home_pendientes_todos", False)
+            visibles = ejecucion if ver_todos else ejecucion[:HOME_PENDIENTES_LIMITE]
+            for i, a in enumerate(visibles):
+                if i:
+                    st.markdown(f'<hr style="margin:8px 0;border-color:{BORDER};">', unsafe_allow_html=True)
+                _fila_pendiente_laboratorista(a, col_ratios)
+            if len(ejecucion) > HOME_PENDIENTES_LIMITE:
+                if st.button("Ver menos" if ver_todos else f"Ver todos ({len(ejecucion)})", key="home_pendientes_toggle"):
+                    st.session_state["home_pendientes_todos"] = not ver_todos
+                    st.rerun()
+
+        # 2) Por proyecto: una tarjeta por proyecto, abierta de a una (con un proyecto filtrado se abre sola).
+        st.markdown(f'<div class="section-title" style="margin-top:18px;">{icon("folder", size=15)} Por proyecto</div>', unsafe_allow_html=True)
+        por_proyecto = {}
+        for a in filtrados:
+            por_proyecto.setdefault(a["codigo_interno"], []).append(a)
+        abierto = sel_proy if sel_proy != "Todos" else st.session_state.get("home_proy_abierto")
+        for codigo, items in por_proyecto.items():   # `pendientes` ya viene del más reciente al más antiguo
+            p = get_project(codigo)
+            n_ej = sum(1 for a in items if a["status"] == "en-proceso")
+            n_muestras = len({a["muestra_id"] for a in items})
+            esta_abierto = abierto == codigo
+            with st.container(border=True, key=f"home_proy_{codigo}"):
+                c1, c2 = st.columns([4, 1.3], vertical_alignment="center")
+                c1.markdown(f'<span class="code-badge">{html.escape(codigo)}</span> '
+                            f'<span style="font-weight:600;">{html.escape(p["nombre"] if p else "")}</span>'
+                            f'<div class="cell-muted">{len(items)} ensayo(s) pendiente(s) en {n_muestras} muestra(s)'
+                            f'{f" · {n_ej} en ejecución" if n_ej else ""}</div>', unsafe_allow_html=True)
+                with c2:
+                    if sel_proy == "Todos":
+                        st.button("Ocultar" if esta_abierto else "Ver ensayos", key=f"home_proy_btn_{codigo}", use_container_width=True,
+                                  icon=":material/expand_less:" if esta_abierto else ":material/expand_more:",
+                                  on_click=_alternar_proyecto_abierto, args=(codigo,))
+                if esta_abierto:
+                    por_perf = {}
+                    for a in items:
+                        por_perf.setdefault(a["perforacion_codigo"], set()).add(a["muestra_id"])
+                    for perf_codigo in sorted(por_perf):
+                        muestras_perf = [m for m in st.session_state.muestras.get(f"{codigo}::{perf_codigo}", [])
+                                         if m["id_unico"] in por_perf[perf_codigo]]
+                        muestras_perf.sort(key=lambda m: clave_numero_muestra(m["numero"]))
+                        st.markdown(f'<div class="section-title" style="margin-top:10px;">{html.escape(perf_codigo)} · '
+                                    f'{len(muestras_perf)} muestra(s) con ensayos pendientes</div>', unsafe_allow_html=True)
+                        _render_tabla_muestras_con_semaforo(muestras_perf, codigo, perf_codigo)
 
 
 def _render_project_list(codes, empty_msg, allow_delete, mark_read_only=False, allow_unarchive=False):
