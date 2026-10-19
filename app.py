@@ -4820,7 +4820,7 @@ def render_new_project():
                 st.caption("Usa el ícono para agregar fila sobre la tabla para sumar una muestra nueva. Para eliminar una, selecciona el cuadro a la izquierda de su fila y usa el ícono de basura que aparece sobre la tabla.")
                 edited = st.data_editor(
                     df_source, num_rows="dynamic", use_container_width=True,
-                    column_config=column_config, key=f"neweditor_{key}",
+                    column_config=column_config, column_order=_orden_columnas_bitacora(df_source), key=f"neweditor_{key}",
                 )
                 edited_frames[key] = edited
 
@@ -5485,6 +5485,15 @@ def _muestras_to_rows(muestras):
     return rows or [_bitacora_row_defaults()]
 
 
+def _orden_columnas_bitacora(df):
+    """Orden de columnas de la tabla de muestras: primero los ensayos que SÍ están marcados en alguna muestra (y las observaciones), y
+    después los que no, para no tener que deslizar la tabla hasta el final buscando un ensayo marcado. Se calcula sobre los datos
+    cargados (no sobre lo que se está editando), así las columnas no se mueven mientras se marcan casillas."""
+    marcados = [e for e in BITACORA_ENSAYOS if e in df.columns and df[e].fillna(False).astype(bool).any()]
+    sin_marcar = [e for e in BITACORA_ENSAYOS if e not in marcados]
+    return ["Número", "Prof. De", "Prof. A", "Tipo de muestra"] + marcados + ["Observaciones"] + sin_marcar
+
+
 def _bitacora_draft_df(key, muestras):
     """Inicializa (o repara) el borrador de bitácora de esta perforación en session_state,
     agregando cualquier columna de BITACORA_BASE_COLS que falte —por ejemplo un ensayo nuevo
@@ -5671,7 +5680,7 @@ def render_bitacora():
                 # "cambiada" y descartaba la edición recién hecha.
                 edited = st.data_editor(
                     df_source, num_rows="dynamic", use_container_width=True,
-                    column_config=column_config, key=f"editor_{key}",
+                    column_config=column_config, column_order=_orden_columnas_bitacora(df_source), key=f"editor_{key}",
                 )
                 edited_frames[key] = edited
                 filas_perf_rows = edited.to_dict("records")
