@@ -11607,9 +11607,7 @@ def render_gravedad_especifica_form(data, assay_id):
 def render_limites_form(data, assay_id):
     with st.container(border=True):
         st.markdown(card_header_html("info", "Información de Ensayo"), unsafe_allow_html=True)
-        metodo_actual = data.get("lim_metodo", METODO_HUMEDAD[0])
-        midx = METODO_HUMEDAD.index(metodo_actual) if metodo_actual in METODO_HUMEDAD else 0
-        data["lim_metodo"] = st.radio("Método de Ensayo", METODO_HUMEDAD, index=midx, horizontal=True, key=f"lim_metodo_{assay_id}")
+        # Primero se pregunta si el suelo tiene límites: si no los tiene (NL) no se hizo el ensayo y el método y los equipos quedan bloqueados.
         st.markdown('<div class="cell-muted" style="font-weight:700;margin-top:6px;">Si el suelo no tiene límites</div>', unsafe_allow_html=True)
         cnl, cnp = st.columns(2)
         with cnl:
@@ -11617,9 +11615,13 @@ def render_limites_form(data, assay_id):
         with cnp:
             data["lim_np"] = conmutador(f"lim_np_{assay_id}", "No plástico (NP) — sin Límite Plástico", data.get("lim_np"))
         if data["lim_nl"]:
-            st.info("Suelo no líquido: se reporta N.L. – N.P. y no hay que digitar ningún dato de Límites.")
+            st.info("Suelo no líquido: se reporta N.L. – N.P. y no hay que digitar ningún dato de Límites; el método y los equipos no aplican.")
         elif data["lim_np"]:
             st.info("Suelo no plástico: solo se digita el Límite Líquido; el Límite Plástico y el IP se reportan N.P.")
+        metodo_actual = data.get("lim_metodo", METODO_HUMEDAD[0])
+        midx = METODO_HUMEDAD.index(metodo_actual) if metodo_actual in METODO_HUMEDAD else 0
+        data["lim_metodo"] = st.radio("Método de Ensayo", METODO_HUMEDAD, index=midx, horizontal=True, key=f"lim_metodo_{assay_id}",
+                                      disabled=bool(data["lim_nl"]))
 
     def _tabla_limite(icono, titulo, filas, n):
         with st.container(border=True):
@@ -11660,7 +11662,14 @@ def render_limites_form(data, assay_id):
         if not data["lim_np"]:
             _tabla_limite("gesture", "Límite Plástico (INV. 126 - 13)", LIMITE_PLASTICO_FILAS, LIMITE_PLASTICO_N)
 
-    render_equipo(data, "lim", EQUIPO_LIMITES)
+    if data["lim_nl"]:
+        # Sin límites no se usó ningún equipo: se muestra bloqueado y se limpia lo que hubiera quedado marcado.
+        data["lim_equipos"] = []
+        with st.container(border=True):
+            st.markdown(card_header_html("construction", "Equipos Utilizados"), unsafe_allow_html=True)
+            st.caption("No aplica: el suelo no tiene límites, así que no se usó ningún equipo.")
+    else:
+        render_equipo(data, "lim", EQUIPO_LIMITES)
 
     with resultados_desplegable("Resultados: Límite Líquido, Límite Plástico y curva"):
         resultados_limites(data)
@@ -11730,23 +11739,28 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             st.markdown(param_table_html(lab_rows, header_left="DATO", header_right="VALOR"), unsafe_allow_html=True)
         equipos, norma = data.get("hum_equipos", []), data.get("hum_norma", "—")
     elif tipo == "limites":
-        with st.container(border=True):
-            st.markdown(card_header_html("water_drop", "Límite Líquido (INV. 125 - 13)"), unsafe_allow_html=True)
-            headers = ["PARÁMETRO"] + [f"ENSAYO {i}" for i in range(1, LIMITE_LIQUIDO_N + 1)]
-            ll_rows = [(label, *[data.get(f"{key}_{i}") for i in range(1, LIMITE_LIQUIDO_N + 1)]) for key, label, _c in LIMITE_LIQUIDO_FILAS]
-            st.markdown(param_table_ncol_html(headers, ll_rows), unsafe_allow_html=True)
-        with st.container(border=True):
-            st.markdown(card_header_html("gesture", "Límite Plástico (INV. 126 - 13)"), unsafe_allow_html=True)
-            headers = ["PARÁMETRO"] + [f"ENSAYO {i}" for i in range(1, LIMITE_PLASTICO_N + 1)]
-            lp_rows = [(label, *[data.get(f"{key}_{i}") for i in range(1, LIMITE_PLASTICO_N + 1)]) for key, label, _c in LIMITE_PLASTICO_FILAS]
-            st.markdown(param_table_ncol_html(headers, lp_rows), unsafe_allow_html=True)
+        sin_limites = bool(data.get("lim_nl"))
+        # Sin datos que mostrar no se dibujan tablas de puros guiones: con NL (sin límites) van directo los resultados; con NP no hay tabla del
+        # Límite Plástico.
+        if not sin_limites:
+            with st.container(border=True):
+                st.markdown(card_header_html("water_drop", "Límite Líquido (INV. 125 - 13)"), unsafe_allow_html=True)
+                headers = ["PARÁMETRO"] + [f"ENSAYO {i}" for i in range(1, LIMITE_LIQUIDO_N + 1)]
+                ll_rows = [(label, *[data.get(f"{key}_{i}") for i in range(1, LIMITE_LIQUIDO_N + 1)]) for key, label, _c in LIMITE_LIQUIDO_FILAS]
+                st.markdown(param_table_ncol_html(headers, ll_rows), unsafe_allow_html=True)
+            if not data.get("lim_np"):
+                with st.container(border=True):
+                    st.markdown(card_header_html("gesture", "Límite Plástico (INV. 126 - 13)"), unsafe_allow_html=True)
+                    headers = ["PARÁMETRO"] + [f"ENSAYO {i}" for i in range(1, LIMITE_PLASTICO_N + 1)]
+                    lp_rows = [(label, *[data.get(f"{key}_{i}") for i in range(1, LIMITE_PLASTICO_N + 1)]) for key, label, _c in LIMITE_PLASTICO_FILAS]
+                    st.markdown(param_table_ncol_html(headers, lp_rows), unsafe_allow_html=True)
         with resultados_desplegable("Resultados: Límite Líquido, Límite Plástico y curva"):
             resultados_limites(data)
         with st.container(border=True):
             st.markdown(card_header_html("info", "Información de Ensayo"), unsafe_allow_html=True)
             cond = "No líquido (N.L. – N.P.)" if data.get("lim_nl") else ("No plástico (N.P.)" if data.get("lim_np") else "Con límites")
-            st.markdown(param_table_html([("Método de Ensayo", data.get("lim_metodo")), ("Condición del suelo", cond)],
-                                         header_left="DATO", header_right="VALOR"), unsafe_allow_html=True)
+            filas_info = [("Condición del suelo", cond)] if sin_limites else [("Método de Ensayo", data.get("lim_metodo")), ("Condición del suelo", cond)]
+            st.markdown(param_table_html(filas_info, header_left="DATO", header_right="VALOR"), unsafe_allow_html=True)
         equipos, norma = data.get("lim_equipos", []), "INV. E-125-13 / INV. E-126-13"
     elif tipo == "masa-unitaria" and data.get("mu_metodo") == "Método B":
         with st.container(border=True):
@@ -12113,6 +12127,8 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             resultados_corte_directo(data)
         equipos, norma = data.get("corte_equipos", []), data.get("corte_norma", "—")
 
+    if tipo == "limites" and data.get("lim_nl"):
+        return   # sin límites no hay norma ni equipos que mostrar
     with st.container(border=True):
         st.markdown(card_header_html("rule", "Norma Aplicada"), unsafe_allow_html=True)
         st.markdown(f'<div style="font-weight:600;">{html.escape(norma or "—")}</div>', unsafe_allow_html=True)
