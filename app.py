@@ -2982,7 +2982,7 @@ def equipos_readonly_html(equipos):
 
 
 def now_iso():
-    return datetime.now().isoformat()
+    return datetime.now(_TZ_COLOMBIA).isoformat()
 
 
 def add_notification(role, mensaje, codigo=None, perf=None, muestra_id=None):
@@ -3181,7 +3181,12 @@ def _tabla_cambios_html(cambios):
 
 
 def historial_timeline_html(historial):
-    items = sorted(historial, key=lambda h: h["fecha"], reverse=True)
+    def _instante(h):
+        try:
+            return _a_hora_colombia(h["fecha"])
+        except (ValueError, TypeError, KeyError):
+            return datetime.min.replace(tzinfo=timezone.utc)
+    items = sorted(historial, key=_instante, reverse=True)
     filas = []
     for i, h in enumerate(items):
         linea = '<div class="timeline-line"></div>' if i < len(items) - 1 else ""
@@ -3202,18 +3207,28 @@ def historial_timeline_html(historial):
             detalle_html = f'<div class="timeline-nota">{html.escape(h["nota"])}</div>'
         else:
             detalle_html = ""
-        en_curso = '<div class="timeline-nota">En curso: se actualiza mientras se corrige y se cierra al reenviar.</div>' if h.get("en_curso") else ""
+        en_curso = '<div class="timeline-nota">En curso: se actualiza mientras se corrige y se cierra al reenviar, confirmar o devolver el ensayo.</div>' if h.get("en_curso") else ""
         filas.append(
             f'<div class="timeline-item">{marcador}'
             f'<div class="timeline-content"><div class="timeline-titulo">{html.escape(titulo)}</div>'
-            f'{actor_html}<div class="timeline-fecha">{format_dt(h["fecha"])}</div>{detalle_html}{en_curso}</div></div>'
+            f'{actor_html}<div class="timeline-fecha">{format_dt(h["fecha"])} · hora de Colombia</div>{detalle_html}{en_curso}</div></div>'
         )
     return "".join(filas)
 
 
+def _a_hora_colombia(iso_str):
+    """datetime en hora de Colombia de un ISO con o sin zona. Los timestamps de Supabase vienen en UTC y las entradas viejas del historial se
+    guardaron sin zona con la hora del servidor (UTC en la nube): lo que no trae zona se toma como UTC."""
+    f = datetime.fromisoformat(str(iso_str).replace("Z", "+00:00"))
+    if f.tzinfo is None:
+        f = f.replace(tzinfo=timezone.utc)
+    return f.astimezone(_TZ_COLOMBIA)
+
+
 def format_dt(iso_str):
+    """'DD/MM/AAAA HH:MM' en HORA DE COLOMBIA."""
     try:
-        return datetime.fromisoformat(iso_str).strftime("%d/%m/%Y %H:%M")
+        return _a_hora_colombia(iso_str).strftime("%d/%m/%Y %H:%M")
     except (ValueError, TypeError):
         return "—"
 
@@ -3400,10 +3415,10 @@ ACTIVE_MAP = {
 def _tiempo_relativo(iso_str):
     """'ahora', 'hace 12 min', 'hace 1 h', 'ayer' o la fecha -- como se ve en las notificaciones."""
     try:
-        f = datetime.fromisoformat(iso_str)
+        f = _a_hora_colombia(iso_str)
     except (ValueError, TypeError):
         return ""
-    ahora = datetime.now(f.tzinfo) if f.tzinfo else datetime.now()
+    ahora = datetime.now(_TZ_COLOMBIA)
     seg = (ahora - f).total_seconds()
     if seg < 60:
         return "ahora"
@@ -6298,7 +6313,10 @@ def render_muestra_detail():
     # La descripción visual y las observaciones las digita el laboratorista; el Jefe de Laboratorio también puede corregirlas apenas el laboratorista
     # entrega (envía a revisión) algún ensayo de la muestra, igual que los datos del ensayo.
     _hay_entregado = any(a.get("muestra_id") == muestra_id and a.get("status") == "finalizado" for a in st.session_state.get("assays", []))
-    puede_editar_muestra = st.session_state.role == "laboratorista" or (st.session_state.role == "jefe" and _hay_entregado)
+    _hay_en_revision_dt = any(a.get("muestra_id") == muestra_id and a.get("status") == "finalizado" and a.get("etapa_revision") == "pendiente_ing"
+                              for a in st.session_state.get("assays", []))
+    puede_editar_muestra = (st.session_state.role == "laboratorista" or (st.session_state.role == "jefe" and _hay_entregado)
+                            or (st.session_state.role == "ingeniero" and _hay_en_revision_dt))
 
     estado = compute_muestra_estado(muestra)
     with st.container(border=True, key="muestra-header-card"):
@@ -6669,8 +6687,9 @@ def render_muestra_detail():
 
                     with cols[3]:
                         # Para el Jefe, un ensayo ya entregado y sin la aprobación final se abre para revisarlo y, si hace falta, corregir sus datos.
-                        _etiqueta_abrir = ("Revisar" if (st.session_state.role == "jefe" and existing and status == "finalizado"
-                                                         and etapa != "aprobado") else "Abrir")
+                        _etiqueta_abrir = ("Revisar" if (existing and status == "finalizado" and (
+                            (st.session_state.role == "jefe" and etapa != "aprobado")
+                            or (st.session_state.role == "ingeniero" and etapa == "pendiente_ing"))) else "Abrir")
                         if st.button(_etiqueta_abrir, key=f"open_ensayo_{ensayo_label}", use_container_width=True, disabled=bloqueo_lab):
                             if existing:
                                 st.session_state.selected_assay_id = existing["id"]
@@ -6700,8 +6719,8 @@ def render_muestra_detail():
                                                                       f"{muestra['numero']} de {codigo}: {motivo_desconf}", codigo, perf_codigo, muestra_id)
                                         add_notification("jefe", f"El Director Técnico desconfirmó {ensayo_label} de la Muestra "
                                                                   f"{muestra['numero']} de {codigo}: {motivo_desconf}", codigo, perf_codigo, muestra_id)
-                                        add_historial(existing, "Desconfirmado por el Director Técnico", f"Director Técnico: {motivo_desconf}",
-                                                      icono="undo", tono="danger")
+                                        registrar_envio_ensayo(existing, existing.get("data") or {}, existing.get("observations", ""),
+                                                               "Desconfirmado por el Director Técnico", f"Director Técnico: {motivo_desconf}", "undo", "danger")
                                         st.success("Desconfirmado — vuelve al laboratorista.")
                                         st.rerun()
                                     else:
@@ -6717,8 +6736,8 @@ def render_muestra_detail():
                                     db.ing_aprobar(existing["id"], st.session_state.profile)
                                     add_notification("jefe", f"El Director Técnico aprobó {ensayo_label} de la Muestra "
                                                               f"{muestra['numero']} de {codigo}.", codigo, perf_codigo, muestra_id)
-                                    add_historial(existing, "Aprobación Final del Director Técnico", "Director Técnico",
-                                                  icono="verified", tono="success")
+                                    registrar_envio_ensayo(existing, existing.get("data") or {}, existing.get("observations", ""),
+                                                           "Aprobación Final del Director Técnico", "Director Técnico", "verified", "success")
                                     st.success("Aprobado.")
                                     st.rerun()
                             with b2:
@@ -6730,8 +6749,8 @@ def render_muestra_detail():
                                             db.ing_devolver(existing["id"], st.session_state.profile, motivo_ing)
                                             add_notification("jefe", f"El Director Técnico devolvió {ensayo_label} de la Muestra "
                                                                       f"{muestra['numero']} de {codigo}: {motivo_ing}", codigo, perf_codigo, muestra_id)
-                                            add_historial(existing, "Devuelto al Jefe de Laboratorio", f"Director Técnico: {motivo_ing}",
-                                                          icono="undo", tono="danger")
+                                            registrar_envio_ensayo(existing, existing.get("data") or {}, existing.get("observations", ""),
+                                                                   "Devuelto al Jefe de Laboratorio", f"Director Técnico: {motivo_ing}", "undo", "danger")
                                             st.success("Devuelto al Jefe.")
                                             st.rerun()
                                         else:
@@ -6748,8 +6767,8 @@ def render_muestra_detail():
                                         add_notification("ingeniero", f"El Jefe de Laboratorio desconfirmó {ensayo_label} de la Muestra "
                                                                        f"{muestra['numero']} de {codigo} — ya no está pendiente de tu revisión.",
                                                           codigo, perf_codigo, muestra_id)
-                                        add_historial(existing, "Desconfirmado por el Jefe de Laboratorio", f"Jefe de Laboratorio: {motivo_jefe_desconf}",
-                                                      icono="undo", tono="danger")
+                                        registrar_envio_ensayo(existing, existing.get("data") or {}, existing.get("observations", ""),
+                                                               "Desconfirmado por el Jefe de Laboratorio", f"Jefe de Laboratorio: {motivo_jefe_desconf}", "undo", "danger")
                                         st.success("Desconfirmado.")
                                         st.rerun()
                                     else:
@@ -6766,8 +6785,8 @@ def render_muestra_detail():
                                     add_notification("ingeniero", f"El Jefe de Laboratorio envió {ensayo_label} de la Muestra "
                                                                    f"{muestra['numero']} de {codigo} para tu confirmación final.",
                                                       codigo, perf_codigo, muestra_id)
-                                    add_historial(existing, "Ensayo Confirmado", "Jefe de Laboratorio",
-                                                  icono="check_circle", tono="success")
+                                    registrar_envio_ensayo(existing, existing.get("data") or {}, existing.get("observations", ""),
+                                                           "Ensayo Confirmado", "Jefe de Laboratorio", "check_circle", "success")
                                     st.success("Enviado al Director Técnico.")
                                     st.rerun()
                             with b2:
@@ -6779,8 +6798,8 @@ def render_muestra_detail():
                                             db.jefe_devolver(existing["id"], st.session_state.profile, motivo_jefe)
                                             add_notification("laboratorista", f"El Jefe de Laboratorio devolvió {ensayo_label} de la Muestra "
                                                                           f"{muestra['numero']} de {codigo}: {motivo_jefe}", codigo, perf_codigo, muestra_id)
-                                            add_historial(existing, "Devuelto al Laboratorista", f"Jefe de Laboratorio: {motivo_jefe}",
-                                                          icono="undo", tono="danger")
+                                            registrar_envio_ensayo(existing, existing.get("data") or {}, existing.get("observations", ""),
+                                                                   "Devuelto al Laboratorista", f"Jefe de Laboratorio: {motivo_jefe}", "undo", "danger")
                                             st.success("Devuelto al laboratorista.")
                                             st.rerun()
                                         else:
@@ -12520,8 +12539,12 @@ def render_assay_form(prueba=False):
     #  - El Director Técnico solo consulta (y confirma o devuelve desde la muestra).
     entregado = assay["status"] == "finalizado" and not prueba
     jefe_edita = es_jefe and entregado and assay.get("etapa_revision") != "aprobado"
+    #  - El Director Técnico, cuando el Jefe ya confirmó y le envió el ensayo (etapa pendiente_ing): si ve algo raro lo corrige él mismo antes de
+    #    dar la aprobación final; queda en el historial.
+    ing_edita = st.session_state.role == "ingeniero" and entregado and assay.get("etapa_revision") == "pendiente_ing"
+    supervisor_edita = jefe_edita or ing_edita
     lab_entregado = st.session_state.role == "laboratorista" and entregado
-    read_only = ((es_supervisor and not jefe_edita) or lab_entregado
+    read_only = ((es_supervisor and not supervisor_edita) or lab_entregado
                  or (st.session_state.role == "laboratorista" and project_status(codigo) == "ejecutado"))
 
     if not prueba and _boton_atras():
@@ -12529,7 +12552,7 @@ def render_assay_form(prueba=False):
     puede_descargar = es_supervisor or prueba
 
     st.markdown(f"## {ASSAY_LABELS[assay['tipo']]}")
-    st.caption("Resultados de Ensayo" if read_only else ("Revisión del Jefe de Laboratorio" if jefe_edita else "Registro de Ensayo"))
+    st.caption("Resultados de Ensayo" if read_only else ("Revisión del Jefe de Laboratorio" if jefe_edita else ("Revisión del Director Técnico" if ing_edita else "Registro de Ensayo")))
     st.markdown(f'<div style="margin-bottom:10px;">{status_badge_html(assay_estado_display(assay))}&nbsp;&nbsp;'
                 f'<span class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(assay["lastModified"])}'
                 + (f' · {html.escape(assay["laboratorist"])}' if assay.get("laboratorist") else "") + '</span></div>',
@@ -12618,6 +12641,9 @@ def render_assay_form(prueba=False):
     if jefe_edita:
         st.info("Estás revisando este ensayo como Jefe de Laboratorio: si ves algo raro puedes corregirlo aquí. Los cambios se guardan solos y "
                 "quedan registrados en el historial.")
+    if ing_edita:
+        st.info("Estás revisando este ensayo como Director Técnico: el Jefe de Laboratorio ya lo confirmó. Si ves algo raro puedes corregirlo aquí; los "
+                "cambios se guardan solos y quedan registrados en el historial. Luego confírmalo o devuélvelo desde la muestra.")
     if read_only:
         if lab_entregado:
             st.info("Ya entregaste este ensayo: queda en revisión del Jefe de Laboratorio y no lo puedes editar. Si hay que corregir algo, "
@@ -12719,10 +12745,12 @@ def render_assay_form(prueba=False):
         # (no debería pasar acá, esta rama solo la ve un laboratorista con sesión activa), se
         # cae al valor que ya tuviera guardado el ensayo en vez de dejarlo en blanco.
         laboratorist = (st.session_state.profile or {}).get("full_name") or assay.get("laboratorist", "")
-        if jefe_edita:
-            # El nombre del laboratorista no se pisa con el del Jefe: él solo corrige, quien hizo el ensayo sigue siendo el laboratorista.
+        if supervisor_edita:
+            # El nombre del laboratorista no se pisa con el de quien corrige: él solo corrige, quien hizo el ensayo sigue siendo el laboratorista.
             laboratorist = assay.get("laboratorist", "")
-        actor_edicion = ((f"{(st.session_state.profile or {}).get('full_name') or 'Jefe de Laboratorio'} (Jefe de Laboratorio)") if jefe_edita
+        _nombre_sup = (st.session_state.profile or {}).get("full_name")
+        actor_edicion = (f"{_nombre_sup or 'Jefe de Laboratorio'} (Jefe de Laboratorio)" if jefe_edita
+                         else f"{_nombre_sup or 'Director Técnico'} (Director Técnico)" if ing_edita
                          else (f"{laboratorist} (Laboratorista)" if laboratorist else "Laboratorista"))
         st.markdown(f'<div style="font-weight:600;">{html.escape(laboratorist or "—")}</div>', unsafe_allow_html=True)
 
@@ -12761,7 +12789,7 @@ def render_assay_form(prueba=False):
                     unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
-        if jefe_edita:
+        if supervisor_edita:
             if st.button("Guardar cambios", type="primary", use_container_width=True, icon=":material/save:"):
                 try:
                     with st.spinner("Guardando…"):
@@ -12773,9 +12801,9 @@ def render_assay_form(prueba=False):
                     st.toast("Cambios guardados.", icon=":material/check_circle:")
                 except Exception:
                     st.error("No se pudo guardar (revisa tu conexión) — vuelve a intentarlo.")
-        col1, col2 = st.columns(2) if not jefe_edita else (st.container(), st.container())
+        col1, col2 = st.columns(2) if not supervisor_edita else (st.container(), st.container())
         with col1:
-            if not jefe_edita and st.button("Guardar borrador", use_container_width=True, icon=":material/save:"):
+            if not supervisor_edita and st.button("Guardar borrador", use_container_width=True, icon=":material/save:"):
                 try:
                     with st.spinner("Guardando…"):
                         db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status="en-proceso")
@@ -12786,7 +12814,7 @@ def render_assay_form(prueba=False):
                 except Exception:
                     st.error("No se pudo guardar (revisa tu conexión) — vuelve a intentarlo.")
         with col2:
-            if not jefe_edita and st.button("Enviar a revisión", type="primary", use_container_width=True, icon=":material/send:"):
+            if not supervisor_edita and st.button("Enviar a revisión", type="primary", use_container_width=True, icon=":material/send:"):
                 faltantes = campos_faltantes(assay["tipo"], data)
                 if faltantes:
                     st.session_state[intento_incompleto_key] = True
@@ -12821,8 +12849,8 @@ def render_assay_form(prueba=False):
         # igual de visible y trazable que un ensayo terminado normal -- ver assay_estado_display,
         # que es lo único que distingue este caso en pantalla.
         no_realizado_key = f"_nr_intento_{assay_id}"
-        if jefe_edita:
-            pass   # "No se pudo realizar" lo marca el laboratorista; el Jefe solo corrige datos
+        if supervisor_edita:
+            pass   # "No se pudo realizar" lo marca el laboratorista; quien revisa solo corrige datos
         elif st.session_state.get(no_realizado_key):
             motivo_valor = st.text_area(
                 "Motivo por el que no se pudo realizar el ensayo", key=f"_nr_motivo_{assay_id}",

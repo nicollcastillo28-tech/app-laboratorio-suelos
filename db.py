@@ -334,6 +334,13 @@ def update_assay_shared_data(muestra_id: str, tipos: list[str], data: dict) -> N
     get_client().table("assays").update({"data": data}).eq("muestra_id", muestra_id).in_("tipo", tipos).execute()
 
 
+def _ahora_colombia() -> str:
+    """Fecha y hora actual en hora de Colombia (UTC-5, sin horario de verano), con zona, en ISO. El servidor corre en UTC: con
+    datetime.now() a secas las horas del historial salían 5 horas adelantadas."""
+    from datetime import datetime, timedelta, timezone
+    return datetime.now(timezone(timedelta(hours=-5))).isoformat()
+
+
 def add_historial(assay_id: str, titulo: str, subtitulo: str = "", icono: str = "history", tono: str = "neutral",
                   cambios: list | None = None, snapshot: dict | None = None, nota: str | None = None):
     """Agrega una entrada al historial del ensayo (jsonb, sin migración: las claves nuevas son opcionales).
@@ -349,7 +356,7 @@ def add_historial(assay_id: str, titulo: str, subtitulo: str = "", icono: str = 
     previo = list(assay["historial"] or [])
     if snapshot is not None:
         previo = [{k: v for k, v in h.items() if k != "snapshot"} for h in previo if not h.get("en_curso")]
-    entry = {"titulo": titulo, "subtitulo": subtitulo, "icono": icono, "tono": tono, "fecha": datetime.now().isoformat()}
+    entry = {"titulo": titulo, "subtitulo": subtitulo, "icono": icono, "tono": tono, "fecha": _ahora_colombia()}
     if cambios is not None:
         entry["cambios"] = cambios
     if snapshot is not None:
@@ -373,7 +380,7 @@ def set_edicion_en_curso(assay_id: str, cambios: list, actor: str = ""):
         return   # nada que escribir: sin cambios y sin entrada viva, o el diff sigue igual
     if cambios:
         resto.append({"titulo": "Modificado después del envío", "subtitulo": actor, "icono": "edit_note", "tono": "warning",
-                      "fecha": datetime.now().isoformat(), "cambios": cambios, "en_curso": True})
+                      "fecha": _ahora_colombia(), "cambios": cambios, "en_curso": True})
     client.table("assays").update({"historial": resto}).eq("id", assay_id).execute()
 
 
@@ -396,7 +403,7 @@ def jefe_confirmar(assay_id: str, profile: dict):
     get_client().table("assays").update({
         "etapa_revision": "pendiente_ing",
         "confirmado_por_jefe_id": profile["id"],
-        "confirmado_por_jefe_fecha": datetime.now().isoformat(),
+        "confirmado_por_jefe_fecha": _ahora_colombia(),
         "motivo_rechazo": None, "rechazado_por": None,
     }).eq("id", assay_id).execute()
 
@@ -428,7 +435,7 @@ def ing_aprobar(assay_id: str, profile: dict):
     get_client().table("assays").update({
         "etapa_revision": "aprobado",
         "aprobado_por_ing_id": profile["id"],
-        "aprobado_por_ing_fecha": datetime.now().isoformat(),
+        "aprobado_por_ing_fecha": _ahora_colombia(),
         "motivo_rechazo": None, "rechazado_por": None,
     }).eq("id", assay_id).execute()
 
