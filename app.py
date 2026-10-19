@@ -6668,7 +6668,10 @@ def render_muestra_detail():
                             st.markdown(status_badge_html(status), unsafe_allow_html=True)
 
                     with cols[3]:
-                        if st.button("Abrir", key=f"open_ensayo_{ensayo_label}", use_container_width=True, disabled=bloqueo_lab):
+                        # Para el Jefe, un ensayo ya entregado y sin la aprobación final se abre para revisarlo y, si hace falta, corregir sus datos.
+                        _etiqueta_abrir = ("Revisar" if (st.session_state.role == "jefe" and existing and status == "finalizado"
+                                                         and etapa != "aprobado") else "Abrir")
+                        if st.button(_etiqueta_abrir, key=f"open_ensayo_{ensayo_label}", use_container_width=True, disabled=bloqueo_lab):
                             if existing:
                                 st.session_state.selected_assay_id = existing["id"]
                             else:
