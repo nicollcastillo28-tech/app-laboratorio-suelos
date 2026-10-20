@@ -5209,6 +5209,96 @@ def render_new_project():
 # ════════════════════════════════════════════════════════════════════
 # DETALLE DE PROYECTO → PERFORACIONES + PROGRESO
 # ════════════════════════════════════════════════════════════════════
+def _datos_informe_proyecto(codigo):
+    """Arma el diccionario que consume informe_proyecto.generar_informe_pdf: aspectos generales del proyecto, ensayos solicitados según la orden
+    (casillas marcadas en la bitácora) frente a los realizados, el motivo de los que no se hicieron o siguen pendientes, el progreso frente a las
+    fechas, y el avance por perforación y por tipo de ensayo."""
+    project = get_project(codigo) or {}
+    claves = {"finalizado": "finalizados", "no-realizado": "no_realizados", "en-proceso": "en_curso", "sin-iniciar": "por_iniciar",
+              "sin-formulario": "sin_formulario"}
+
+    def _f(iso):
+        try:
+            return date.fromisoformat(str(iso)[:10])
+        except (TypeError, ValueError):
+            return None
+
+    def _revision(a):
+        if not a or a.get("status") != "finalizado":
+            return "—"
+        return {"aprobado": "Aprobado por el Director Técnico",
+                "pendiente_ing": "Confirmado por el Jefe; pendiente del Director Técnico"}.get(a.get("etapa_revision"), "Entregado; pendiente del Jefe")
+
+    perforaciones, por_tipo, detalle, no_hechos, observaciones = [], {}, [], [], []
+    tot = {"perforaciones": 0, "muestras_orden": 0, "muestras_ensayo": 0, "solicitados": 0, "finalizados": 0, "no_realizados": 0, "en_curso": 0,
+           "por_iniciar": 0, "sin_formulario": 0, "confirmados_jefe": 0, "aprobados_dt": 0}
+    for perf in st.session_state.perforaciones.get(codigo, []):
+        muestras = sorted(st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", []), key=lambda m: clave_numero_muestra(m["numero"]))
+        pf = {"codigo": perf["codigo"], "tipo": perf["tipo"], "muestras_orden": max(perf.get("muestras_en_orden") or 0, len(muestras)),
+              "muestras_ensayo": 0, "solicitados": 0, "finalizados": 0, "no_realizados": 0, "en_curso": 0, "por_iniciar": 0, "sin_formulario": 0,
+              "recepcion": fecha_ingreso_perf_txt(perf, project), "ejecucion": _fecha_txt(fecha_ejecucion_perf(codigo, perf["codigo"], muestras)),
+              "emision": _fecha_txt(perf.get("fecha_emision"))}
+        for m in muestras:
+            labels = unificar_ensayos([e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS])
+            if labels:
+                pf["muestras_ensayo"] += 1
+            if (m.get("observaciones") or "").strip():
+                observaciones.append({"perforacion": perf["codigo"], "muestra": f"M-{m['numero']}", "texto": m["observaciones"].strip()})
+            for label in labels:
+                tipo = SUPPORTED_ASSAY_MAP.get(label)
+                a = get_assay(m["id_unico"], tipo) if tipo else None
+                estado = "sin-formulario" if not tipo else ("sin-iniciar" if not a else assay_estado_display(a))
+                data = (a or {}).get("data") or {}
+                devuelto = (f" Devuelto por {'el Jefe de Laboratorio' if a.get('rechazado_por') == 'jefe' else 'el Director Técnico'}: {a['motivo_rechazo']}"
+                            if a and a.get("motivo_rechazo") else "")
+                motivo = None
+                if estado == "no-realizado":
+                    motivo = data.get("_motivo_no_realizado") or "Sin motivo registrado."
+                elif estado == "sin-iniciar":
+                    motivo = "Pendiente: todavía no se ha iniciado." + devuelto
+                elif estado == "en-proceso":
+                    motivo = "En ejecución en el laboratorio." + devuelto
+                elif estado == "sin-formulario":
+                    motivo = "Este ensayo no tiene formulario en la app: su resultado se maneja fuera de ella."
+                elif tipo == "limites" and limites_sin_limites(data):
+                    motivo = (a.get("observations") or "").strip() or _motivo_sin_limites(m)
+                pf["solicitados"] += 1
+                pf[claves[estado]] += 1
+                t = por_tipo.setdefault(label, {"ensayo": label, "solicitados": 0, "finalizados": 0, "no_realizados": 0, "en_curso": 0,
+                                                 "por_iniciar": 0, "sin_formulario": 0})
+                t["solicitados"] += 1
+                t[claves[estado]] += 1
+                if a and a.get("status") == "finalizado" and a.get("etapa_revision") in ("pendiente_ing", "aprobado"):
+                    tot["confirmados_jefe"] += 1
+                if a and a.get("status") == "finalizado" and a.get("etapa_revision") == "aprobado":
+                    tot["aprobados_dt"] += 1
+                detalle.append({"perforacion": perf["codigo"], "muestra": f"M-{m['numero']}", "ensayo": label, "estado": estado,
+                                "revision": _revision(a), "actualizado": format_dt(a["lastModified"]) if a else "—"})
+                if motivo:
+                    no_hechos.append({"perforacion": perf["codigo"], "muestra": f"M-{m['numero']}", "ensayo": label, "estado": estado, "motivo": motivo})
+        perforaciones.append(pf)
+        tot["perforaciones"] += 1
+        for k in ("muestras_orden", "muestras_ensayo", "solicitados", "finalizados", "no_realizados", "en_curso", "por_iniciar", "sin_formulario"):
+            tot[k] += pf[k]
+    perfil = st.session_state.profile or {}
+    quien = f"{perfil.get('full_name') or ''} ({ROLE_LABELS.get(st.session_state.role, '')})".strip()
+    return {
+        "generado": datetime.now(_TZ_COLOMBIA).strftime("%d/%m/%Y %H:%M"), "generado_por": quien,
+        "proyecto": {
+            "codigo": project.get("codigo_interno", codigo), "nombre": project.get("nombre", ""), "localizacion": project.get("localizacion"),
+            "norma": project.get("norma"), "cliente": project.get("cliente"), "contacto": project.get("nombre_contacto"),
+            "telefono": project.get("telefono_contacto"), "correo": project.get("correo_cliente"),
+            "muestra_tomada_por": project.get("muestra_tomada_por"), "fecha_bitacora": _fecha_txt(project.get("fecha_bitacora")),
+            "fecha_inicio": _fecha_txt(project.get("fecha_inicio_proyecto")), "fecha_final": _fecha_txt(project.get("fecha_final_proyecto")),
+            "fecha_final_real": _fecha_txt(project.get("fecha_final_real")),
+            "estado": "Ejecutado" if project_status(codigo) == "ejecutado" else "En ejecución"},
+        "plazo": {"inicio": _f(project.get("fecha_inicio_proyecto")), "final": _f(project.get("fecha_final_proyecto")),
+                  "final_real": _f(project.get("fecha_final_real")), "hoy": hoy_colombia()},
+        "totales": tot, "perforaciones": perforaciones, "por_tipo": list(por_tipo.values()), "no_hechos": no_hechos, "detalle": detalle,
+        "observaciones": observaciones,
+    }
+
+
 def render_project_detail():
     codigo = st.session_state.selected_codigo
     project = get_project(codigo)
@@ -5323,6 +5413,26 @@ def render_project_detail():
                     f'background:rgba(74,120,98,0.06);border:1px solid rgba(74,120,98,0.16);">{rows_html}</div>',
                     unsafe_allow_html=True,
                 )
+
+    if st.session_state.role in ("jefe", "ingeniero"):
+        with st.container(border=True):
+            st.markdown(f'<div class="section-title" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">'
+                        f'{icon("description", size=15)} Informe del proyecto</div>', unsafe_allow_html=True)
+            st.caption("PDF con los aspectos generales, los ensayos solicitados según la orden frente a los realizados (y por qué no se hicieron), "
+                       "el progreso frente a las fechas, el avance por perforación y por tipo de ensayo, y el detalle por muestra.")
+            if st.button("Generar informe", icon=":material/picture_as_pdf:", key=f"gen_informe_{codigo}", use_container_width=True):
+                try:
+                    from informe_proyecto import generar_informe_pdf
+                    st.session_state["_informe_pdf"] = {"codigo": codigo, "bytes": generar_informe_pdf(_datos_informe_proyecto(codigo)),
+                                                         "nombre": f"Informe_{codigo}_{hoy_colombia().isoformat()}.pdf"}
+                except ImportError:
+                    st.error("Falta instalar la librería del informe (reportlab). Revisa requirements.txt y vuelve a desplegar la app.")
+                except Exception as e:
+                    st.error(f"No se pudo generar el informe: {e}")
+            informe = st.session_state.get("_informe_pdf")
+            if informe and informe["codigo"] == codigo:
+                st.download_button("Descargar informe (PDF)", data=informe["bytes"], file_name=informe["nombre"], mime="application/pdf",
+                                   icon=":material/download:", type="primary", use_container_width=True, key=f"dl_informe_{codigo}")
 
     if st.session_state.role == "jefe":
         c1, c2 = st.columns(2)
