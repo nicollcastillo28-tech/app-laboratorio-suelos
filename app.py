@@ -3665,6 +3665,14 @@ def _render_por_revisar(por_revisar):
             st.markdown(f'<hr style="margin:6px 0;border-color:{BORDER};">', unsafe_allow_html=True)
 
 
+def _boton_ir_proyecto(codigo, clave):
+    """Atajo "Ir al proyecto" para las pantallas de muestra, perforación y ensayo: se llega a ellas desde una notificación o un buscador y, para
+    ver el proyecto, había que volver hasta el Inicio. `clave` hace único el botón de cada pantalla."""
+    if st.button("Ir al proyecto →", key=f"ir_proyecto_{clave}", icon=":material/folder_open:"):
+        st.session_state.selected_codigo = codigo
+        navigate("project-detail")
+
+
 def _boton_atras():
     """Botón "← Atrás" que se queda pegado arriba mientras se desliza la pantalla (ver .st-key-back-sticky), para no tener que subir
     hasta el principio de la página solo para volver."""
@@ -5831,6 +5839,7 @@ def render_perforacion_detail():
                 f'<span style="font-weight:600;">{html.escape(project["nombre"])}</span>',
                 unsafe_allow_html=True)
     st.markdown(f"### Muestras de Perforación {html.escape(perf_codigo)}")
+    _boton_ir_proyecto(codigo, "perforacion")
 
     with st.container(border=True):
         top = st.columns([3, 1])
@@ -6474,6 +6483,7 @@ def render_muestra_detail():
                     f'{fmt_prof(muestra["profundidad_de"])}–{fmt_prof(muestra["profundidad_hasta"])} m</div>', unsafe_allow_html=True)
         c3.markdown(f'<div class="cell-muted">Perforación</div><div style="font-weight:600;">{html.escape(perf_codigo)}</div>',
                     unsafe_allow_html=True)
+        _boton_ir_proyecto(codigo, "muestra")
 
     with st.container(border=True):
         st.markdown('<div class="section-title">Descripción visual de la muestra</div>', unsafe_allow_html=True)
@@ -12690,6 +12700,8 @@ def render_assay_form(prueba=False):
     puede_descargar = es_supervisor or prueba
 
     st.markdown(f"## {ASSAY_LABELS[assay['tipo']]}")
+    if not prueba:
+        _boton_ir_proyecto(codigo, "ensayo")
     st.caption("Resultados de Ensayo" if read_only else ("Revisión del Jefe de Laboratorio" if jefe_edita else ("Revisión del Director Técnico" if ing_edita else "Registro de Ensayo")))
     st.markdown(f'<div style="margin-bottom:10px;">{status_badge_html(assay_estado_display(assay))}&nbsp;&nbsp;'
                 f'<span class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(assay["lastModified"])}'
