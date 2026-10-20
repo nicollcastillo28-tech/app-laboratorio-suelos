@@ -5176,6 +5176,14 @@ def render_new_project():
                 )
                 edited_frames[key] = edited
 
+                # Solo si la perforación vino de una orden importada: el total de la orden se puede corregir (p. ej. si se quitaron filas a mano
+                # o es un resto de una importación anterior); 0 = no mostrar "de N de la orden".
+                if perf.get("muestras_en_orden"):
+                    perf["muestras_en_orden"] = int(st.number_input(
+                        "Muestras que traía la orden", min_value=0, step=1, value=int(perf["muestras_en_orden"]),
+                        key=f"newperf_norden_{key}", help="Total de muestras de esta perforación en la orden, con o sin ensayo. "
+                        "Ponlo en 0 si no corresponde a una orden."))
+
                 # Cada perforación se descarga en su propio Excel: la plantilla oficial
                 # representa UN sondeo (hoja "S1"), así que no se mezclan varias en un archivo.
                 filas_perf_preview = []
@@ -6188,6 +6196,18 @@ def render_bitacora():
                     except Exception:
                         st.error("No se pudo guardar la fecha de ingreso de esta perforación. Falta aplicar la migración "
                                  "0033 (perforaciones.fecha_ingreso) en Supabase.")
+                if perf.get("muestras_en_orden"):   # solo si vino de una orden importada; permite corregir un total que quedó de más
+                    n_orden = int(st.number_input(
+                        "Muestras que traía la orden", min_value=0, step=1, value=int(perf["muestras_en_orden"]),
+                        key=f"norden_{perf['id']}", help="Total de muestras de esta perforación en la orden, con o sin ensayo. "
+                        "Ponlo en 0 si no corresponde a una orden."))
+                    if n_orden != int(perf["muestras_en_orden"]):
+                        try:
+                            db.set_perforacion_muestras_en_orden(perf["id"], n_orden or None)
+                            perf["muestras_en_orden"] = n_orden or None
+                            st.toast("Total de muestras de la orden guardado.", icon=":material/check_circle:")
+                        except Exception:
+                            st.error("No se pudo guardar el total de la orden. Falta aplicar la migración 0038 en Supabase.")
             else:
                 st.caption(f"Fecha de recepción: {fecha_ingreso_perf_txt(perf, project)}")
             # OJO: el DataFrame se crea UNA sola vez y se reutiliza el mismo objeto en cada rerun.
