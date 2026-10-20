@@ -5403,7 +5403,7 @@ def render_project_detail():
     total = sum(progreso.values())
     pct_general = round(progreso["finalizado"] / total * 100) if total else 0
     perforaciones = st.session_state.perforaciones.get(codigo, [])
-    sondeos_txt = f'{len(perforaciones)} sondeo(s) registrado(s)'
+    sondeos_txt = f'{len(perforaciones)} perforación(es) registrada(s)'
 
     st.markdown(f'''
         <div class="bento-primary" style="margin-bottom:16px;">
