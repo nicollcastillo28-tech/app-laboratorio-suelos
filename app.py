@@ -892,6 +892,58 @@ SIEVES = [
 ]
 
 ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor", "materia-organica": "Materia orgánica", "limite-contraccion": "Límite de contracción", "consolidacion": "Consolidación", "compresion-inconfinada": "Compresión inconfinada", "compresion-roca": "Compresión en roca", "carga-puntual": "Carga puntual", "solidez-sulfatos": "Solidez en sulfatos", "terrones-arcilla": "Terrones de arcilla", "alargamiento-aplanamiento": "Alargamiento y aplanamiento"}
+# Título oficial de cada ensayo, tal como está en el encabezado de su plantilla de Excel (los mismos nombres y normas), para mostrarlo en la
+# pantalla del ensayo y que no diga solo "CBR". Los ensayos que cambian de título según lo que se elige adentro (método, norma, tipo de gravedad
+# específica) se resuelven en titulo_oficial_ensayo.
+TITULOS_ENSAYO = {
+    "granulometria": "DETERMINACIÓN DE LOS TAMAÑOS DE LAS PARTÍCULAS DE LOS SUELOS INV E – 123 – 13",
+    "pasa200": "DETERMINACIÓN DE LOS TAMAÑOS DE LAS PARTÍCULAS DE LOS SUELOS INV E – 123 – 13",
+    "limites": "DETERMINACIÓN DEL LÍMITE LÍQUIDO DE LOS SUELOS; LÍMITE PLÁSTICO E ÍNDICE DE PLASTICIDAD DE LOS SUELOS INV. E-125-13 / INV. E-126-13",
+    "humedad": "DETERMINACIÓN EN EL LABORATORIO DEL CONTENIDO DE AGUA (HUMEDAD) DE MUESTRAS DE SUELO, ROCA Y MEZCLAS DE SUELO - AGREGADO - INV. E - 122 -13",
+    "masa-unitaria": "MÉTODOS DE PRUEBA ESTÁNDAR PARA DETERMINACIÓN DE LABORATORIO DE LA DENSIDAD (PESO UNITARIO) DE MUESTRAS DE SUELO D 7263 – 09",
+    "cbr": "CBR DE SUELOS COMPACTADOS EN EL LABORATORIO Y SOBRE MUESTRA INALTERADA INV. E-148-13",
+    "corte-directo": "ENSAYO DE CORTE DIRECTO EN CONDICIÓN CONSOLIDADA DRENADA (CD) INV. E -154 -13",
+    "gravedad-especifica": "DENSIDAD, DENSIDAD RELATIVA (GRAVEDAD ESPECÍFICA) Y ABSORCIÓN DEL AGREGADO FINO INV E – 222 – 13",
+    "proctor": "ENSAYO PARA LA RELACIÓN DE HUMEDAD - PESO UNITARIO SECO DE LOS SUELOS (ENSAYO MODIFICADO DE COMPACTACIÓN) INV. E - 142-13",
+    "materia-organica": "DETERMINACIÓN DEL CONTENIDO ORGÁNICO DE UN SUELO MEDIANTE EL ENSAYO DE PÉRDIDA POR IGNICIÓN INV. E - 121 -13",
+    "limite-contraccion": "DETERMINACIÓN DE LOS FACTORES DE CONTRACCIÓN DE LOS SUELOS POR EL MÉTODO DE LA PARAFINA INV. E -129-13",
+    "consolidacion": "CONSOLIDACIÓN UNIDIMENSIONAL DE SUELOS INV. E - 151 -13",
+    "compresion-inconfinada": "COMPRESIÓN INCONFINADA EN MUESTRAS DE SUELOS",
+    "compresion-roca": "COMPRESIÓN SIMPLE EN ROCA ASTM D 7012 14 MÉTODO B",
+    "carga-puntual": "PRUEBA ESTÁNDAR PARA LA DETERMINACIÓN DEL ÍNDICE DE FUERZA DE CARGA PUNTUAL DE LA ROCA ASTM D 5731",
+    "solidez-sulfatos": "SOLIDEZ DE LOS AGREGADOS FRENTE A LA ACCIÓN DE SOLUCIONES DE SULFATO DE SODIO O DE MAGNESIO INV. E – 220 – 13",
+    "terrones-arcilla": "DETERMINACIÓN DE TERRONES DE ARCILLA Y PARTÍCULAS DELEZNABLES EN LOS AGREGADOS INV E – 211 – 13",
+    "alargamiento-aplanamiento": "ÍNDICES DE APLANAMIENTO Y DE ALARGAMIENTO DE LOS AGREGADOS PARA CARRETERAS INV E – 230 – 13",
+}
+_TITULO_GESP = {
+    "fino": "DENSIDAD, DENSIDAD RELATIVA (GRAVEDAD ESPECÍFICA) Y ABSORCIÓN DEL AGREGADO FINO INV E – 222 – 13",
+    "grueso": "DENSIDAD, DENSIDAD RELATIVA (GRAVEDAD ESPECÍFICA) Y ABSORCIÓN DEL AGREGADO GRUESO INV E – 223 – 13",
+    "arcilla": "GRAVEDAD ESPECÍFICA RELATIVA EN ARCILLAS Y LIMOS INV. E-128-13",
+}
+
+
+def titulo_oficial_ensayo(tipo, data=None):
+    """Título del encabezado de la plantilla de Excel del ensayo, ajustado a lo que se eligió adentro (método de peso unitario, tipo de gravedad
+    específica, norma del Proctor). '' si el tipo no tiene título."""
+    data = data or {}
+    if tipo == "masa-unitaria" and data.get("mu_metodo") == "Método B":
+        return ("MÉTODOS DE PRUEBA ESTÁNDAR PARA DETERMINACIÓN DE LABORATORIO DE LA DENSIDAD (PESO UNITARIO METODO B) DE MUESTRAS DE SUELO "
+                "D 7263 – 09")
+    if tipo == "gravedad-especifica":
+        sel = data.get("gesp_sel", "")
+        if sel in GESP_OPCIONES:
+            i = GESP_OPCIONES.index(sel)
+            if i == 1:
+                return _TITULO_GESP["grueso"]
+            if i == 2:
+                return _TITULO_GESP["fino"] + "  /  " + _TITULO_GESP["grueso"]
+            if i == 3:
+                return _TITULO_GESP["arcilla"]
+    if tipo == "proctor" and "141" in str(data.get("proc_norma", "")):
+        return "ENSAYO PARA LA RELACIÓN DE HUMEDAD - PESO UNITARIO SECO DE LOS SUELOS (ENSAYO NORMAL DE COMPACTACIÓN) INV. E - 141-13"
+    return TITULOS_ENSAYO.get(tipo, "")
+
+
 NORMAS_ENSAYO = {
     "granulometria": ["INV-214-13", "INV.E-213-13", "INV.E 123-13"],
     "humedad": ["INV E-122", "ASTM D2216"],
@@ -12768,6 +12820,10 @@ def render_assay_form(prueba=False):
     puede_descargar = es_supervisor or prueba
 
     st.markdown(f"## {ASSAY_LABELS[assay['tipo']]}")
+    titulo_excel = titulo_oficial_ensayo(assay["tipo"], assay.get("data"))
+    if titulo_excel:   # el mismo título del encabezado del Excel del ensayo
+        st.markdown(f'<div style="font-weight:700;font-size:13px;letter-spacing:0.02em;line-height:1.4;color:{PRIMARY};margin:-6px 0 10px;">'
+                    f'{html.escape(" ".join(titulo_excel.split()))}</div>', unsafe_allow_html=True)
     if not prueba:
         _boton_ir_proyecto(codigo, "ensayo")
     st.caption("Resultados de Ensayo" if read_only else ("Revisión del Jefe de Laboratorio" if jefe_edita else ("Revisión del Director Técnico" if ing_edita else
