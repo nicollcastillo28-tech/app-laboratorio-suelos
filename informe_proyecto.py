@@ -274,6 +274,23 @@ def _kpi(valor, titulo, color, fondo, st, ancho):
     return t
 
 
+def _tabla_tipos(lista, st):
+    """Tabla 'ensayo | solicitados | realizados | en ejecución | por iniciar | no realizados | avance' para una lista de tipos de ensayo."""
+    enc = ["Ensayo", "Solicitados", "Realizados", "En ejecución", "Por iniciar", "No realizados", "Avance"]
+    filas = [[Paragraph(t, st["enc"] if i < 1 else st["enc_c"]) for i, t in enumerate(enc)]]
+    anchos = [4.2 * cm, 1.8 * cm, 1.8 * cm, 1.9 * cm, 1.8 * cm, 2.1 * cm, 3.3 * cm]
+    escala = ANCHO_UTIL / sum(anchos)
+    anchos = [x * escala for x in anchos]
+    for t in lista:
+        cerrados = t["finalizados"] + t["no_realizados"]
+        segs = [(t["finalizados"], VERDE), (t["no_realizados"], ROJO), (t["en_curso"], AMBAR), (t["por_iniciar"] + t["sin_formulario"], GRIS_BARRA)]
+        filas.append([Paragraph(_e(t["ensayo"]), st["celda_b"]), Paragraph(str(t["solicitados"]), st["celda_c"]),
+                      Paragraph(str(t["finalizados"]), st["celda_c"]), Paragraph(str(t["en_curso"]), st["celda_c"]),
+                      Paragraph(str(t["por_iniciar"] + t["sin_formulario"]), st["celda_c"]), Paragraph(str(t["no_realizados"]), st["celda_c"]),
+                      Barra(segs, anchos[6] - 12, 9, total=max(t["solicitados"], 1), texto=f"{_pct(cerrados, t['solicitados']):.0f} %")])
+    return _tabla(filas, anchos)
+
+
 def _pct(a, b):
     return (100.0 * a / b) if b else 0.0
 
@@ -316,7 +333,8 @@ def generar_informe_pdf(d):
       plazo{inicio, final, final_real, hoy}, totales{perforaciones, muestras_orden, muestras_ensayo, solicitados, finalizados,
       no_realizados, en_curso, por_iniciar, sin_formulario, confirmados_jefe, aprobados_dt},
       perforaciones[{codigo, tipo, muestras_orden, muestras_ensayo, solicitados, finalizados, no_realizados, en_curso, por_iniciar,
-      sin_formulario, recepcion, ejecucion, emision}], por_tipo[{ensayo, solicitados, finalizados, no_realizados, en_curso, por_iniciar,
+      sin_formulario, recepcion, ejecucion, emision, por_tipo[{ensayo, solicitados, ...}]}], alertas[{perforacion, muestra, ensayo, nivel
+      ('alto'|'revisar'), nivel_txt, mensaje}], por_tipo[{ensayo, solicitados, finalizados, no_realizados, en_curso, por_iniciar,
       sin_formulario}], no_hechos[{perforacion, muestra, ensayo, estado, motivo}], detalle[{perforacion, muestra, ensayo, estado, revision,
       actualizado, nota}], observaciones[{perforacion, muestra, texto}]."""
     st = _estilos()
@@ -431,19 +449,18 @@ def generar_informe_pdf(d):
 
     # ── Avance por tipo de ensayo ────────────────────────────────────────────────────────────────────────────────────
     historia.append(Paragraph("Ensayos solicitados y realizados, por tipo", st["h2"]))
-    enc = ["Ensayo", "Solicitados", "Realizados", "En ejecución", "Por iniciar", "No realizados", "Avance"]
-    filas = [[Paragraph(t, st["enc"] if i < 1 else st["enc_c"]) for i, t in enumerate(enc)]]
-    anchos = [4.2 * cm, 1.8 * cm, 1.8 * cm, 1.9 * cm, 1.8 * cm, 2.1 * cm, 3.3 * cm]
-    escala = ANCHO_UTIL / sum(anchos)
-    anchos = [a * escala for a in anchos]
-    for t in d["por_tipo"]:
-        cerrados = t["finalizados"] + t["no_realizados"]
-        segs = [(t["finalizados"], VERDE), (t["no_realizados"], ROJO), (t["en_curso"], AMBAR), (t["por_iniciar"] + t["sin_formulario"], GRIS_BARRA)]
-        filas.append([Paragraph(_e(t["ensayo"]), st["celda_b"]), Paragraph(str(t["solicitados"]), st["celda_c"]),
-                      Paragraph(str(t["finalizados"]), st["celda_c"]), Paragraph(str(t["en_curso"]), st["celda_c"]),
-                      Paragraph(str(t["por_iniciar"] + t["sin_formulario"]), st["celda_c"]), Paragraph(str(t["no_realizados"]), st["celda_c"]),
-                      Barra(segs, anchos[6] - 12, 9, total=max(t["solicitados"], 1), texto=f"{_pct(cerrados, t['solicitados']):.0f} %")])
-    historia.append(_tabla(filas, anchos))
+    historia.append(_tabla_tipos(d["por_tipo"], st))
+
+    # ── Lo mismo, separado por perforación ───────────────────────────────────────────────────────────────────────────
+    con_tipos = [pf for pf in d["perforaciones"] if pf.get("por_tipo")]
+    if con_tipos:
+        historia.append(Paragraph("Ensayos solicitados y realizados, por perforación y tipo", st["h2"]))
+        for pf in con_tipos:
+            cerrados = pf["finalizados"] + pf["no_realizados"]
+            historia.append(KeepTogether([
+                Paragraph(f"<b>{_e(pf['codigo'])}</b> · {_e(pf['tipo'])} — {cerrados} de {pf['solicitados']} ensayos cerrados "
+                          f"({_pct(cerrados, pf['solicitados']):.0f} %)", st["base"]),
+                Spacer(1, 3), _tabla_tipos(pf["por_tipo"], st), Spacer(1, 9)]))
 
     # ── Ensayos no realizados / pendientes y por qué ────────────────────────────────────────────────────────────────
     historia.append(Paragraph("Ensayos que no se realizaron o siguen pendientes, y por qué", st["h2"]))
@@ -460,6 +477,37 @@ def generar_informe_pdf(d):
         historia.append(_tabla(filas, anchos, estilos_extra=extra))
     else:
         historia.append(Paragraph("Todos los ensayos solicitados se realizaron.", st["base"]))
+
+    # ── Resultados para revisar (valores raros o fuera de lo esperado) ──────────────────────────────────────────────────
+    historia.append(CondPageBreak(5 * cm))
+    historia.append(Paragraph("Resultados para revisar", st["h2"]))
+    alertas = d.get("alertas") or []
+    n_alto = sum(1 for x in alertas if x["nivel"] == "alto")
+    historia.append(Paragraph("Revisión automática de los resultados digitados: se comparan con los rangos típicos de la literatura geotécnica según el material de "
+                              "cada muestra, y se cruzan la descripción visual, la clasificación y los límites. Una alerta pide una segunda mirada; no "
+                              "significa que el ensayo esté mal ni lo invalida.", st["pequeno"]))
+    historia.append(Spacer(1, 4))
+    if alertas:
+        historia.append(Paragraph(f"<b>{len(alertas)} resultado(s) para revisar</b> — {n_alto} de nivel alto y {len(alertas) - n_alto} por revisar.", st["base"]))
+        historia.append(Spacer(1, 4))
+        enc = ["Perforación", "Muestra", "Ensayo", "Nivel", "Qué revisar"]
+        filas = [[Paragraph(t, st["enc"]) for t in enc]]
+        anchos = [2.0 * cm, 1.5 * cm, 3.2 * cm, 1.8 * cm, ANCHO_UTIL - 8.5 * cm]
+        extra = []
+        for i, r in enumerate(alertas, start=1):
+            alto = r["nivel"] == "alto"
+            filas.append([Paragraph(_e(r["perforacion"]), st["celda"]), Paragraph(_e(r["muestra"]), st["celda"]),
+                          Paragraph(_e(r["ensayo"]), st["celda_b"]),
+                          Paragraph(f'<font color="#{"A51D1D" if alto else "8A4B06"}"><b>{_e(r["nivel_txt"])}</b></font>', st["celda_c"]),
+                          Paragraph(_e(r["mensaje"]), st["celda"])])
+            extra.append(("BACKGROUND", (3, i), (3, i), ROJO_CLARO if alto else AMBAR_CLARO))
+        historia.append(_tabla(filas, anchos, estilos_extra=extra))
+    else:
+        caja = Table([[Paragraph('<font color="#0A5A2A"><b>No se detectaron resultados fuera de lo esperado</b> en los ensayos con datos de este '
+                                 'proyecto.</font>', st["diag"])]], colWidths=[ANCHO_UTIL])
+        caja.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.8, VERDE), ("BACKGROUND", (0, 0), (-1, -1), VERDE_CLARO2),
+                                  ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6), ("LEFTPADDING", (0, 0), (-1, -1), 9)]))
+        historia.append(caja)
 
     # ── Detalle por muestra ──────────────────────────────────────────────────────────────────────────────────────────
     historia.append(CondPageBreak(6 * cm))

@@ -5229,7 +5229,7 @@ def _datos_informe_proyecto(codigo):
         return {"aprobado": "Aprobado por el Director Técnico",
                 "pendiente_ing": "Confirmado por el Jefe; pendiente del Director Técnico"}.get(a.get("etapa_revision"), "Entregado; pendiente del Jefe")
 
-    perforaciones, por_tipo, detalle, no_hechos, observaciones = [], {}, [], [], []
+    perforaciones, por_tipo, detalle, no_hechos, observaciones, alertas = [], {}, [], [], [], []
     tot = {"perforaciones": 0, "muestras_orden": 0, "muestras_ensayo": 0, "solicitados": 0, "finalizados": 0, "no_realizados": 0, "en_curso": 0,
            "por_iniciar": 0, "sin_formulario": 0, "confirmados_jefe": 0, "aprobados_dt": 0}
     for perf in st.session_state.perforaciones.get(codigo, []):
@@ -5238,6 +5238,7 @@ def _datos_informe_proyecto(codigo):
               "muestras_ensayo": 0, "solicitados": 0, "finalizados": 0, "no_realizados": 0, "en_curso": 0, "por_iniciar": 0, "sin_formulario": 0,
               "recepcion": fecha_ingreso_perf_txt(perf, project), "ejecucion": _fecha_txt(fecha_ejecucion_perf(codigo, perf["codigo"], muestras)),
               "emision": _fecha_txt(perf.get("fecha_emision"))}
+        pf_tipos = {}
         for m in muestras:
             labels = unificar_ensayos([e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS])
             if labels:
@@ -5264,10 +5265,19 @@ def _datos_informe_proyecto(codigo):
                     motivo = (a.get("observations") or "").strip() or _motivo_sin_limites(m)
                 pf["solicitados"] += 1
                 pf[claves[estado]] += 1
-                t = por_tipo.setdefault(label, {"ensayo": label, "solicitados": 0, "finalizados": 0, "no_realizados": 0, "en_curso": 0,
-                                                 "por_iniciar": 0, "sin_formulario": 0})
-                t["solicitados"] += 1
-                t[claves[estado]] += 1
+                for acumulado in (por_tipo, pf_tipos):   # el total del proyecto y el de esta perforación
+                    t = acumulado.setdefault(label, {"ensayo": label, "solicitados": 0, "finalizados": 0, "no_realizados": 0, "en_curso": 0,
+                                                      "por_iniciar": 0, "sin_formulario": 0})
+                    t["solicitados"] += 1
+                    t[claves[estado]] += 1
+                # Resultados raros o fuera de lo esperado (mismas reglas que las alertas del ensayo) y coherencia entre descripción, clasificación y límites
+                if a and tipo and estado in ("finalizado", "en-proceso") and data:
+                    avisos = [(x["nivel"], x["mensaje"]) for x in alertas_de_ensayo(tipo, data, m)[0]]
+                    if tipo == "limites":
+                        avisos += [("revisar", "Coherencia: " + x) for x in _avisos_coherencia_limites(m, data)]
+                    for nivel, mensaje in avisos:
+                        alertas.append({"perforacion": perf["codigo"], "muestra": f"M-{m['numero']}", "ensayo": label, "nivel": nivel,
+                                        "nivel_txt": alertas_res.NIVEL_ETIQUETA.get(nivel, nivel), "mensaje": mensaje})
                 if a and a.get("status") == "finalizado" and a.get("etapa_revision") in ("pendiente_ing", "aprobado"):
                     tot["confirmados_jefe"] += 1
                 if a and a.get("status") == "finalizado" and a.get("etapa_revision") == "aprobado":
@@ -5276,6 +5286,7 @@ def _datos_informe_proyecto(codigo):
                                 "revision": _revision(a), "actualizado": format_dt(a["lastModified"]) if a else "—"})
                 if motivo:
                     no_hechos.append({"perforacion": perf["codigo"], "muestra": f"M-{m['numero']}", "ensayo": label, "estado": estado, "motivo": motivo})
+        pf["por_tipo"] = list(pf_tipos.values())
         perforaciones.append(pf)
         tot["perforaciones"] += 1
         for k in ("muestras_orden", "muestras_ensayo", "solicitados", "finalizados", "no_realizados", "en_curso", "por_iniciar", "sin_formulario"):
@@ -5295,7 +5306,7 @@ def _datos_informe_proyecto(codigo):
         "plazo": {"inicio": _f(project.get("fecha_inicio_proyecto")), "final": _f(project.get("fecha_final_proyecto")),
                   "final_real": _f(project.get("fecha_final_real")), "hoy": hoy_colombia()},
         "totales": tot, "perforaciones": perforaciones, "por_tipo": list(por_tipo.values()), "no_hechos": no_hechos, "detalle": detalle,
-        "observaciones": observaciones,
+        "observaciones": observaciones, "alertas": sorted(alertas, key=lambda x: 0 if x["nivel"] == "alto" else 1),
     }
 
 
