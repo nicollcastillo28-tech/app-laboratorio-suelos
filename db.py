@@ -384,6 +384,18 @@ def set_edicion_en_curso(assay_id: str, cambios: list, actor: str = ""):
     client.table("assays").update({"historial": resto}).eq("id", assay_id).execute()
 
 
+def registrar_ultimo_cambio(assay_id: str, actor: str):
+    """Deja UNA entrada en el historial con el último cambio de datos hecho por el Jefe o el Director Técnico (quién y cuándo), también cuando el
+    ensayo todavía es un borrador (ahí no hay envío con el que comparar y no se puede listar qué valores cambiaron). Cada cambio nuevo
+    reemplaza la entrada anterior, así el historial no se llena con una línea por cada autoguardado."""
+    client = get_client()
+    assay = client.table("assays").select("historial").eq("id", assay_id).execute().data[0]
+    resto = [h for h in (assay["historial"] or []) if not h.get("ultimo_cambio")]
+    resto.append({"titulo": "Último cambio de datos", "subtitulo": actor, "icono": "edit_note", "tono": "warning",
+                  "fecha": _ahora_colombia(), "ultimo_cambio": True})
+    client.table("assays").update({"historial": resto}).eq("id", assay_id).execute()
+
+
 def _require_role(profile: dict, *roles: str):
     if profile["role"] not in roles:
         raise PermissionError(f"Rol '{profile['role']}' no autorizado para esta acción.")

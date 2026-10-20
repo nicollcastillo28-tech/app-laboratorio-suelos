@@ -89,6 +89,7 @@ def _cbr():
          "cbr_pen_antes_0": "0", "cbr_pen_despues_0": "0"}
     d.update({"cbr_desp_recipiente": "C-8", "cbr_desp_masa_recipiente": "20.00", "cbr_desp_masa_humedo": "127.10",
               "cbr_desp_masa_seco": "105.00"})
+    d.update({"cbr_antes_recipiente": "C-7", "cbr_antes_masa_recipiente": "20.00", "cbr_antes_masa_humedo": "118.40", "cbr_antes_masa_seco": "104.20"})
     for i, f in enumerate(base, start=1):
         d[f"cbr_pen_antes_{i}"] = _n(f * 1.08)
         d[f"cbr_pen_despues_{i}"] = _n(f * 0.66)

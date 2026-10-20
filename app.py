@@ -2597,6 +2597,21 @@ def _expansion_pct(inicial, final, altura):
     return cm, (cm / h * 100 if h else None)
 
 
+CBR_HUM_ANTES = (("recipiente", "hum_recipiente"), ("masa_humedo", "hum_masa_humedo_mas_recipiente"),
+                 ("masa_seco", "hum_seco_mas_recipiente"), ("masa_recipiente", "hum_masa_recipiente"))
+
+
+def datos_humedad_antes_cbr(data, muestra_id=None):
+    """Humedad ANTES de inmersión del CBR, en el formato del ensayo de Humedad ({hum_recipiente, hum_masa_humedo_mas_recipiente,
+    hum_seco_mas_recipiente, hum_masa_recipiente}) para poder usar calcular_humedad_pct. Es un dato PROPIO del CBR (claves cbr_antes_*), se digita
+    en su formulario y no depende de que la muestra tenga un ensayo de Humedad. Solo los CBR hechos antes de este cambio (que nunca tuvieron esas
+    casillas) siguen tomando el dato del ensayo de Humedad, para no perder lo que ya estaba calculado."""
+    if any(f"cbr_antes_{k}" in data for k, _hk in CBR_HUM_ANTES):
+        return {hk: data.get(f"cbr_antes_{k}", "") for k, hk in CBR_HUM_ANTES}
+    hum = get_assay(muestra_id, "humedad") if (muestra_id and tiene_datos_digitados(data)) else None
+    return dict(hum.get("data") or {}) if hum else {}
+
+
 def resultados_cbr(data, hum_data=None):
     """Resultados del CBR inalterado (GDA-FLC-013), antes y después de inmersión."""
     hum_antes = calcular_humedad_pct(hum_data) if hum_data else None
@@ -2624,7 +2639,7 @@ def resultados_cbr(data, hum_data=None):
         st.markdown(param_table_html([("Expansión total (cm)", f(cm, 3)), ("Expansión total (%)", f(pct, 2))],
                                      header_left="EXPANSIÓN", header_right="VALOR"), unsafe_allow_html=True)
     if hum_data is not None and hum_antes is None:
-        st.caption("Falta el ensayo de Contenido de Humedad de esta muestra (humedad antes de inmersión).")
+        st.caption("Falta la humedad antes de inmersión (se digita en la tarjeta «Humedad de inmersión»).")
     pts = [{"Penetración (in)": float(p), "Fuerza (kN)": to_float(data.get(f"cbr_pen_{suf}_{j}")), "Curva": nom}
            for suf, nom in (("antes", "Antes de inmersión"), ("despues", "Después de inmersión"))
            for j, (p, _mm) in enumerate(CBR_PENETRACION_FILAS, start=1) if to_float(data.get(f"cbr_pen_{suf}_{j}")) is not None]
@@ -6490,7 +6505,7 @@ def render_muestra_detail():
     _hay_entregado = any(a.get("muestra_id") == muestra_id and a.get("status") == "finalizado" for a in st.session_state.get("assays", []))
     _hay_en_revision_dt = any(a.get("muestra_id") == muestra_id and a.get("status") == "finalizado" and a.get("etapa_revision") == "pendiente_ing"
                               for a in st.session_state.get("assays", []))
-    puede_editar_muestra = (st.session_state.role == "laboratorista" or (st.session_state.role == "jefe" and _hay_entregado)
+    puede_editar_muestra = (st.session_state.role == "laboratorista" or st.session_state.role == "jefe"
                             or (st.session_state.role == "ingeniero" and _hay_en_revision_dt))
 
     estado = compute_muestra_estado(muestra)
@@ -8127,12 +8142,8 @@ def generar_excel_cbr(codigo, perf_codigo, muestra, project, data, observaciones
     ws["D23"] = to_float(data.get("cbr_masa_muestra_molde_antes"))
     ws["E23"] = to_float(data.get("cbr_masa_muestra_molde_despues"))
 
-    # Humedad antes de inmersión: no se digita en el formulario de CBR, se comparte con el
-    # ensayo de Contenido de Humedad de la misma muestra (ver render_cbr_form) — se copia acá
-    # porque la plantilla real necesita el valor en su propia celda, no una referencia cruzada
-    # a otro archivo.
-    hum_assay = get_assay(muestra["id_unico"], "humedad")
-    hum_data = hum_assay.get("data", {}) if hum_assay else {}
+    # Humedad antes de inmersión: dato propio del CBR (ver datos_humedad_antes_cbr), no depende del ensayo de Humedad de la muestra.
+    hum_data = datos_humedad_antes_cbr(data, muestra["id_unico"])
     ws["D30"] = hum_data.get("hum_recipiente", "")
     ws["D31"] = to_float(hum_data.get("hum_masa_humedo_mas_recipiente"))
     ws["D32"] = to_float(hum_data.get("hum_seco_mas_recipiente"))
@@ -8747,6 +8758,10 @@ CAMPOS_REQUERIDOS_CBR = [
     ("cbr_masa_molde", "Masa molde (g)"),
     ("cbr_masa_muestra_molde_antes", "Masa de la muestra + molde (g) — antes de inmersión"),
     ("cbr_masa_muestra_molde_despues", "Masa de la muestra + molde (g) — después de inmersión"),
+    ("cbr_antes_recipiente", "Recipiente — humedad antes de inmersión"),
+    ("cbr_antes_masa_humedo", "Peso recipiente + suelo húmedo (g) — antes de inmersión"),
+    ("cbr_antes_masa_seco", "Peso recipiente + suelo seco (g) — antes de inmersión"),
+    ("cbr_antes_masa_recipiente", "Peso recipiente (g) — antes de inmersión"),
     ("cbr_desp_recipiente", "Recipiente — humedad después de inmersión"),
     ("cbr_desp_masa_humedo", "Peso recipiente + suelo húmedo (g) — después de inmersión"),
     ("cbr_desp_masa_seco", "Peso recipiente + suelo seco (g) — después de inmersión"),
@@ -9296,46 +9311,40 @@ def render_cbr_form(data, assay_id, muestra_id):
 
     with st.container(border=True):
         st.markdown(card_header_html("water_drop", "Humedad de inmersión"), unsafe_allow_html=True)
-        st.caption("\"Antes\" se comparte con el ensayo de Contenido de Humedad de esta muestra — no se "
-                   "digita aquí; si falta o está mal, corrígelo desde ese ensayo. \"Después\" sí es un dato "
-                   "propio del CBR.")
-        hum_assay = get_assay(muestra_id, "humedad")
-        hum_data = hum_assay.get("data", {}) if hum_assay else {}
-        hay_antes = bool(hum_data.get("hum_recipiente") or hum_data.get("hum_seco_mas_recipiente"))
-
+        st.caption("La humedad antes y después de inmersión se digita aquí, es propia del CBR: no depende del ensayo de Contenido de Humedad "
+                   "de la muestra, aunque ese ensayo esté asignado.")
         head = st.columns([2, 1, 1])
         head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Antes</div>', unsafe_allow_html=True)
         head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Después</div>', unsafe_allow_html=True)
 
-        def _campo_humedad(label, valor_antes, key_despues, placeholder="0.00"):
+        # Datos viejos (CBR hechos cuando "antes" salía del ensayo de Humedad): se precargan UNA vez para no perderlos; desde ahí se editan libremente.
+        if not any(f"cbr_antes_{k}" in data for k, _hk in CBR_HUM_ANTES) and tiene_datos_digitados(data):   # un CBR nuevo arranca vacío
+            _viejo = datos_humedad_antes_cbr(data, muestra_id)
+            for k, hk in CBR_HUM_ANTES:
+                if _viejo.get(hk) not in (None, ""):
+                    data[f"cbr_antes_{k}"] = str(_viejo[hk])
+
+        def _campo_humedad(label, key_antes, key_despues, placeholder="0.00"):
             row = st.columns([2, 1, 1])
             row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
-            texto_antes = html.escape(str(valor_antes)) if valor_antes not in (None, "") else "—"
-            color_antes = TEXT if valor_antes not in (None, "") else NEUTRAL
-            row[1].markdown(f'<div style="padding-top:8px;text-align:center;color:{color_antes};">{texto_antes}</div>',
-                             unsafe_allow_html=True)
-            data[key_despues] = row[2].text_input(label, value=data.get(key_despues, ""), key=f"{key_despues}_{assay_id}",
+            data[key_antes] = row[1].text_input(f"{label} (antes)", value=data.get(key_antes, ""), key=f"{key_antes}_{assay_id}",
+                                                  label_visibility="collapsed", placeholder=placeholder)
+            data[key_despues] = row[2].text_input(f"{label} (después)", value=data.get(key_despues, ""), key=f"{key_despues}_{assay_id}",
                                                     label_visibility="collapsed", placeholder=placeholder)
 
-        _campo_humedad("Recipiente", hum_data.get("hum_recipiente") if hay_antes else None,
-                       "cbr_desp_recipiente", placeholder="A-12")
-        _campo_humedad("Peso recipiente + suelo húmedo (g)",
-                       hum_data.get("hum_masa_humedo_mas_recipiente") if hay_antes else None, "cbr_desp_masa_humedo")
-        _campo_humedad("Peso recipiente + suelo seco (g)",
-                       hum_data.get("hum_seco_mas_recipiente") if hay_antes else None, "cbr_desp_masa_seco")
-        _campo_humedad("Peso recipiente (g)", hum_data.get("hum_masa_recipiente") if hay_antes else None,
-                       "cbr_desp_masa_recipiente")
+        _campo_humedad("Recipiente", "cbr_antes_recipiente", "cbr_desp_recipiente", placeholder="A-12")
+        _campo_humedad("Peso recipiente + suelo húmedo (g)", "cbr_antes_masa_humedo", "cbr_desp_masa_humedo")
+        _campo_humedad("Peso recipiente + suelo seco (g)", "cbr_antes_masa_seco", "cbr_desp_masa_seco")
+        _campo_humedad("Peso recipiente (g)", "cbr_antes_masa_recipiente", "cbr_desp_masa_recipiente")
 
-        if hay_antes:
-            row = st.columns([2, 1, 1])
-            row[0].markdown('<div style="padding-top:8px;">Humedad (%)</div>', unsafe_allow_html=True)
-            row[1].markdown(f'<div style="padding-top:8px;text-align:center;font-weight:700;">'
-                             f'{fmt_num(calcular_humedad_pct(hum_data), decimals=2)}</div>', unsafe_allow_html=True)
-            row[2].markdown(f'<div style="padding-top:8px;text-align:center;color:{NEUTRAL};">—</div>', unsafe_allow_html=True)
-        else:
-            st.markdown(f'<div style="display:flex;align-items:center;gap:6px;color:{NEUTRAL};font-style:italic;">'
-                         f'{icon("visibility_off", size=16)} El ensayo de Contenido de Humedad de esta muestra '
-                         f'todavía no tiene datos</div>', unsafe_allow_html=True)
+        hum_data = datos_humedad_antes_cbr(data, muestra_id)
+        w_antes = calcular_humedad_pct(hum_data)
+        w_desp = _humedad_pct_masas(data.get("cbr_desp_masa_humedo"), data.get("cbr_desp_masa_seco"), data.get("cbr_desp_masa_recipiente"))
+        row = st.columns([2, 1, 1])
+        row[0].markdown('<div style="padding-top:8px;">Humedad (%)</div>', unsafe_allow_html=True)
+        for col, w in ((row[1], w_antes), (row[2], w_desp)):
+            col.markdown(f'<div style="padding-top:8px;text-align:center;font-weight:700;">{fmt_num(w, decimals=2) if w is not None else "—"}</div>',
+                         unsafe_allow_html=True)
 
     with st.container(border=True):
         st.markdown(card_header_html("straighten", "Datos de Expansión"), unsafe_allow_html=True)
@@ -12064,8 +12073,7 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             st.markdown(param_table_html(rows), unsafe_allow_html=True)
         with st.container(border=True):
             st.markdown(card_header_html("water_drop", "Humedad de inmersión"), unsafe_allow_html=True)
-            st.caption("\"Antes\" se comparte con el ensayo de Contenido de Humedad de esta muestra.")
-            hum_data = (get_assay(muestra_id, "humedad") or {}).get("data", {}) if muestra_id else {}
+            hum_data = datos_humedad_antes_cbr(data, muestra_id)
             hay_antes = bool(hum_data.get("hum_recipiente") or hum_data.get("hum_seco_mas_recipiente"))
             rows = [
                 ("Recipiente", hum_data.get("hum_recipiente") if hay_antes else None, data.get("cbr_desp_recipiente")),
@@ -12076,11 +12084,12 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                 ("Peso recipiente (g)", hum_data.get("hum_masa_recipiente") if hay_antes else None,
                  data.get("cbr_desp_masa_recipiente")),
             ]
-            if hay_antes:
-                rows.append(("Humedad (%)", fmt_num(calcular_humedad_pct(hum_data), decimals=2), None))
+            w_desp = _humedad_pct_masas(data.get("cbr_desp_masa_humedo"), data.get("cbr_desp_masa_seco"), data.get("cbr_desp_masa_recipiente"))
+            rows.append(("Humedad (%)", fmt_num(calcular_humedad_pct(hum_data), decimals=2) if hay_antes else None,
+                         fmt_num(w_desp, decimals=2) if w_desp is not None else None))
             st.markdown(param_table_ncol_html(("PARÁMETRO", "ANTES", "DESPUÉS"), rows), unsafe_allow_html=True)
             if not hay_antes:
-                st.caption("El ensayo de Contenido de Humedad de esta muestra todavía no tiene datos.")
+                st.caption("No se digitó la humedad antes de inmersión.")
         with st.container(border=True):
             st.markdown(card_header_html("straighten", "Datos de Expansión"), unsafe_allow_html=True)
             rows = [
@@ -12499,13 +12508,13 @@ def _valores_alertas(tipo, data, muestra):
         r = calcular_proctor(data)
         return [{"opt_w": r["opt_w"], "max_d": r["max_d"], "puntos": r["puntos"]}]
     if tipo == "cbr":
-        hum = get_assay(mid, "humedad")
+        hum_antes = datos_humedad_antes_cbr(data, mid)
         cbr = {suf: _cbr_valores(data.get(f"cbr_pen_{suf}_5"), data.get(f"cbr_pen_{suf}_9"), True) for suf in ("antes", "despues")}
         _cm, exp = _expansion_pct(data.get("cbr_exp_lectura_inicial"), data.get("cbr_exp_lectura_final"), data.get("cbr_altura"))
         # El CBR de diseño es el de la muestra sumergida; si todavía no se digita, se evalúa el de antes de inmersión.
         valor = cbr["despues"]["cbr"] if cbr["despues"]["cbr"] is not None else cbr["antes"]["cbr"]
         w_despues = _humedad_pct_masas(data.get("cbr_desp_masa_humedo"), data.get("cbr_desp_masa_seco"), data.get("cbr_desp_masa_recipiente"))
-        return [{"cbr": valor, "exp_pct": exp, "w_antes": calcular_humedad_pct(hum["data"]) if hum and hum.get("data") else None,
+        return [{"cbr": valor, "exp_pct": exp, "w_antes": calcular_humedad_pct(hum_antes) if hum_antes else None,
                  "w_despues": w_despues}]
     if tipo == "corte-directo":
         r, e = calcular_corte_directo(data), calcular_corte_esfuerzo(data)
@@ -12719,8 +12728,12 @@ def render_assay_form(prueba=False):
     #    dar la aprobación final; queda en el historial.
     ing_edita = st.session_state.role == "ingeniero" and entregado and assay.get("etapa_revision") == "pendiente_ing"
     supervisor_edita = jefe_edita or ing_edita
+    #  - El Jefe de Laboratorio TAMBIÉN puede hacer los ensayos que todavía no se entregan (iniciarlos, digitarlos, guardarlos y enviarlos), igual
+    #    que el laboratorista, hasta la aprobación final del Director Técnico. Todo queda a su nombre en el historial.
+    jefe_trabaja = es_jefe and not prueba and not entregado and assay.get("etapa_revision") != "aprobado"
+    supervisor_registra = supervisor_edita or jefe_trabaja   # quien deja el rastro de "último cambio"
     lab_entregado = st.session_state.role == "laboratorista" and entregado
-    read_only = ((es_supervisor and not supervisor_edita) or lab_entregado
+    read_only = ((es_supervisor and not supervisor_edita and not jefe_trabaja) or lab_entregado
                  or (st.session_state.role == "laboratorista" and project_status(codigo) == "ejecutado"))
 
     if not prueba and _boton_atras():
@@ -12730,7 +12743,8 @@ def render_assay_form(prueba=False):
     st.markdown(f"## {ASSAY_LABELS[assay['tipo']]}")
     if not prueba:
         _boton_ir_proyecto(codigo, "ensayo")
-    st.caption("Resultados de Ensayo" if read_only else ("Revisión del Jefe de Laboratorio" if jefe_edita else ("Revisión del Director Técnico" if ing_edita else "Registro de Ensayo")))
+    st.caption("Resultados de Ensayo" if read_only else ("Revisión del Jefe de Laboratorio" if jefe_edita else ("Revisión del Director Técnico" if ing_edita else
+                                                                    ("Registro de Ensayo (Jefe de Laboratorio)" if jefe_trabaja else "Registro de Ensayo"))))
     st.markdown(f'<div style="margin-bottom:10px;">{status_badge_html(assay_estado_display(assay))}&nbsp;&nbsp;'
                 f'<span class="timestamp-caption">{icon("history", size=13)} Última actualización: {format_dt(assay["lastModified"])}'
                 + (f' · {html.escape(assay["laboratorist"])}' if assay.get("laboratorist") else "") + '</span></div>',
@@ -12819,6 +12833,9 @@ def render_assay_form(prueba=False):
     if jefe_edita:
         st.info("Estás revisando este ensayo como Jefe de Laboratorio: si ves algo raro puedes corregirlo aquí. Los cambios se guardan solos y "
                 "quedan registrados en el historial.")
+    if jefe_trabaja:
+        st.info("Estás haciendo este ensayo como Jefe de Laboratorio: puedes digitarlo, guardarlo y enviarlo como lo haría el laboratorista. Tus cambios quedan "
+                "registrados en el historial a tu nombre.")
     if ing_edita:
         st.info("Estás revisando este ensayo como Director Técnico: el Jefe de Laboratorio ya lo confirmó. Si ves algo raro puedes corregirlo aquí; los "
                 "cambios se guardan solos y quedan registrados en el historial. Luego confírmalo o devuélvelo desde la muestra.")
@@ -12923,11 +12940,12 @@ def render_assay_form(prueba=False):
         # (no debería pasar acá, esta rama solo la ve un laboratorista con sesión activa), se
         # cae al valor que ya tuviera guardado el ensayo en vez de dejarlo en blanco.
         laboratorist = (st.session_state.profile or {}).get("full_name") or assay.get("laboratorist", "")
-        if supervisor_edita:
-            # El nombre del laboratorista no se pisa con el de quien corrige: él solo corrige, quien hizo el ensayo sigue siendo el laboratorista.
+        if supervisor_edita or (jefe_trabaja and assay.get("laboratorist")):
+            # El nombre del laboratorista no se pisa con el de quien corrige o continúa: quien hizo el ensayo sigue siendo el laboratorista. Si el
+            # Jefe hace un ensayo que nadie había empezado, él queda como quien lo hizo.
             laboratorist = assay.get("laboratorist", "")
         _nombre_sup = (st.session_state.profile or {}).get("full_name")
-        actor_edicion = (f"{_nombre_sup or 'Jefe de Laboratorio'} (Jefe de Laboratorio)" if jefe_edita
+        actor_edicion = (f"{_nombre_sup or 'Jefe de Laboratorio'} (Jefe de Laboratorio)" if (jefe_edita or jefe_trabaja)
                          else f"{_nombre_sup or 'Director Técnico'} (Director Técnico)" if ing_edita
                          else (f"{laboratorist} (Laboratorista)" if laboratorist else "Laboratorista"))
         st.markdown(f'<div style="font-weight:600;">{html.escape(laboratorist or "—")}</div>', unsafe_allow_html=True)
@@ -12960,6 +12978,11 @@ def render_assay_form(prueba=False):
                 assay["status"] = nuevo_status
                 # Si el ensayo ya se había enviado a revisión, lo que se cambia desde entonces queda registrado en el historial.
                 registrar_edicion_en_curso(assay, data, observations, actor_edicion)
+                if supervisor_registra:
+                    try:
+                        db.registrar_ultimo_cambio(assay["id"], actor_edicion)   # quién hizo el último cambio y cuándo (hora de Colombia)
+                    except Exception:
+                        pass   # el rastro nunca debe impedir guardar el ensayo
             except Exception:
                 st.error("No se pudo guardar el último cambio (revisa tu conexión). Sigue en pantalla — vuelve a intentarlo "
                           "digitando algo más o dale a \"Guardar borrador\".")
@@ -12976,6 +12999,7 @@ def render_assay_form(prueba=False):
                             db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
                     assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado")
                     registrar_edicion_en_curso(assay, data, observations, actor_edicion)
+                    db.registrar_ultimo_cambio(assay["id"], actor_edicion)
                     st.toast("Cambios guardados.", icon=":material/check_circle:")
                 except Exception:
                     st.error("No se pudo guardar (revisa tu conexión) — vuelve a intentarlo.")
@@ -13005,11 +13029,11 @@ def render_assay_form(prueba=False):
                     if pasa200_gran_sibling:
                         db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
                     if muestra:
-                        actor_lab = f"{laboratorist} (Laboratorista)" if laboratorist else "Laboratorista"
+                        actor_lab = actor_edicion
                         registrar_envio_ensayo(assay, data, observations, "Enviado a Revisión", actor_lab)
                         # Cada ensayo que el laboratorista termina se avisa al Jefe (nunca al Director Técnico,
                         # que solo entra en juego cuando el Jefe confirma ese ensayo individual).
-                        if not ya_estaba_finalizado:
+                        if not ya_estaba_finalizado and not jefe_trabaja:
                             add_notification("jefe", f"El laboratorista terminó {ASSAY_LABELS[assay['tipo']]} de la Muestra "
                                                       f"{muestra['numero']} de {codigo}.", codigo, perf_codigo, muestra_id)
                             # Si este era el último ensayo pendiente, la muestra completa su ciclo en el
@@ -13053,7 +13077,7 @@ def render_assay_form(prueba=False):
                         assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado")
                         st.session_state.pop(no_realizado_key, None)
                         if muestra:
-                            actor_lab = f"{laboratorist} (Laboratorista)" if laboratorist else "Laboratorista"
+                            actor_lab = actor_edicion
                             registrar_envio_ensayo(assay, data, observations, "Marcado como no realizado", actor_lab, "block", "danger")
                             if not ya_estaba_finalizado:
                                 add_notification("jefe", f"El laboratorista marcó {ASSAY_LABELS[assay['tipo']]} de la Muestra "
