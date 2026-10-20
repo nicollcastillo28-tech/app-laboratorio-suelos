@@ -1779,8 +1779,12 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
             (filas_por_codigo.setdefault(perf_r, []) if perf_r else sin_codigo).append(fila)
 
         if sin_ensayo:
-            advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': {sin_ensayo} muestra(s) sin ningún "
-                                 f"ensayo marcado no se importaron (muestras {', '.join(sin_ensayo_nums)}).")
+            importados = {f["Número"] for lista in filas_por_codigo.values() for f in lista} | {f["Número"] for f in sin_codigo}
+            sin_nums = list(dict.fromkeys(n for n in sin_ensayo_nums if n not in importados))   # una muestra repetida en la hoja no cuenta dos veces
+            if sin_nums:
+                advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': se importaron {len(importados)} muestra(s) con ensayos marcados. Las "
+                                     f"otras muestras de la orden ({', '.join(sin_nums)}) no traen ningún ensayo marcado, por eso no se importan "
+                                     "(solo cuentan en el total de la orden).")
 
         if not filas_por_codigo and not sin_codigo:
             if not sin_ensayo:
@@ -5022,7 +5026,7 @@ def render_new_project():
             archivos_orden = st.file_uploader("Archivos .xlsx / .xlsm", type=["xlsx", "xlsm"], accept_multiple_files=True,
                                                 key="import_bitacora_nuevo")
             if archivos_orden and st.button("Importar de estos archivos", icon=":material/publish:", key="btn_import_bitacora_nuevo"):
-                advertencias_totales, importadas = [], 0
+                advertencias_totales, importadas, actualizadas_total = [], 0, 0
                 for archivo in archivos_orden:
                     perfs_parseadas, advertencias, _hdr = parse_bitacora_orden_xlsx(archivo.name, archivo.getvalue())
                     advertencias_totales.extend(advertencias)
@@ -5039,17 +5043,17 @@ def render_new_project():
                         muestras_perf =st.session_state.setdefault("draft_muestras", {}).setdefault(perf_nueva["codigo"], [])
                         key_perf = f"{codigo_interno}::{perf_nueva['codigo']}"
                         df_actual = _bitacora_draft_df(key_perf, muestras_perf)
-                        numeros_ya = set(df_actual["Número"].astype(str).str.strip())
-                        filas_nuevas = [f for f in pp["filas"] if f["Número"] not in numeros_ya]
-                        if filas_nuevas:
-                            df_actual = pd.concat([df_actual, pd.DataFrame(filas_nuevas)], ignore_index=True)
-                            df_actual = df_actual[df_actual["Número"].astype(str).str.strip() != ""]  # quita la fila vacía de arranque
-                            orden = sorted(range(len(df_actual)), key=lambda i: clave_numero_muestra(df_actual["Número"].iloc[i]))
-                            st.session_state.bitacora_draft[key_perf] = df_actual.iloc[orden].reset_index(drop=True)[BITACORA_BASE_COLS]
+                        df_actual, n_nuevas, n_actualizadas = _fusionar_orden_en_tabla(df_actual, pp["filas"])
+                        if n_nuevas or n_actualizadas:
+                            st.session_state.bitacora_draft[key_perf] = df_actual[BITACORA_BASE_COLS]
                             st.session_state.pop(f"neweditor_{key_perf}", None)   # el editor re-aplicaría sus ediciones por posición de fila
-                            importadas += len(filas_nuevas)
-                if importadas:
-                    st.session_state["_import_nuevo_msg"] = f"Se importaron {importadas} muestra(s). Revísalas abajo antes de guardar la bitácora."
+                            importadas += n_nuevas
+                            actualizadas_total += n_actualizadas
+                if importadas or actualizadas_total:
+                    st.session_state["_import_nuevo_msg"] = (
+                        f"Se importaron {importadas} muestra(s) nueva(s)"
+                        + (f" y se completaron los ensayos de {actualizadas_total} muestra(s) que ya estaban" if actualizadas_total else "")
+                        + ". Revísalas abajo antes de guardar la bitácora.")
                 st.session_state["_import_nuevo_adv"] = advertencias_totales
                 st.rerun()
             if st.session_state.get("_import_nuevo_msg"):
@@ -5925,6 +5929,32 @@ def _orden_columnas_bitacora(df):
     return ["Número", "Prof. De", "Prof. A", "Tipo de muestra"] + marcados + ["Observaciones"] + sin_marcar
 
 
+def _fusionar_orden_en_tabla(df_actual, filas):
+    """Mezcla las filas leídas de una orden con la tabla de muestras: agrega las muestras nuevas y, en las que ya estaban (p. ej. de una carga
+    anterior o creadas a mano), marca los ensayos que la orden trae marcados -- antes se saltaban y volver a subir la orden no actualizaba
+    nada. No desmarca ningún ensayo. Devuelve (tabla, nuevas, actualizadas), con la tabla ordenada por número de muestra."""
+    numeros_ya = set(df_actual["Número"].astype(str).str.strip())
+    nuevas = [f for f in filas if f["Número"] not in numeros_ya]
+    actualizadas = 0
+    for f in filas:
+        if f["Número"] not in numeros_ya:
+            continue
+        idx = df_actual.index[df_actual["Número"].astype(str).str.strip() == f["Número"]]
+        cambio = False
+        for e in BITACORA_ENSAYOS:
+            if f.get(e) and not bool(df_actual.loc[idx, e].astype(bool).all()):
+                df_actual.loc[idx, e] = True
+                cambio = True
+        actualizadas += 1 if cambio else 0
+    if nuevas:
+        df_actual = pd.concat([df_actual, pd.DataFrame(nuevas)], ignore_index=True)
+        df_actual = df_actual[df_actual["Número"].astype(str).str.strip() != ""]  # quita la fila vacía de arranque
+    if nuevas or actualizadas:
+        orden = sorted(range(len(df_actual)), key=lambda i: clave_numero_muestra(df_actual["Número"].iloc[i]))
+        df_actual = df_actual.iloc[orden].reset_index(drop=True)
+    return df_actual, len(nuevas), actualizadas
+
+
 def _bitacora_draft_df(key, muestras):
     """Inicializa (o repara) el borrador de bitácora de esta perforación en session_state,
     agregando cualquier columna de BITACORA_BASE_COLS que falte —por ejemplo un ensayo nuevo
@@ -6010,7 +6040,7 @@ def render_bitacora():
             if archivos and st.button("Importar de estos archivos", icon=":material/publish:",
                                         key=f"btn_import_bitacora_{codigo}"):
                 advertencias_totales = []
-                importadas = 0
+                importadas = actualizadas_total = 0
                 for archivo in archivos:
                     perfs_parseadas, advertencias, _hdr = parse_bitacora_orden_xlsx(archivo.name, archivo.getvalue())
                     advertencias_totales.extend(advertencias)
@@ -6039,20 +6069,18 @@ def render_bitacora():
                                                             "migración 0038 (perforaciones.muestras_en_orden) en Supabase.")
                         key = f"{codigo}::{perf['codigo']}"
                         df_actual = _bitacora_draft_df(key, st.session_state.muestras.setdefault(key, []))
-                        numeros_ya = set(df_actual["Número"].astype(str).str.strip())
-                        filas_nuevas = [f for f in pp["filas"] if f["Número"] not in numeros_ya]
-                        if filas_nuevas:
-                            df_actual = pd.concat([df_actual, pd.DataFrame(filas_nuevas)], ignore_index=True)
-                            df_actual = df_actual[df_actual["Número"].astype(str).str.strip() != ""]  # quita la fila vacía de arranque
-                            orden = sorted(range(len(df_actual)), key=lambda i: clave_numero_muestra(df_actual["Número"].iloc[i]))
-                            df_actual = df_actual.iloc[orden].reset_index(drop=True)
+                        df_actual, n_nuevas, n_actualizadas = _fusionar_orden_en_tabla(df_actual, pp["filas"])
+                        if n_nuevas or n_actualizadas:
                             st.session_state.bitacora_draft[key] = df_actual[BITACORA_BASE_COLS]
                             # El editor guarda sus propias ediciones por posición de fila: si queda el estado viejo, se
                             # le re-aplican a la tabla nueva (filas corridas, datos pisados). Se descarta al importar.
                             st.session_state.pop(f"editor_{key}", None)
-                            importadas += len(filas_nuevas)
-                if importadas:
-                    st.success(f"Se importaron {importadas} muestra(s). Revísalas en la tabla de abajo antes de guardar la bitácora.")
+                            importadas += n_nuevas
+                            actualizadas_total += n_actualizadas
+                if importadas or actualizadas_total:
+                    st.success(f"Se importaron {importadas} muestra(s) nueva(s)"
+                               + (f" y se completaron los ensayos de {actualizadas_total} muestra(s) que ya estaban" if actualizadas_total else "")
+                               + ". Revísalas en la tabla de abajo antes de guardar la bitácora.")
                 for adv in advertencias_totales:
                     st.warning(adv)
                 if importadas:
