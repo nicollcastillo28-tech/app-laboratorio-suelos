@@ -83,6 +83,8 @@ def _pasa200():
 def _cbr():
     base = [0.04, 0.23, 0.57, 0.81, 1.0, 1.15, 1.27, 1.38, 1.49, 1.85, 2.13, 2.36]
     d = {"cbr_molde": "3", "cbr_diametro": "15.24", "cbr_altura": "11.64", "cbr_masa_molde": "6300.00",
+         "cbr_diametro_1": "15.23", "cbr_diametro_2": "15.25", "cbr_diametro_3": "15.24",
+         "cbr_altura_1": "11.63", "cbr_altura_2": "11.65", "cbr_altura_3": "11.64",
          "cbr_masa_muestra_molde_antes": "10500.00", "cbr_masa_muestra_molde_despues": "10800.00",
          "cbr_exp_lectura_inicial": "0.100", "cbr_exp_lectura_final": "0.118", "cbr_pesas_antes": "4540", "cbr_pesas_despues": "4540",
          "cbr_tiempo_inmersion_antes": "0", "cbr_tiempo_inmersion_despues": "4", "cbr_rango": "5 kN",
