@@ -8089,6 +8089,14 @@ def generar_excel_humedad(codigo, perf_codigo, muestra, project, data, observaci
     temp_horno = data.get("hum_temp_horno", "")
     ws["E28"] = "110°C" if "110" in temp_horno else ("60°C" if "60" in temp_horno else "")
 
+    # Material excluido de la muestra ensayada: tamaño (mm) en J28 y masa (g) en K28; sin material excluido, N/A en las dos (lo pide la nota de la plantilla).
+    if data.get("hum_excl_no", True):
+        ws["J28"], ws["K28"] = "N/A", "N/A"
+    else:
+        mm, g = to_float(data.get("hum_excl_mm")), to_float(data.get("hum_excl_g"))
+        ws["J28"] = mm if mm is not None else (str(data.get("hum_excl_mm") or "").strip() or None)
+        ws["K28"] = g if g is not None else (str(data.get("hum_excl_g") or "").strip() or None)
+
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
@@ -9087,6 +9095,23 @@ def render_humedad_form(data, assay_id):
             metodo_actual = data.get("hum_metodo", METODO_HUMEDAD[0])
             midx = METODO_HUMEDAD.index(metodo_actual) if metodo_actual in METODO_HUMEDAD else 0
             data["hum_metodo"] = st.selectbox("Método del Ensayo", METODO_HUMEDAD, index=midx, key=f"hum_metodo_{assay_id}")
+
+    # Material excluido de la muestra ensayada (campos J28 y K28 de la plantilla GDA-FLC-014): tamaño y masa de lo que se retiró antes del
+    # ensayo. Si no se excluyó nada, la plantilla pide escribir N/A en las dos casillas.
+    with st.container(border=True):
+        st.markdown(card_header_html("filter_alt", "Material excluido de la muestra ensayada"), unsafe_allow_html=True)
+        st.caption("Lo que se retiró de la muestra antes del ensayo (por ejemplo, piedras grandes). Si no se excluyó nada, deja «No se excluyó "
+                   "material»: en el Excel se escribe N/A en las dos casillas.")
+        sin_excluido = conmutador(f"hum_excl_no_{assay_id}", "No se excluyó material (N/A)", data.get("hum_excl_no", True))
+        data["hum_excl_no"] = bool(sin_excluido)
+        if not sin_excluido:
+            e1, e2 = st.columns(2)
+            data["hum_excl_mm"] = e1.text_input("Tamaño del material excluido (mm)", value=data.get("hum_excl_mm", ""),
+                                                 key=f"hum_excl_mm_{assay_id}", placeholder="Ej.: 75")
+            data["hum_excl_g"] = e2.text_input("Masa del material excluido (g)", value=data.get("hum_excl_g", ""),
+                                                key=f"hum_excl_g_{assay_id}", placeholder="0.00")
+            if not (str(data["hum_excl_mm"]).strip() and str(data["hum_excl_g"]).strip()):
+                st.caption("Digita el tamaño y la masa del material excluido, o marca «No se excluyó material».")
 
     filas = resultados_humedad(data)
     with resultados_desplegable():
@@ -12080,6 +12105,8 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             lab_rows = [
                 ("Temperatura Horno", data.get("hum_temp_horno")),
                 ("Método del Ensayo", data.get("hum_metodo")),
+                ("Material excluido de la muestra", "N/A (no se excluyó material)" if data.get("hum_excl_no", True)
+                 else f'{data.get("hum_excl_mm") or "—"} mm · {data.get("hum_excl_g") or "—"} g'),
                 ("Laboratorista", laboratorista),
             ]
             st.markdown(param_table_html(lab_rows, header_left="DATO", header_right="VALOR"), unsafe_allow_html=True)
