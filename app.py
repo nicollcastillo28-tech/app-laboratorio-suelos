@@ -5491,8 +5491,10 @@ def render_project_detail():
                         f'{icon(icono, size=14)} {label}</div>'
                         f'<div style="font-weight:600;font-size:15px;">{html.escape(valor or "—")}</div>')
 
-            for i, (icono, label, valor) in enumerate(info_rows):
-                st.markdown(_info_row(icono, label, valor, i == 0), unsafe_allow_html=True)
+            # La información general va en un desplegable (cerrado); las fechas quedan siempre a la vista.
+            with st.expander("Información general del proyecto", icon=":material/info:", expanded=False):
+                for i, (icono, label, valor) in enumerate(info_rows):
+                    st.markdown(_info_row(icono, label, valor, i == 0), unsafe_allow_html=True)
 
             # Fechas agrupadas en paquetes separados (orden/ingreso, plazos del proyecto) para que no se vean como una sola lista
             # larga y confusa. Recepción, ejecución y emisión van por perforación (ver la tarjeta de cada una).
