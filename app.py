@@ -9205,12 +9205,8 @@ CAMPOS_REQUERIDOS_MASA_UNITARIA = [
 # que ya traen un valor por defecto en la plantilla) tampoco son obligatorias.
 CAMPOS_REQUERIDOS_CBR = [
     ("cbr_molde", "Molde No."),
-    ("cbr_diametro_1", "Diámetro de la muestra (cm) — lectura 1"),
-    ("cbr_diametro_2", "Diámetro de la muestra (cm) — lectura 2"),
-    ("cbr_diametro_3", "Diámetro de la muestra (cm) — lectura 3"),
-    ("cbr_altura_1", "Altura de la muestra (cm) — lectura 1"),
-    ("cbr_altura_2", "Altura de la muestra (cm) — lectura 2"),
-    ("cbr_altura_3", "Altura de la muestra (cm) — lectura 3"),
+    ("cbr_diametro", "Diámetro de la muestra (cm) — promedio"),
+    ("cbr_altura", "Altura de la muestra (cm) — promedio"),
     ("cbr_masa_molde", "Masa molde (g)"),
     ("cbr_masa_muestra_molde_antes", "Masa de la muestra + molde (g) — antes de inmersión"),
     ("cbr_masa_muestra_molde_despues", "Masa de la muestra + molde (g) — después de inmersión"),
@@ -9768,10 +9764,8 @@ def render_cbr_form(data, assay_id, muestra_id):
                              f'background:{BG};color:{NEUTRAL};min-height:38px;">{copia}</div>', unsafe_allow_html=True)
 
         def _campo_lecturas(base, label):
-            """Tres lecturas digitadas y su promedio automático. El promedio queda en data[base] (cbr_diametro / cbr_altura), que es lo que usan los
-            cálculos y el Excel. Datos viejos (solo el valor único): pasan a la lectura 1 para no perderlos."""
-            if not any(f"{base}_{i}" in data for i in (1, 2, 3)) and str(data.get(base, "")).strip():
-                data[f"{base}_1"] = str(data[base])
+            """Tres lecturas digitadas y su promedio automático; si no se tienen las lecturas (se promedió a mano), el promedio se digita directo.
+            El promedio queda en data[base] (cbr_diametro / cbr_altura), que es lo que usan los cálculos y el Excel."""
             st.markdown(f'<div style="padding-top:8px;font-weight:600;">{label}</div>', unsafe_allow_html=True)
             cols = st.columns(4)
             for i in (1, 2, 3):
@@ -9780,16 +9774,22 @@ def render_cbr_form(data, assay_id, muestra_id):
                                                               placeholder=f"Lectura {i}")
             lecturas = [v for v in (to_float(data.get(f"{base}_{i}")) for i in (1, 2, 3)) if v is not None]
             promedio = sum(lecturas) / len(lecturas) if lecturas else None
-            data[base] = fmt_num(promedio, 3) if promedio is not None else ""
-            cols[3].markdown(f'<div style="padding:8px 12px;border:1px solid {BORDER};border-radius:8px;background:{BG};color:{NEUTRAL};'
-                             f'min-height:38px;" title="Promedio de las lecturas">Prom.: <b>{html.escape(data[base]) if data[base] else "—"}</b></div>',
-                             unsafe_allow_html=True)
+            key_prom = f"{base}_prom_{assay_id}"
+            if lecturas:   # con lecturas, el promedio se calcula solo (y no se edita)
+                data[base] = fmt_num(promedio, 3)
+                st.session_state[key_prom] = data[base]
+            elif key_prom not in st.session_state:
+                st.session_state[key_prom] = str(data.get(base, "") or "")
+            prom_txt = cols[3].text_input(f"{label} — promedio", key=key_prom, disabled=bool(lecturas), label_visibility="collapsed",
+                                          placeholder="Promedio", help="Se calcula solo con las lecturas; si no las tienes, escribe aquí el promedio.")
+            if not lecturas:
+                data[base] = prom_txt.strip()
             if 0 < len(lecturas) < 3:
                 st.caption(f"Faltan {3 - len(lecturas)} lectura(s): el promedio se calcula con las que hay.")
 
         _campo_replicado("cbr_molde", "Molde No.", placeholder="1")
-        _campo_lecturas("cbr_diametro", "Diámetro de la muestra (cm) — 3 lecturas")
-        _campo_lecturas("cbr_altura", "Altura de la muestra (cm) — 3 lecturas")
+        _campo_lecturas("cbr_diametro", "Diámetro de la muestra (cm) — 3 lecturas y promedio")
+        _campo_lecturas("cbr_altura", "Altura de la muestra (cm) — 3 lecturas y promedio")
         _campo_antes_despues("cbr_masa_muestra_molde", "Masa de la muestra + molde (g)")
         _campo_replicado("cbr_masa_molde", "Masa molde (g)")
 
