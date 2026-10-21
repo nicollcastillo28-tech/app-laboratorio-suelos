@@ -230,6 +230,11 @@ def restore_or_create_perforacion(project_id: str, tipo: str, consecutivo: int, 
     return create_perforacion(project_id, tipo, consecutivo, codigo)
 
 
+def rename_perforacion(perforacion_id: str, codigo: str) -> dict:
+    """Cambia el nombre (código) de una perforación. Las muestras y sus ensayos cuelgan de la perforación por su id, no por el nombre."""
+    return get_client().table("perforaciones").update({"codigo": codigo}).eq("id", perforacion_id).execute().data[0]
+
+
 def archive_perforacion(perforacion_id: str):
     client = get_client()
     client.table("perforaciones").update({"archived": True}).eq("id", perforacion_id).execute()

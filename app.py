@@ -6270,6 +6270,27 @@ def render_bitacora():
         muestras = st.session_state.muestras.setdefault(key, [])
 
         with st.expander(f"**{perf['codigo']}** — {perf['tipo']}  ·  {len(muestras)} muestra(s)", expanded=len(perforaciones) <= 3):
+            if es_jefe:
+                # Nombre propio de la perforación (por ejemplo el de un grupo de apiques): cambia el código con el que se ve en toda la app y
+                # en los Excel. Las muestras conservan su identificador interno.
+                nombre_nuevo = st.text_input("Nombre de la perforación", value=perf["codigo"], key=f"nombre_perf_{perf['id']}").strip()
+                if nombre_nuevo and nombre_nuevo != perf["codigo"] and st.button("Cambiar nombre", key=f"renombrar_perf_{perf['id']}",
+                                                                                  icon=":material/edit:"):
+                    if any(p_["codigo"].lower() == nombre_nuevo.lower() for p_ in perforaciones if p_["id"] != perf["id"]):
+                        st.error("Ya hay otra perforación con ese nombre en este proyecto.")
+                    else:
+                        try:
+                            db.rename_perforacion(perf["id"], nombre_nuevo)
+                        except Exception as e:
+                            st.error(f"No se pudo cambiar el nombre (puede que ya exista, aunque esté archivada): {e}")
+                        else:
+                            borrador = st.session_state.bitacora_draft.pop(f"{codigo}::{perf['codigo']}", None)
+                            if borrador is not None:
+                                st.session_state.bitacora_draft[f"{codigo}::{nombre_nuevo}"] = borrador
+                            if st.session_state.get("selected_perforacion") == perf["codigo"]:
+                                st.session_state.selected_perforacion = nombre_nuevo
+                            st.toast(f"Perforación renombrada a {nombre_nuevo}.", icon=":material/check_circle:")
+                            st.rerun()
             # Fecha de ingreso propia de la perforación (un mismo proyecto puede recibirlas en días distintos).
             # Se guarda sola al cambiarla -- no depende del botón "Guardar bitácora" de abajo.
             fecha_actual_perf = fecha_ingreso_perf(perf, project)
