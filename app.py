@@ -3396,7 +3396,7 @@ def desarchivar_proyecto(codigo):
             db.reset_confirmacion(a["id"], reset_status=(a["status"] == "finalizado"))
 
 
-def confirm_delete(action_key, label):
+def confirm_delete(action_key, label, boton="Eliminar"):
     """Botón de eliminar con confirmación en dos pasos. Devuelve True solo cuando se confirma."""
     flag = f"confirm_{action_key}"
     if st.session_state.get(flag):
@@ -3411,7 +3411,7 @@ def confirm_delete(action_key, label):
                 st.session_state[flag] = False
                 st.rerun()
         return False
-    if st.button("Eliminar", key=f"del_{action_key}", use_container_width=True, icon=":material/delete:"):
+    if st.button(boton, key=f"del_{action_key}", use_container_width=True, icon=":material/delete:"):
         st.session_state[flag] = True
         st.rerun()
     return False
@@ -5144,10 +5144,16 @@ def render_new_project():
 
         if perforaciones:
             st.markdown('<div class="section-title">Perforaciones y muestras</div>', unsafe_allow_html=True)
+            if len(perforaciones) > 1 and confirm_delete(f"todas_perf_{codigo_interno}", f"las {len(perforaciones)} perforaciones de esta lista con todas sus muestras",
+                                                           boton="Borrar todas las perforaciones"):
+                st.session_state.draft_perforaciones = []
+                st.session_state.draft_muestras = {}
+                st.session_state.bitacora_draft = {k: v for k, v in st.session_state.bitacora_draft.items() if not k.startswith(f"{codigo_interno}::")}
+                st.rerun()
         for perf in perforaciones:
             key = f"{codigo_interno}::{perf['codigo']}"
             muestras = st.session_state.draft_muestras.setdefault(perf["codigo"], [])
-            with st.expander(f"**{perf['codigo']}** — {perf['tipo']}  ·  {len(muestras)} muestra(s)", expanded=True):
+            with st.expander(f"**{perf['codigo']}** — {perf['tipo']}  ·  {len(muestras)} muestra(s)", expanded=len(perforaciones) <= 3):
                 # Cada perforación puede llegar al laboratorio un día distinto aunque sea del mismo proyecto;
                 # arranca con la fecha de ingreso del proyecto y se cambia aquí si esta llegó otro día.
                 if f"newperf_fecha_{key}" not in st.session_state:
@@ -6170,13 +6176,19 @@ def render_bitacora():
     st.markdown('<div class="section-title">Perforaciones y muestras</div>', unsafe_allow_html=True)
     if not perforaciones:
         st.info("Todavía no hay perforaciones en este proyecto.")
+    elif es_jefe and len(perforaciones) > 1 and confirm_delete(f"todas_perf_{codigo}", f"las {len(perforaciones)} perforaciones del proyecto con todas sus muestras",
+                                                                 boton="Borrar todas las perforaciones"):
+        for perf in list(perforaciones):
+            db.archive_perforacion(perf["id"])
+            st.session_state.bitacora_draft.pop(f"{codigo}::{perf['codigo']}", None)
+        st.rerun()
 
     edited_frames = {}
     for perf in perforaciones:
         key = f"{codigo}::{perf['codigo']}"
         muestras = st.session_state.muestras.setdefault(key, [])
 
-        with st.expander(f"**{perf['codigo']}** — {perf['tipo']}  ·  {len(muestras)} muestra(s)", expanded=True):
+        with st.expander(f"**{perf['codigo']}** — {perf['tipo']}  ·  {len(muestras)} muestra(s)", expanded=len(perforaciones) <= 3):
             # Fecha de ingreso propia de la perforación (un mismo proyecto puede recibirlas en días distintos).
             # Se guarda sola al cambiarla -- no depende del botón "Guardar bitácora" de abajo.
             fecha_actual_perf = fecha_ingreso_perf(perf, project)
