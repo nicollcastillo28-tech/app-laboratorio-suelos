@@ -14105,7 +14105,9 @@ else:
             _clear_remember_user_cookie()
     if st.session_state.pop("_pending_history_push", False):
         _push_history_entry()
+    _t_inicio = time.perf_counter()
     _load_data(solo_balanzas=st.session_state.screen == "balanzas")
+    _t_datos = time.perf_counter() - _t_inicio
     # Si algo de lo anterior refrescó el token (ver _tokens_rotated en db._refresh_if_needed
     # y en el restore de cookie de init_state), la cookie del navegador queda con un
     # refresh_token ya rotado/vencido si no se vuelve a guardar aquí con el vigente.
@@ -14124,5 +14126,8 @@ else:
         "balanzas": render_balanzas, "usuarios": render_usuarios,
         "pruebas": render_pruebas,
     }
+    _t_pantalla = time.perf_counter()
     SCREENS.get(st.session_state.screen, render_home)()
     render_bottomnav()
+    if st.query_params.get("medir"):   # medición de velocidad: agregar ?medir=1 a la dirección de la app para ver cuánto tarda cada parte
+        st.caption(f"⏱ Datos: {_t_datos * 1000:.0f} ms · Pantalla: {(time.perf_counter() - _t_pantalla) * 1000:.0f} ms")

@@ -511,11 +511,64 @@ def list_all_muestras(include_archived: bool = False) -> list[dict]:
     return q.order("numero").execute().data
 
 
+# Columnas pesadas de los ensayos (los datos digitados con sus lecturas de máquina y fotos, y el historial con sus copias): traerlas de TODOS los
+# ensayos en cada recarga era lo que hacía lenta la navegación. Se guardan en memoria por (id, updated_at) y solo se vuelven a pedir las de los
+# ensayos que cambiaron desde la última vez (updated_at lo actualiza un trigger en cada cambio).
+_COLUMNAS_PESADAS = ("data", "historial")
+_CACHE_PESADO: dict = {}
+_CACHE_PESADO_MAX = 2500
+_COLUMNAS_LIVIANAS: list | None = None
+
+
+def _guardar_pesado(fila: dict):
+    if len(_CACHE_PESADO) >= _CACHE_PESADO_MAX:
+        for clave in list(_CACHE_PESADO)[: _CACHE_PESADO_MAX // 5]:   # saca los más viejos
+            _CACHE_PESADO.pop(clave, None)
+    _CACHE_PESADO[(fila["id"], fila["updated_at"])] = {c: fila.get(c) for c in _COLUMNAS_PESADAS if c in fila}
+
+
 def list_all_assays(include_archived: bool = False) -> list[dict]:
-    q = get_client().table("assays").select("*")
-    if not include_archived:
-        q = q.eq("archived", False)
-    return q.order("created_at").execute().data
+    """Todos los ensayos. La primera vez (en el proceso) se piden completos para conocer las columnas; después solo las livianas, y las
+    pesadas (data, historial) solo de los ensayos que cambiaron."""
+    global _COLUMNAS_LIVIANAS
+    import copy
+    client = get_client()
+
+    def _consulta(columnas):
+        q = client.table("assays").select(columnas)
+        if not include_archived:
+            q = q.eq("archived", False)
+        return q.order("created_at").execute().data
+
+    if not _COLUMNAS_LIVIANAS:
+        filas = _consulta("*")
+        if filas:
+            _COLUMNAS_LIVIANAS = [c for c in filas[0] if c not in _COLUMNAS_PESADAS]
+        for f in filas:
+            _guardar_pesado(f)
+        return filas
+    filas = _consulta(",".join(_COLUMNAS_LIVIANAS))
+    faltan = []
+    for f in filas:
+        pesado = _CACHE_PESADO.get((f["id"], f["updated_at"]))
+        if pesado is None:
+            faltan.append(f["id"])
+        else:
+            f.update(copy.deepcopy(pesado))   # copia: cada sesión tiene sus propios diccionarios
+    if faltan:
+        por_id = {f["id"]: f for f in filas}
+        for i in range(0, len(faltan), 40):
+            lote = faltan[i:i + 40]
+            for p in client.table("assays").select("id,updated_at," + ",".join(_COLUMNAS_PESADAS)).in_("id", lote).execute().data:
+                _guardar_pesado(p)
+                destino = por_id.get(p["id"])
+                if destino is not None:
+                    destino.update({c: p.get(c) for c in _COLUMNAS_PESADAS if c in p})
+                    destino["updated_at"] = p["updated_at"]
+    for f in filas:   # por si un ensayo desapareció entre las dos consultas
+        for c in _COLUMNAS_PESADAS:
+            f.setdefault(c, {} if c == "data" else [])
+    return filas
 
 
 def list_profiles() -> list[dict]:
