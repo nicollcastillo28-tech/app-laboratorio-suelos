@@ -2521,12 +2521,25 @@ def resultados_granulometria(data, lim_data=None):
         return
     masa_ini = to_float(data.get("p200_seco_mas_recipiente_antes")) - to_float(data.get("p200_masa_recipiente_antes"))
     filas = []
+    acumulado = 0.0
     for (key, label, apert, _c), (_d, pasa) in zip(SIEVES, curva["puntos"]):
         ret = to_float(data.get(key)) or 0.0
-        filas.append((label, apert, fmt_num(ret, 2), fmt_num(ret / masa_ini * 100, 2), fmt_num(pasa, 2)))
-    st.markdown("**Granulometría**")
-    st.markdown(param_table_ncol_html(("TAMIZ", "ABERTURA (mm)", "W RET. (g)", "% RET.", "% PASA"), filas), unsafe_allow_html=True)
+        pct = ret / masa_ini * 100
+        acumulado += pct
+        filas.append((label, apert, fmt_num(ret, 2), fmt_num(pct, 2), fmt_num(acumulado, 2), fmt_num(pasa, 2)))
     total = sum(to_float(data.get(k)) or 0.0 for k, *_ in SIEVES)
+    # Lo que pasa el No. 200 queda en el fondo: se calcula como lo que falta para la masa inicial. La suma (tamices + fondo) debe dar la masa
+    # inicial y el 100 %; si los retenidos suman MÁS que la masa inicial, el fondo sale negativo y se avisa.
+    fondo_g = masa_ini - total
+    fondo_pct = fondo_g / masa_ini * 100
+    filas.append(("FONDO", "—", fmt_num(fondo_g, 2), fmt_num(fondo_pct, 2), fmt_num(acumulado + fondo_pct, 2), "—"))
+    filas.append(("SUMA", "", fmt_num(total + fondo_g, 2), fmt_num(acumulado + fondo_pct, 2), "", ""))
+    st.markdown("**Granulometría**")
+    st.markdown(param_table_ncol_html(("TAMIZ", "ABERTURA (mm)", "W RET. (g)", "% RET.", "% RET. ACUM.", "% PASA"), filas, negrita_ultima=True),
+                unsafe_allow_html=True)
+    if fondo_g < -0.005:
+        st.warning(f"Los retenidos suman {fmt_num(total, 2)} g, más que la masa inicial seca ({fmt_num(masa_ini, 2)} g): el fondo sale negativo. "
+                   "Revisa los pesos digitados.")
     st.caption(f"Masa inicial seca: {fmt_num(masa_ini, 2)} g · suma de retenidos: {fmt_num(total, 2)} g · pasa el No. 200 en el fondo: {fmt_num(masa_ini - total, 2)} g")
     uscs = clasificar_uscs(data, lim_data)
     aashto = clasificar_aashto(data, lim_data)
@@ -3020,20 +3033,26 @@ def param_table_3col_html(rows, headers=("PARÁMETRO", "ANTES DEL LAVADO (g)", "
             f'</tr></thead><tbody>{body}</tbody></table>')
 
 
-def param_table_ncol_html(headers, rows):
+def param_table_ncol_html(headers, rows, negrita_ultima=False):
     """Tabla con cantidad arbitraria de columnas de valores (primer elemento de cada fila es la
     etiqueta, el resto son valores) — usada para Límite Líquido/Plástico, que tienen 3 y 2
     columnas de ensayo respectivamente."""
     def celda(v):
         return html.escape(str(v)) if v not in (None, "") else "—"
-    body = "".join(
-        '<tr>' + f'<td style="padding:10px 14px;border-bottom:1px solid {BORDER};color:{TEXT};">{html.escape(str(row[0]))}</td>'
-        + "".join(f'<td style="padding:10px 14px;border-bottom:1px solid {BORDER};text-align:center;font-weight:600;color:{PRIMARY};">{celda(v)}</td>' for v in row[1:])
-        + '</tr>'
-        for row in rows
-    )
+    pad = "10px 14px" if len(headers) <= 5 else "10px 7px"   # con 6 columnas el relleno se achica para que no se salga en la tableta
+    n = len(rows)
+
+    def _fila(i, row):
+        ultima = negrita_ultima and i == n - 1   # la fila de suma va resaltada
+        fondo = f' style="background:{SECONDARY_CONTAINER};"' if ultima else ""
+        peso = "font-weight:700;" if ultima else ""
+        return (f'<tr{fondo}><td style="padding:{pad};border-bottom:1px solid {BORDER};color:{TEXT};{peso}">{html.escape(str(row[0]))}</td>'
+                + "".join(f'<td style="padding:{pad};border-bottom:1px solid {BORDER};text-align:center;font-weight:600;color:{PRIMARY};">{celda(v)}</td>'
+                          for v in row[1:])
+                + '</tr>')
+    body = "".join(_fila(i, row) for i, row in enumerate(rows))
     head_cells = "".join(
-        f'<th style="padding:10px 14px;text-align:{"left" if i == 0 else "center"};font-size:11px;letter-spacing:0.04em;color:{PRIMARY};">{h}</th>'
+        f'<th style="padding:{pad};text-align:{"left" if i == 0 else "center"};font-size:11px;letter-spacing:0.04em;color:{PRIMARY};">{h}</th>'
         for i, h in enumerate(headers)
     )
     return (f'<table style="width:100%;border-collapse:collapse;font-size:14px;">'
