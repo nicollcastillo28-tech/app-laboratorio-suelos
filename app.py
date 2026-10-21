@@ -6147,13 +6147,19 @@ def _sync_muestras_perforacion(perforacion_id, codigo, perf_codigo, nuevas_rows)
     que ya no aparecen (se borraron en el editor) se archivan."""
     actuales = st.session_state.muestras.get(f"{codigo}::{perf_codigo}", [])
     actuales_by_id_unico = {m["id_unico"]: m for m in actuales}
+    actuales_by_numero = {str(m["numero"]).strip(): m for m in actuales}
     vistos = set()
     for row in nuevas_rows:
         id_unico = row["id_unico"]
         vistos.add(id_unico)
-        existente = actuales_by_id_unico.get(id_unico)
+        # Si la perforación se renombró, sus muestras todavía traen el identificador con el nombre viejo: se reconocen por su número (en la
+        # misma perforación no se repite) y se les pone el identificador nuevo, en vez de crearlas de nuevo (chocaba con la llave única).
+        existente = actuales_by_id_unico.get(id_unico) or actuales_by_numero.get(str(row.get("numero", "")).strip())
         campos = {k: v for k, v in row.items() if k != "id_unico"}
         if existente:
+            vistos.add(existente["id_unico"])
+            if existente["id_unico"] != id_unico:
+                campos["id_unico"] = id_unico
             db.update_muestra(existente["id"], **campos)
         else:
             db.upsert_muestra(perforacion_id, id_unico, **campos)
@@ -6285,6 +6291,11 @@ def render_bitacora():
                     else:
                         try:
                             db.rename_perforacion(perf["id"], nombre_nuevo)
+                            # El identificador de cada muestra lleva el nombre de su perforación: se actualiza para que todo siga coincidiendo.
+                            for m_ in muestras:
+                                id_nuevo = m_["id_unico"].replace(f"{codigo}-{perf['codigo']}-M", f"{codigo}-{nombre_nuevo}-M", 1)
+                                if id_nuevo != m_["id_unico"]:
+                                    db.update_muestra(m_["id"], id_unico=id_nuevo)
                         except Exception as e:
                             st.error(f"No se pudo cambiar el nombre (puede que ya exista, aunque esté archivada): {e}")
                         else:
