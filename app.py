@@ -5247,8 +5247,9 @@ def render_new_project():
                     "codigo_interno": codigo_interno, "numero": numero, "anio": anio, "nombre": nombre,
                     "localizacion": localizacion, "norma": norma, "fecha_bitacora": str(fecha_bitacora),
                 }
-                excel_bytes, truncado = generar_excel_bitacora_orden(project_preview, filas_perf_preview, {perf["tipo"]})
-                st.download_button(f"Descargar bitácora — {perf['codigo']}", data=excel_bytes, icon=":material/download:",
+                truncado = len(filas_perf_preview) > BITACORA_XLSX_MAX_ROWS
+                st.download_button(f"Descargar bitácora — {perf['codigo']}", data=_excel_orden_diferido(project_preview, filas_perf_preview, {perf["tipo"]}),
+                                    icon=":material/download:",
                                     file_name=f"{codigo_interno} Bitacora de orden {perf['codigo']}.xlsx",
                                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                     use_container_width=True, key=f"dl_newperf_{key}")
@@ -5770,8 +5771,7 @@ def render_project_detail():
             # (Antes había aquí un botón "Ver detalle del sondeo": las muestras y sus ensayos ya se abren directo desde
             # "Ver muestras", así que esa pantalla intermedia no hacía falta.)
             filas_perf = _bitacora_filas_perforacion(codigo, perf["codigo"])
-            excel_bytes, _truncado = generar_excel_bitacora_orden(project, filas_perf, {perf["tipo"]})
-            st.download_button("Descargar orden", data=excel_bytes, icon=":material/download:",
+            st.download_button("Descargar orden", data=_excel_orden_diferido(project, filas_perf, {perf["tipo"]}), icon=":material/download:",
                                 file_name=f"{codigo} Bitacora de orden {perf['codigo']}.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 use_container_width=True, key=f"dl_perf_{perf['codigo']}")
@@ -6044,8 +6044,8 @@ def render_perforacion_detail():
         c1, c2 = st.columns(2)
         with c1:
             filas_perf = _bitacora_filas_perforacion(codigo, perf_codigo)
-            excel_bytes, _truncado = generar_excel_bitacora_orden(project, filas_perf, {perf["tipo"]} if perf else set())
-            st.download_button("Exportar perfil", data=excel_bytes, icon=":material/download:",
+            st.download_button("Exportar perfil", data=_excel_orden_diferido(project, filas_perf, {perf["tipo"]} if perf else set()),
+                                icon=":material/download:",
                                 file_name=f"{codigo} Bitacora de orden {perf_codigo}.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 use_container_width=True)
@@ -6405,8 +6405,9 @@ def render_bitacora():
                     "ensayos": {e: bool(row.get(e, False)) for e in BITACORA_ENSAYOS},
                     "observaciones": row.get("Observaciones") or "",
                 })
-            excel_bytes, truncado = generar_excel_bitacora_orden(project, filas_perf, {perf["tipo"]})
-            st.download_button(f"Descargar bitácora — {perf['codigo']}", data=excel_bytes, icon=":material/download:",
+            truncado = len(filas_perf) > BITACORA_XLSX_MAX_ROWS
+            st.download_button(f"Descargar bitácora — {perf['codigo']}", data=_excel_orden_diferido(project, filas_perf, {perf["tipo"]}),
+                                icon=":material/download:",
                                 file_name=f"{codigo} Bitacora de orden {perf['codigo']}.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 use_container_width=True, key=f"dl_bitacora_{key}")
@@ -7289,6 +7290,14 @@ def perf_para_encabezado(perf_codigo, muestra, por_defecto):
 def muestra_para_encabezado(perf_codigo, muestra):
     """Lo que va en la celda de número de muestra del Excel (sin el código del apique: AP-S-01-3 -> 3)."""
     return _apique_y_muestra(perf_codigo, muestra.get("numero", ""))[1]
+
+
+def _excel_orden_diferido(project, filas, tipos):
+    """Función que arma el Excel de la orden solo cuando se pulsa "descargar" (descarga diferida de st.download_button). Antes se armaba uno por
+    perforación en CADA pantalla que se abría, aunque nadie lo descargara: abrir un proyecto con varias perforaciones tardaba muchísimo."""
+    def _armar():
+        return generar_excel_bitacora_orden(project, filas, tipos)[0]
+    return _armar
 
 
 def _bitacora_filas_perforacion(codigo, perf_codigo):
@@ -13559,44 +13568,40 @@ def render_assay_form(prueba=False):
     if not motivo_no_realizado and not exportacion_en_revision and puede_descargar and assay["tipo"] == "granulometria" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
-        excel_bytes = generar_excel_granulometria(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
             "Descargar Excel (Granulometría y Límites de Atterberg — mismo archivo por muestra)", icon=":material/download:",
             on_click=_marcar_emision, args=(codigo, perf_codigo),
-            data=excel_bytes, file_name=f"Clasificacion_de_suelos_{muestra['id_unico']}.xlsm",
+            data=lambda: generar_excel_granulometria(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")), file_name=f"Clasificacion_de_suelos_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
     if not motivo_no_realizado and not exportacion_en_revision and puede_descargar and assay["tipo"] == "pasa200" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
-        excel_bytes = generar_excel_pasa200(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
             "Descargar Excel (Granulometría — mismo archivo por muestra)", icon=":material/download:",
             on_click=_marcar_emision, args=(codigo, perf_codigo),
-            data=excel_bytes, file_name=f"Clasificacion_de_suelos_{muestra['id_unico']}.xlsm",
+            data=lambda: generar_excel_pasa200(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")), file_name=f"Clasificacion_de_suelos_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
     if not motivo_no_realizado and not exportacion_en_revision and puede_descargar and assay["tipo"] == "humedad" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
-        excel_bytes = generar_excel_humedad(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
             "Descargar Excel (plantilla oficial de Humedad)", icon=":material/download:",
             on_click=_marcar_emision, args=(codigo, perf_codigo),
-            data=excel_bytes, file_name=f"Humedad_{muestra['id_unico']}.xlsx",
+            data=lambda: generar_excel_humedad(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")), file_name=f"Humedad_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
 
     if not motivo_no_realizado and not exportacion_en_revision and puede_descargar and assay["tipo"] == "limites" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
-        excel_bytes = generar_excel_limites(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
             "Descargar Excel (Granulometría y Límites de Atterberg — mismo archivo por muestra)", icon=":material/download:",
             on_click=_marcar_emision, args=(codigo, perf_codigo),
-            data=excel_bytes, file_name=f"Clasificacion_de_suelos_{muestra['id_unico']}.xlsm",
+            data=lambda: generar_excel_limites(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")), file_name=f"Clasificacion_de_suelos_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True,
         )
 
@@ -13605,11 +13610,10 @@ def render_assay_form(prueba=False):
         # propio botón, más abajo para Método B.
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
-        excel_bytes = generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
             "Descargar Excel (plantilla oficial de Peso Unitario Parafinado)", icon=":material/download:",
             on_click=_marcar_emision, args=(codigo, perf_codigo),
-            data=excel_bytes, file_name=f"Peso_unitario_parafinado_{muestra['id_unico']}.xlsx",
+            data=lambda: generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")), file_name=f"Peso_unitario_parafinado_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
 
@@ -13619,7 +13623,7 @@ def render_assay_form(prueba=False):
         st.download_button(
             "Descargar Excel (plantilla oficial de Peso Unitario Método B)", icon=":material/download:",
             on_click=_marcar_emision, args=(codigo, perf_codigo),
-            data=generar_excel_masa_unitaria_b(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            data=lambda: generar_excel_masa_unitaria_b(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Peso_unitario_metodo_b_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_masa_unitaria_b")
@@ -13630,7 +13634,7 @@ def render_assay_form(prueba=False):
         st.download_button(
             "Descargar Excel (plantilla oficial de Compresión Inconfinada)", icon=":material/download:",
             on_click=_marcar_emision, args=(codigo, perf_codigo),
-            data=generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            data=lambda: generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Compresion_inconfinada_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True, key="dl_compresion_inconfinada")
 
@@ -13640,7 +13644,7 @@ def render_assay_form(prueba=False):
         st.download_button(
             "Descargar Excel (plantilla oficial de Compresión en Roca)", icon=":material/download:",
             on_click=_marcar_emision, args=(codigo, perf_codigo),
-            data=generar_excel_compresion_roca(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            data=lambda: generar_excel_compresion_roca(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Compresion_roca_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_compresion_roca")
@@ -13651,7 +13655,7 @@ def render_assay_form(prueba=False):
         st.download_button(
             "Descargar Excel (plantilla oficial de Carga Puntual)", icon=":material/download:",
             on_click=_marcar_emision, args=(codigo, perf_codigo),
-            data=generar_excel_carga_puntual(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            data=lambda: generar_excel_carga_puntual(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Carga_puntual_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_carga_puntual")
@@ -13662,7 +13666,7 @@ def render_assay_form(prueba=False):
         st.download_button(
             "Descargar Excel (plantilla oficial de Solidez en Sulfatos)", icon=":material/download:",
             on_click=_marcar_emision, args=(codigo, perf_codigo),
-            data=generar_excel_solidez_sulfatos(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            data=lambda: generar_excel_solidez_sulfatos(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Solidez_sulfatos_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_solidez_sulfatos")
@@ -13673,7 +13677,7 @@ def render_assay_form(prueba=False):
         st.download_button(
             "Descargar Excel (plantilla oficial de Terrones de Arcilla)", icon=":material/download:",
             on_click=_marcar_emision, args=(codigo, perf_codigo),
-            data=generar_excel_terrones_arcilla(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            data=lambda: generar_excel_terrones_arcilla(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Terrones_arcilla_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_terrones_arcilla")
@@ -13684,7 +13688,7 @@ def render_assay_form(prueba=False):
         st.download_button(
             "Descargar Excel (informe GDA-FLC-026 de Alargamiento y Aplanamiento)", icon=":material/download:",
             on_click=_marcar_emision, args=(codigo, perf_codigo),
-            data=generar_excel_alargamiento_aplanamiento(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            data=lambda: generar_excel_alargamiento_aplanamiento(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Alargamiento_aplanamiento_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_alargamiento_aplanamiento")
@@ -13695,7 +13699,7 @@ def render_assay_form(prueba=False):
         st.download_button(
             "Descargar Excel (plantilla oficial de Consolidación)", icon=":material/download:",
             on_click=_marcar_emision, args=(codigo, perf_codigo),
-            data=generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            data=lambda: generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Consolidacion_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_consolidacion")
@@ -13706,7 +13710,7 @@ def render_assay_form(prueba=False):
         st.download_button(
             "Descargar Excel (plantilla oficial de Límite de Contracción)", icon=":material/download:",
             on_click=_marcar_emision, args=(codigo, perf_codigo),
-            data=generar_excel_limite_contraccion(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            data=lambda: generar_excel_limite_contraccion(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Limite_contraccion_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_limite_contraccion")
@@ -13717,7 +13721,7 @@ def render_assay_form(prueba=False):
         st.download_button(
             "Descargar Excel (plantilla oficial de Materia Orgánica)", icon=":material/download:",
             on_click=_marcar_emision, args=(codigo, perf_codigo),
-            data=generar_excel_materia_organica(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            data=lambda: generar_excel_materia_organica(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Materia_organica_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_materia_organica")
@@ -13728,7 +13732,7 @@ def render_assay_form(prueba=False):
         st.download_button(
             "Descargar Excel (plantilla oficial de Proctor)", icon=":material/download:",
             on_click=_marcar_emision, args=(codigo, perf_codigo),
-            data=generar_excel_proctor(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            data=lambda: generar_excel_proctor(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
             file_name=f"Proctor_{muestra['id_unico']}.xlsm",
             mime="application/vnd.ms-excel.sheet.macroEnabled.12", use_container_width=True, key="dl_proctor")
         st.caption("Trae el Proctor y su CBR de suelos compactados (3 moldes). El método (A/B/C), la preparación de "
@@ -13742,7 +13746,7 @@ def render_assay_form(prueba=False):
             st.download_button(
                 "Descargar Excel (Gravedad específica — agregado fino, INV E-222)", icon=":material/download:",
                 on_click=_marcar_emision, args=(codigo, perf_codigo),
-                data=generar_excel_gravedad_fino(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+                data=lambda: generar_excel_gravedad_fino(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
                 file_name=f"Gravedad_especifica_fino_{muestra['id_unico']}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
                 key="dl_gesp_fino")
@@ -13750,7 +13754,7 @@ def render_assay_form(prueba=False):
             st.download_button(
                 "Descargar Excel (Gravedad específica — arcillas y limos, INV E-128)", icon=":material/download:",
                 on_click=_marcar_emision, args=(codigo, perf_codigo),
-                data=generar_excel_gravedad_arcilla(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+                data=lambda: generar_excel_gravedad_arcilla(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
                 file_name=f"Gravedad_especifica_arcilla_{muestra['id_unico']}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
                 key="dl_gesp_arcilla")
@@ -13758,7 +13762,7 @@ def render_assay_form(prueba=False):
             st.download_button(
                 "Descargar Excel (Gravedad específica — agregado grueso, INV E-223)", icon=":material/download:",
                 on_click=_marcar_emision, args=(codigo, perf_codigo),
-                data=generar_excel_gravedad_grueso(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+                data=lambda: generar_excel_gravedad_grueso(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
                 file_name=f"Gravedad_especifica_grueso_{muestra['id_unico']}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
                 key="dl_gesp_grueso")
@@ -13766,11 +13770,10 @@ def render_assay_form(prueba=False):
     if not motivo_no_realizado and not exportacion_en_revision and assay["tipo"] == "corte-directo" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
-        excel_bytes = generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
             "Descargar Excel (plantilla oficial de Corte Directo)", icon=":material/download:",
             on_click=_marcar_emision, args=(codigo, perf_codigo),
-            data=excel_bytes, file_name=f"Corte_directo_{muestra['id_unico']}.xlsx",
+            data=lambda: generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")), file_name=f"Corte_directo_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
         st.caption("Trae los datos de las probetas, la humedad y la gravedad específica. Las lecturas de "
@@ -13780,11 +13783,10 @@ def render_assay_form(prueba=False):
     if not motivo_no_realizado and not exportacion_en_revision and assay["tipo"] == "cbr" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
-        excel_bytes = generar_excel_cbr(codigo, perf_codigo, muestra, project, data, assay.get("observations", ""))
         st.download_button(
             "Descargar Excel (plantilla oficial de CBR)", icon=":material/download:",
             on_click=_marcar_emision, args=(codigo, perf_codigo),
-            data=excel_bytes, file_name=f"CBR_{muestra['id_unico']}.xlsx",
+            data=lambda: generar_excel_cbr(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")), file_name=f"CBR_{muestra['id_unico']}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
         )
 
