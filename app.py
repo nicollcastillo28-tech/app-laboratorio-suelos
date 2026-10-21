@@ -3906,7 +3906,7 @@ def render_home():
             else:
                 col_ratios = [1.2, 2.0, 1.9, 1.5, 1.1, 0.9]
                 headers = st.columns(col_ratios)
-                for col, label in zip(headers, ["ID proyecto", "Nombre del proyecto", "Sondeo / Muestra", "Última actualización", "Estado", "Acción"]):
+                for col, label in zip(headers, ["ID proyecto", "Nombre del proyecto", "Perforación / Muestra", "Última actualización", "Estado", "Acción"]):
                     col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
                 for i, a in enumerate(recientes):
                     if i:
@@ -6043,7 +6043,7 @@ def render_perforacion_detail():
                     navigate("bitacora")
 
     with st.container(border=True):
-        st.markdown('<div class="section-title">Avance del sondeo</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Avance de la perforación</div>', unsafe_allow_html=True)
         c1, c2 = st.columns([1, 3])
         with c1:
             st.markdown(f'<div style="font-size:32px;font-weight:800;color:{PRIMARY};">{pct}%</div>', unsafe_allow_html=True)
@@ -13227,7 +13227,9 @@ def render_assay_form(prueba=False):
         st.markdown(card_header_html("info", "Información General"), unsafe_allow_html=True)
         g1, g2 = st.columns(2)
         g1.markdown(f'<div class="cell-muted">Proyecto</div><div style="font-weight:600;">{html.escape(codigo)}</div>', unsafe_allow_html=True)
-        g2.markdown(f'<div class="cell-muted">Sondeo</div><div style="font-weight:600;">{html.escape(perf_codigo)}</div>', unsafe_allow_html=True)
+        tipo_perf_txt = (get_perforacion(codigo, perf_codigo) or {}).get("tipo") or "Perforación"   # Sondeo, Apique o Fuente/Cantera, según se eligió
+        g2.markdown(f'<div class="cell-muted">{html.escape(tipo_perf_txt)}</div><div style="font-weight:600;">{html.escape(perf_codigo)}</div>',
+                    unsafe_allow_html=True)
         g3, g4 = st.columns(2)
         g3.markdown(f'<div class="cell-muted" style="margin-top:12px;">Muestra</div>'
                     f'<div style="font-weight:600;">M-{html.escape(str(muestra["numero"])) if muestra else "—"}</div>', unsafe_allow_html=True)
