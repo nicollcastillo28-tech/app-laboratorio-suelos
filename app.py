@@ -5403,6 +5403,53 @@ def _datos_informe_proyecto(codigo):
     }
 
 
+def _render_perforaciones_compactas(codigo, perforaciones):
+    """Lista compacta de perforaciones (una fila por perforación con su muestra ensayada) para órdenes con muchos apiques, donde cada uno
+    trae varias muestras pero casi siempre se ensaya una sola: en vez de una tarjeta grande por apique."""
+    ratios = [1.1, 2.6, 1.3, 0.9]
+    with st.container(border=True):
+        headers = st.columns(ratios)
+        for col, label in zip(headers, ["Perforación", "Muestra ensayada", "Avance", ""]):
+            col.markdown(f'<div class="assigned-th">{label}</div>', unsafe_allow_html=True)
+        es_lab = st.session_state.role == "laboratorista"
+        for i, perf in enumerate(perforaciones):
+            muestras = sorted(st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", []), key=lambda m: clave_numero_muestra(m["numero"]))
+            con_ensayo = [m for m in muestras if any(v for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS)]
+            hechos, total = _perforacion_ensayos_progress(codigo, perf["codigo"])
+            en_orden = max(perf.get("muestras_en_orden") or 0, len(muestras))
+            if i:
+                st.markdown(f'<hr style="margin:6px 0;border-color:{BORDER};">', unsafe_allow_html=True)
+            cols = st.columns(ratios, vertical_alignment="center")
+            cols[0].markdown(f'<span class="cell-id">{html.escape(perf["codigo"])}</span><div class="cell-muted">{html.escape(perf["tipo"])}</div>',
+                             unsafe_allow_html=True)
+            if con_ensayo:
+                lineas = []
+                for m in con_ensayo:
+                    ens = unificar_ensayos([e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS])
+                    lineas.append(f'<span class="cell-id">M-{html.escape(str(m["numero"]))}</span> '
+                                  f'<span class="cell-muted">{fmt_prof(m["profundidad_de"])}–{fmt_prof(m["profundidad_hasta"])} m · '
+                                  f'{html.escape(", ".join(ens))}</span>')
+                texto = "<br>".join(lineas) + f'<div class="cell-muted" style="font-size:11px;">de {en_orden} muestra(s) en la orden</div>'
+            else:
+                texto = f'<span class="cell-muted">Sin muestras ensayadas ({en_orden} en la orden)</span>'
+            cols[1].markdown(texto, unsafe_allow_html=True)
+            if total == 0:
+                badge, etiqueta = "badge-muted", "Pendiente"
+            elif hechos == total:
+                badge, etiqueta = "badge-success", "Completado"
+            else:
+                badge, etiqueta = "badge-warning", "En progreso"
+            cols[2].markdown(f'<span class="badge {badge}">{etiqueta}</span><div class="cell-muted" style="font-size:11px;">{hechos} de {total} ensayos</div>',
+                             unsafe_allow_html=True)
+            with cols[3]:
+                if con_ensayo and st.button("Abrir", key=f"compacta_abrir_{codigo}_{perf['codigo']}", use_container_width=True,
+                                            type="primary" if es_lab and not descripcion_completa(con_ensayo[0]) else "secondary"):
+                    st.session_state.selected_codigo = codigo
+                    st.session_state.selected_perforacion = perf["codigo"]
+                    st.session_state.selected_muestra_id = con_ensayo[0]["id_unico"]
+                    navigate("muestra-detail")
+
+
 def render_project_detail():
     codigo = st.session_state.selected_codigo
     project = get_project(codigo)
@@ -5591,7 +5638,14 @@ def render_project_detail():
                 unsafe_allow_html=True)
     if not perforaciones:
         st.info("Este proyecto todavía no tiene perforaciones. Usa la Bitácora para agregarlas.")
-    for perf in perforaciones:
+    # Con muchas perforaciones (p. ej. una orden de apiques) se muestra una lista compacta; la tarjeta completa (fechas, descarga de la orden,
+    # tabla de muestras) se ve de la que se elija debajo.
+    perforaciones_tarjeta = perforaciones
+    if len(perforaciones) > 3:
+        _render_perforaciones_compactas(codigo, perforaciones)
+        elegida = st.selectbox("Ver el detalle de una perforación", ["—"] + [p["codigo"] for p in perforaciones], key=f"detalle_perf_{codigo}")
+        perforaciones_tarjeta = [p for p in perforaciones if p["codigo"] == elegida]
+    for perf in perforaciones_tarjeta:
         muestras = st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", [])
         counts = {"sin-iniciar": 0, "en-proceso": 0, "finalizado": 0}
         for m in muestras:
