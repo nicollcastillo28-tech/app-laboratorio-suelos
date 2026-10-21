@@ -718,6 +718,9 @@ st.markdown(f"""
         box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important;
     }}
 
+    /* Nota de ayuda: botón redondo chico con el signo de pregunta (abre un cuadrito con el texto) */
+    [class*="st-key-ayuda-"] button {{ min-height: 30px !important; height: 30px !important; width: auto !important; min-width: 30px !important;
+        padding: 0 8px !important; border-radius: 15px !important; }}
     .perf-code-box {{
         display: inline-flex; align-items: center; justify-content: center;
         width: 30px; height: 30px; border-radius: 7px; background: {PRIMARY_CONTAINER};
@@ -3421,6 +3424,15 @@ def desarchivar_proyecto(codigo):
     for a in st.session_state.assays:
         if a["codigo_interno"] == codigo:
             db.reset_confirmacion(a["id"], reset_status=(a["status"] == "finalizado"))
+
+
+def nota_ayuda(texto):
+    """Nota informativa que no ocupa la pantalla: queda tras un ícono de pregunta y, al tocarlo, se abre un cuadrito con el texto."""
+    import hashlib
+    clave = hashlib.md5(str(texto).encode("utf-8")).hexdigest()[:10]
+    with st.container(key=f"ayuda-{clave}"):
+        with st.popover(" ", icon=":material/help:", help="Ver nota"):
+            st.markdown(texto)
 
 
 def confirm_delete(action_key, label, boton="Eliminar"):
@@ -9658,7 +9670,7 @@ def render_masa_unitaria_form(data, assay_id, muestra_id=None):
                 st.caption("Se muestran a medida que se digitan las masas de arriba.")
         render_equipo(data, "mu", EQUIPO_MASA_UNITARIA)
     else:
-        st.info("Formulario armado sobre la plantilla oficial GDA-FLC-030. El Excel para descargar está al final del ensayo.")
+        nota_ayuda("Formulario armado sobre la plantilla oficial GDA-FLC-030. El Excel para descargar está al final del ensayo.")
 
         def _campo_b(key, label, placeholder="0.00"):
             row = st.columns([2.2, 1])
@@ -9866,7 +9878,7 @@ def render_cbr_form(data, assay_id, muestra_id):
 
 
 def render_corte_directo_form(data, assay_id):
-    st.info("Formulario armado sobre la bitácora oficial GDA-FL-006. Los datos se llevan a la plantilla "
+    nota_ayuda("Formulario armado sobre la bitácora oficial GDA-FL-006. Los datos se llevan a la plantilla "
             "de Excel GDA-FLC-007 al descargar (abajo, al final del ensayo).")
 
     def _campo(key, label, placeholder="0.00"):
@@ -10167,7 +10179,7 @@ def resultados_consolidacion(data):
 
 
 def render_consolidacion_form(data, assay_id):
-    st.info("Formulario armado sobre la bitácora GDA-FL-017. Las lecturas de deformación de la máquina no se digitan acá: "
+    nota_ayuda("Formulario armado sobre la bitácora GDA-FL-017. Las lecturas de deformación de la máquina no se digitan acá: "
             "se pegan en el Excel de la plantilla oficial (GDA-FLC-009), que se descarga al final del ensayo.")
 
     def _campo(key, label, placeholder="0.00"):
@@ -10515,7 +10527,7 @@ def _guardar_inmediato(assay_id, data):
 
 
 def render_compresion_inconfinada_form(data, assay_id):
-    st.info("Formulario armado sobre la bitácora GDA-FL-005. El Excel para descargar (plantilla oficial GDA-FLC-008) "
+    nota_ayuda("Formulario armado sobre la bitácora GDA-FL-005. El Excel para descargar (plantilla oficial GDA-FLC-008) "
             "está al final del ensayo.")
 
     def _campo(key, label, placeholder="0.00"):
@@ -10956,7 +10968,7 @@ def resultados_compresion_roca(data):
 
 
 def render_compresion_roca_form(data, assay_id):
-    st.info("Formulario armado sobre la bitácora GDA-FL-007. El Excel para descargar (plantilla oficial GDA-FLC-043) "
+    nota_ayuda("Formulario armado sobre la bitácora GDA-FL-007. El Excel para descargar (plantilla oficial GDA-FLC-043) "
             "está al final del ensayo.")
 
     def _campo(key, label, placeholder="0.00"):
@@ -11361,7 +11373,7 @@ def _cp_panel_resultados_html(data):
 
 
 def render_carga_puntual_form(data, assay_id):
-    st.info("Formulario armado sobre la bitácora GDA-FL-020. El Excel para descargar (plantilla oficial GDA-FLC-018) "
+    nota_ayuda("Formulario armado sobre la bitácora GDA-FL-020. El Excel para descargar (plantilla oficial GDA-FLC-018) "
             "está al final del ensayo. Hasta 10 ensayos por muestra.")
 
     n_key, activo_key, defecto_key = f"cp_n_filas_{assay_id}", f"cp_activo_{assay_id}", f"cp_sentido_defecto_{assay_id}"
@@ -11743,7 +11755,7 @@ def resultados_solidez_sulfatos(data):
 
 
 def render_solidez_sulfatos_form(data, assay_id):
-    st.info("Formulario armado sobre la plantilla oficial GDA-FLC-033 (no hay bitácora de papel para este ensayo). "
+    nota_ayuda("Formulario armado sobre la plantilla oficial GDA-FLC-033 (no hay bitácora de papel para este ensayo). "
             "El Excel para descargar está al final del ensayo.")
 
     def _campo(key, label, placeholder="0.00"):
@@ -11910,7 +11922,7 @@ def resultados_terrones_arcilla(data):
 
 
 def render_terrones_arcilla_form(data, assay_id):
-    st.info("Formulario armado sobre la plantilla oficial GDA-FLC-034 (no hay bitácora de papel para este ensayo). "
+    nota_ayuda("Formulario armado sobre la plantilla oficial GDA-FLC-034 (no hay bitácora de papel para este ensayo). "
             "La gradación se lee del Excel de Granulometría de esta misma muestra (la propia plantilla lo indica) "
             "y se digita aquí. El Excel para descargar está al final del ensayo.")
 
@@ -12042,7 +12054,7 @@ def resultados_alargamiento_aplanamiento(data):
 
 
 def render_alargamiento_aplanamiento_form(data, assay_id):
-    st.info("Formulario armado sobre la bitácora GDA-FL-046 y el informe GDA-FLC-026. Si una fracción pesa menos del 5 % de la muestra, "
+    nota_ayuda("Formulario armado sobre la bitácora GDA-FL-046 y el informe GDA-FLC-026. Si una fracción pesa menos del 5 % de la muestra, "
             "la norma no pide ensayarla: déjala en blanco. El Excel para descargar está al final del ensayo.")
     render_norma_selector("alargamiento-aplanamiento", data, "aa")
     render_equipo(data, "aa", EQUIPO_ALARGAMIENTO_APLANAMIENTO)
@@ -12109,7 +12121,7 @@ def generar_excel_alargamiento_aplanamiento(codigo, perf_codigo, muestra, projec
 
 
 def render_limite_contraccion_form(data, assay_id):
-    st.info("Formulario armado sobre la plantilla oficial GDA-FLC-022. El Excel para descargar está al final del ensayo.")
+    nota_ayuda("Formulario armado sobre la plantilla oficial GDA-FLC-022. El Excel para descargar está al final del ensayo.")
 
     def _campo(key, label, placeholder="0.00"):
         row = st.columns([2.2, 1])
@@ -12148,7 +12160,7 @@ def render_limite_contraccion_form(data, assay_id):
 
 
 def render_materia_organica_form(data, assay_id):
-    st.info("Formulario armado sobre la plantilla oficial GDA-FLC-003. El Excel para descargar está al final del ensayo.")
+    nota_ayuda("Formulario armado sobre la plantilla oficial GDA-FLC-003. El Excel para descargar está al final del ensayo.")
     with st.container(border=True):
         st.markdown(card_header_html("science", "Contenido de Materia Orgánica (w %)"), unsafe_allow_html=True)
         row = st.columns([2.2, 1])
@@ -12177,7 +12189,7 @@ def render_materia_organica_form(data, assay_id):
 
 
 def render_proctor_form(data, assay_id):
-    st.info("Formulario armado sobre la bitácora oficial GDA-FL-008: el Proctor y, abajo, su CBR de suelos "
+    nota_ayuda("Formulario armado sobre la bitácora oficial GDA-FL-008: el Proctor y, abajo, su CBR de suelos "
             "compactados. Los dos salen en el mismo Excel (GDA-FLC-002) al final del ensayo.")
 
     def _tabla(titulo, icono, filas):
@@ -13298,7 +13310,7 @@ def render_assay_form(prueba=False):
         st.info("Estás revisando este ensayo como Jefe de Laboratorio: si ves algo raro puedes corregirlo aquí. Los cambios se guardan solos y "
                 "quedan registrados en el historial.")
     if jefe_trabaja:
-        st.info("Estás haciendo este ensayo como Jefe de Laboratorio: puedes digitarlo, guardarlo y enviarlo como lo haría el laboratorista. Tus cambios quedan "
+        nota_ayuda("Estás haciendo este ensayo como Jefe de Laboratorio: puedes digitarlo, guardarlo y enviarlo como lo haría el laboratorista. Tus cambios quedan "
                 "registrados en el historial a tu nombre.")
     if ing_edita:
         st.info("Estás revisando este ensayo como Director Técnico: el Jefe de Laboratorio ya lo confirmó. Si ves algo raro puedes corregirlo aquí; los "
