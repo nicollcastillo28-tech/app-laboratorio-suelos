@@ -5534,6 +5534,8 @@ def render_project_detail():
                 st.download_button("Descargar informe (PDF)", data=informe["bytes"], file_name=informe["nombre"], mime="application/pdf",
                                    icon=":material/download:", type="primary", use_container_width=True, key=f"dl_informe_{codigo}")
 
+        render_bitacoras_proyecto(codigo, project)
+
     if st.session_state.role == "jefe":
         c1, c2 = st.columns(2)
         with c1:
@@ -8565,6 +8567,145 @@ def render_descarga_por_lote(codigo, perf_codigo, project, muestras):
                         data=excel_bytes, file_name=f"{cfg['prefijo']}_{codigo}_{perf_codigo}.{cfg['ext']}",
                         mime=cfg["mime"], use_container_width=True, key=f"lote_dl_{tipo}_{perf_codigo}",
                         icon=":material/download:")
+
+
+# ════════════════════════════════════════════════════════════════════
+# BITÁCORAS DE PAPEL (GDA-FL-xxx) EN PDF
+# Las bitácoras en papel siguen vigentes (calidad y los clientes las piden); la app ya no las necesita para trabajar, pero con lo digitado se
+# llenan los mismos formatos (ver bitacoras.py y bitacoras_formatos.py) y se entregan en PDF.
+# ════════════════════════════════════════════════════════════════════
+# (clave del formato, nombre, tipos de ensayo cuyos datos lleva)
+BITACORAS_DEFS = [
+    ("FL-004", "GDA-FL-004 · Clasificación (pasa 200, granulometría, humedad y peso unitario parafinado)",
+     ("granulometria", "pasa200", "humedad", "masa-unitaria")),
+    ("FL-008", "GDA-FL-008 · Proctor y CBR", ("proctor",)),
+    ("FL-005", "GDA-FL-005 · Compresión inconfinada", ("compresion-inconfinada",)),
+    ("FL-006", "GDA-FL-006 · Corte directo", ("corte-directo",)),
+    ("FL-007", "GDA-FL-007 · Compresión en roca", ("compresion-roca",)),
+    ("FL-017", "GDA-FL-017 · Consolidación unidimensional", ("consolidacion",)),
+    ("FL-019", "GDA-FL-019 · Gravedad específica", ("gravedad-especifica",)),
+    ("FL-020", "GDA-FL-020 · Carga puntual", ("carga-puntual",)),
+    ("FL-022", "GDA-FL-022 · Terrones de arcilla y partículas deleznables", ("terrones-arcilla",)),
+    ("FL-043", "GDA-FL-043 · Solidez de los agregados en sulfatos", ("solidez-sulfatos",)),
+    ("FL-046", "GDA-FL-046 · Índices de aplanamiento y alargamiento", ("alargamiento-aplanamiento",)),
+    ("FLC-029", "GDA-FLC-029 · Peso unitario método B", ("masa-unitaria",)),
+]
+
+
+def _bitacoras_disponibles(muestra):
+    """[(clave, nombre, {tipo: datos})] de las bitácoras que se pueden llenar con lo que ya hay digitado en esa muestra."""
+    salida = []
+    for clave, nombre, tipos in BITACORAS_DEFS:
+        datos = {}
+        for t in tipos:
+            a = get_assay(muestra["id_unico"], t)
+            d = a.get("data") if a else None
+            if d and not d.get("_no_realizado") and tiene_datos_digitados(d):
+                datos[t] = d
+        mu = datos.get("masa-unitaria")
+        if mu is not None:   # el peso unitario parafinado va en la bitácora de clasificación; el método B tiene la suya
+            if (mu.get("mu_metodo") == "Método B") != (clave == "FLC-029"):
+                datos.pop("masa-unitaria")
+        if clave == "FL-004" and "pasa200" in datos and "granulometria" in datos:
+            datos.pop("pasa200")   # comparten los mismos datos
+        if datos:
+            salida.append((clave, nombre, datos))
+    return salida
+
+
+def _ctx_bitacora(codigo, perf_codigo, muestra, project, datos):
+    perf = get_perforacion(codigo, perf_codigo) or {}
+    laboratoristas = []
+    for a in st.session_state.get("assays", []):
+        if a.get("muestra_id") == muestra["id_unico"] and a["tipo"] in datos and a.get("laboratorist") and a["laboratorist"] not in laboratoristas:
+            laboratoristas.append(a["laboratorist"])
+    return {
+        "fecha_ejecucion": _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, list(datos.values()))),
+        "descripcion": descripcion_para_informe(muestra),
+        "prof_de": muestra.get("profundidad_de"), "prof_a": muestra.get("profundidad_hasta"),
+        "localizacion": project.get("localizacion", "") or "", "tipo_perf": perf.get("tipo", ""), "perf_codigo": perf_codigo,
+        "muestra": muestra["numero"], "numero": project.get("numero", ""), "anio": project.get("anio", ""),
+        "realizo": ", ".join(laboratoristas),
+    }
+
+
+def generar_bitacora_pdf(codigo, perf_codigo, muestra, project, clave, datos):
+    """PDF de una bitácora (GDA-FL-xxx) llena con lo digitado en la muestra."""
+    import bitacoras
+    import bitacoras_formatos as bf
+    ctx = _ctx_bitacora(codigo, perf_codigo, muestra, project, datos)
+    unico = next(iter(datos.values()))
+    if clave == "FL-004":
+        P, celdas, casillas = bf.llenar_fl004(ctx, datos.get("granulometria") or datos.get("pasa200"), datos.get("humedad"),
+                                              datos.get("masa-unitaria"), NORMAS_ENSAYO["granulometria"])
+    elif clave == "FL-008":
+        P, celdas, casillas = bf.llenar_fl008(ctx, unico, CBRC_GOLPES)
+    elif clave == "FL-005":
+        P, celdas, casillas = bf.llenar_fl005(ctx, unico, CI_DEFORMACIONES)
+    else:
+        llenar = {"FL-006": bf.llenar_fl006, "FL-007": bf.llenar_fl007, "FL-017": bf.llenar_fl017, "FL-019": bf.llenar_fl019,
+                  "FL-020": bf.llenar_fl020, "FL-022": bf.llenar_fl022, "FL-043": bf.llenar_fl043, "FL-046": bf.llenar_fl046,
+                  "FLC-029": bf.llenar_flc029}[clave]
+        P, celdas, casillas = llenar(ctx, unico)
+    return bitacoras.xlsx_a_pdf(bitacoras.llenar(P, celdas, casillas))
+
+
+def render_bitacoras_proyecto(codigo, project):
+    """Apartado del proyecto para descargar, en PDF, las bitácoras de papel llenas con lo digitado en la app."""
+    perforaciones = st.session_state.perforaciones.get(codigo, [])
+    with st.expander("Bitácoras de laboratorio (formatos GDA-FL en PDF)", icon=":material/description:"):
+        st.caption("Los mismos formatos de bitácora de papel, llenos con lo que se digitó en la app, para cuando calidad o el cliente los pidan. "
+                   "Elige la perforación y prepara el PDF de la bitácora de cada muestra (o todas juntas).")
+        import bitacoras
+        if not bitacoras.libreoffice_disponible():
+            st.warning("Este servidor no tiene LibreOffice instalado, que es lo que convierte la bitácora a PDF. Falta el archivo packages.txt "
+                       "con `libreoffice-calc` en el repositorio y volver a desplegar la app.")
+            return
+        if not perforaciones:
+            st.info("El proyecto todavía no tiene perforaciones.")
+            return
+        perf_codigo = st.selectbox("Perforación", [p["codigo"] for p in perforaciones], key=f"bit_perf_{codigo}")
+        muestras = st.session_state.muestras.get(f"{codigo}::{perf_codigo}", [])
+        items = [(m, _bitacoras_disponibles(m)) for m in sorted(muestras, key=lambda m: clave_numero_muestra(m["numero"]))]
+        items = [(m, lista) for m, lista in items if lista]
+        if not items:
+            st.info("Esta perforación todavía no tiene ensayos con datos digitados.")
+            return
+        for m, lista in items:
+            st.markdown(f'<div style="font-weight:700;margin-top:10px;">Muestra {html.escape(str(m["numero"]))}</div>', unsafe_allow_html=True)
+            for clave, nombre, datos in lista:
+                kb = f"bitpdf_{codigo}_{perf_codigo}_{m['id_unico']}_{clave}"
+                c1, c2 = st.columns([3, 1.2])
+                c1.markdown(f'<div style="padding-top:8px;font-size:14px;">{html.escape(nombre)}</div>', unsafe_allow_html=True)
+                with c2:
+                    if st.button("Preparar PDF", key=f"{kb}_prep", icon=":material/picture_as_pdf:", use_container_width=True):
+                        with st.spinner("Armando la bitácora..."):
+                            try:
+                                st.session_state[kb] = generar_bitacora_pdf(codigo, perf_codigo, m, project, clave, datos)
+                            except Exception as e:
+                                st.session_state.pop(kb, None)
+                                st.error(f"No se pudo armar la bitácora: {e}")
+                if st.session_state.get(kb):
+                    st.download_button(f"Descargar {clave} · muestra {m['numero']}", data=st.session_state[kb], icon=":material/download:",
+                                       file_name=f"{codigo}_{perf_codigo}_M{m['numero']}_GDA-{clave}.pdf", mime="application/pdf",
+                                       key=f"{kb}_dl", use_container_width=True)
+        st.divider()
+        total = sum(len(lista) for _m, lista in items)
+        ktodas = f"bitpdf_todas_{codigo}_{perf_codigo}"
+        if st.button(f"Preparar todas las bitácoras de {perf_codigo} ({total}) en un solo PDF", key=f"{ktodas}_prep", type="primary",
+                     icon=":material/library_books:", use_container_width=True):
+            with st.spinner(f"Armando {total} bitácora(s)... puede tardar unos segundos por cada una."):
+                try:
+                    pdfs = [generar_bitacora_pdf(codigo, perf_codigo, m, project, clave, datos) for m, lista in items for clave, _n, datos in lista]
+                    st.session_state[ktodas] = bitacoras.unir_pdfs(pdfs)
+                except Exception as e:
+                    st.session_state.pop(ktodas, None)
+                    st.error(f"No se pudieron armar las bitácoras: {e}")
+        if st.session_state.get(ktodas):
+            st.download_button(f"Descargar bitácoras de {perf_codigo} (PDF)", data=st.session_state[ktodas], icon=":material/download:",
+                               file_name=f"{codigo}_{perf_codigo}_bitacoras.pdf", mime="application/pdf", key=f"{ktodas}_dl",
+                               type="primary", use_container_width=True)
+        st.caption("Aún no tienen bitácora en papel en esta lista: Límites de Atterberg, Límite de contracción, Materia orgánica y CBR inalterado.")
 
 
 def _fijar_celda_formula(xlsx_bytes, celda, formula):

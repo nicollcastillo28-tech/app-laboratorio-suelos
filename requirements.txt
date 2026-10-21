@@ -5,3 +5,4 @@ supabase>=2.9
 extra-streamlit-components>=0.1.80
 Pillow>=10.0
 reportlab>=4.0
+pypdf>=4.0
