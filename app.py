@@ -1908,7 +1908,7 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
 # Los sitios de ESCRITURA sí cambiaron: mutan vía db.py y luego hacen
 # st.rerun(), que dispara una nueva llamada a _load_data() con el dato fresco.
 # ════════════════════════════════════════════════════════════════════
-DATOS_TTL_S = 15
+DATOS_TTL_S = 45
 
 
 def _load_data(solo_balanzas=False):
@@ -3365,7 +3365,17 @@ def get_perforacion(codigo, perforacion_codigo):
 
 
 def get_assay(muestra_id, tipo_interno):
-    return next((a for a in st.session_state.assays if a["muestra_id"] == muestra_id and a["tipo"] == tipo_interno), None)
+    """Ensayo de una muestra por tipo. Se busca en un índice (muestra, tipo) que se arma una vez por cada versión de la lista de ensayos: antes era
+    una búsqueda lineal, y las listas que la llaman por cada muestra y cada ensayo se volvían lentas con muchos ensayos."""
+    lista = st.session_state.assays
+    cache = st.session_state.get("_assay_idx")
+    if cache is None or cache[0] is not lista or cache[1] != len(lista):   # `is`: guarda la lista misma, así un id reutilizado no engaña
+        indice = {}
+        for a in lista:
+            indice.setdefault((a["muestra_id"], a["tipo"]), a)   # el primero, igual que la búsqueda lineal de antes
+        cache = (lista, len(lista), indice)
+        st.session_state["_assay_idx"] = cache
+    return cache[2].get((muestra_id, tipo_interno))
 
 
 def compute_muestra_estado(muestra):
@@ -3423,21 +3433,6 @@ def desarchivar_proyecto(codigo):
             db.reset_confirmacion(a["id"], reset_status=(a["status"] == "finalizado"))
 
 
-def nota_ayuda(texto):
-    """Nota informativa que no ocupa la pantalla: queda tras un ícono de pregunta y, al tocarlo, se abre un cuadrito con el texto.
-    En la pantalla de un ensayo todas las notas se juntan en UN solo ícono dentro de la tarjeta de Información General (ver `_slot_notas`)."""
-    slot = st.session_state.get("_slot_notas")
-    if slot is not None:
-        notas = st.session_state.setdefault("_notas_ensayo", [])
-        if texto not in notas:
-            notas.append(texto)
-        with slot.container():
-            with st.popover(" ", icon=":material/help:", help="Notas de este ensayo"):
-                for t in notas:
-                    st.markdown(t)
-        return
-    with st.popover(" ", icon=":material/help:", help="Ver nota"):
-        st.markdown(texto)
 
 
 def confirm_delete(action_key, label, boton="Eliminar"):
@@ -9675,7 +9670,6 @@ def render_masa_unitaria_form(data, assay_id, muestra_id=None):
                 st.caption("Se muestran a medida que se digitan las masas de arriba.")
         render_equipo(data, "mu", EQUIPO_MASA_UNITARIA)
     else:
-        nota_ayuda("Formulario armado sobre la plantilla oficial GDA-FLC-030. El Excel para descargar está al final del ensayo.")
 
         def _campo_b(key, label, placeholder="0.00"):
             row = st.columns([2.2, 1])
@@ -9883,8 +9877,6 @@ def render_cbr_form(data, assay_id, muestra_id):
 
 
 def render_corte_directo_form(data, assay_id):
-    nota_ayuda("Formulario armado sobre la bitácora oficial GDA-FL-006. Los datos se llevan a la plantilla "
-            "de Excel GDA-FLC-007 al descargar (abajo, al final del ensayo).")
 
     def _campo(key, label, placeholder="0.00"):
         row = st.columns([2.2, 1])
@@ -10184,8 +10176,6 @@ def resultados_consolidacion(data):
 
 
 def render_consolidacion_form(data, assay_id):
-    nota_ayuda("Formulario armado sobre la bitácora GDA-FL-017. Las lecturas de deformación de la máquina no se digitan acá: "
-            "se pegan en el Excel de la plantilla oficial (GDA-FLC-009), que se descarga al final del ensayo.")
 
     def _campo(key, label, placeholder="0.00"):
         row = st.columns([2.2, 1])
@@ -10532,8 +10522,6 @@ def _guardar_inmediato(assay_id, data):
 
 
 def render_compresion_inconfinada_form(data, assay_id):
-    nota_ayuda("Formulario armado sobre la bitácora GDA-FL-005. El Excel para descargar (plantilla oficial GDA-FLC-008) "
-            "está al final del ensayo.")
 
     def _campo(key, label, placeholder="0.00"):
         row = st.columns([2.2, 1])
@@ -10973,8 +10961,6 @@ def resultados_compresion_roca(data):
 
 
 def render_compresion_roca_form(data, assay_id):
-    nota_ayuda("Formulario armado sobre la bitácora GDA-FL-007. El Excel para descargar (plantilla oficial GDA-FLC-043) "
-            "está al final del ensayo.")
 
     def _campo(key, label, placeholder="0.00"):
         row = st.columns([2.2, 1])
@@ -11378,8 +11364,6 @@ def _cp_panel_resultados_html(data):
 
 
 def render_carga_puntual_form(data, assay_id):
-    nota_ayuda("Formulario armado sobre la bitácora GDA-FL-020. El Excel para descargar (plantilla oficial GDA-FLC-018) "
-            "está al final del ensayo. Hasta 10 ensayos por muestra.")
 
     n_key, activo_key, defecto_key = f"cp_n_filas_{assay_id}", f"cp_activo_{assay_id}", f"cp_sentido_defecto_{assay_id}"
     if n_key not in st.session_state:
@@ -11760,8 +11744,6 @@ def resultados_solidez_sulfatos(data):
 
 
 def render_solidez_sulfatos_form(data, assay_id):
-    nota_ayuda("Formulario armado sobre la plantilla oficial GDA-FLC-033 (no hay bitácora de papel para este ensayo). "
-            "El Excel para descargar está al final del ensayo.")
 
     def _campo(key, label, placeholder="0.00"):
         row = st.columns([2.2, 1])
@@ -11927,9 +11909,6 @@ def resultados_terrones_arcilla(data):
 
 
 def render_terrones_arcilla_form(data, assay_id):
-    nota_ayuda("Formulario armado sobre la plantilla oficial GDA-FLC-034 (no hay bitácora de papel para este ensayo). "
-            "La gradación se lee del Excel de Granulometría de esta misma muestra (la propia plantilla lo indica) "
-            "y se digita aquí. El Excel para descargar está al final del ensayo.")
 
     def _campo(key, label, placeholder="0.00"):
         row = st.columns([2.2, 1])
@@ -12059,8 +12038,6 @@ def resultados_alargamiento_aplanamiento(data):
 
 
 def render_alargamiento_aplanamiento_form(data, assay_id):
-    nota_ayuda("Formulario armado sobre la bitácora GDA-FL-046 y el informe GDA-FLC-026. Si una fracción pesa menos del 5 % de la muestra, "
-            "la norma no pide ensayarla: déjala en blanco. El Excel para descargar está al final del ensayo.")
     render_norma_selector("alargamiento-aplanamiento", data, "aa")
     render_equipo(data, "aa", EQUIPO_ALARGAMIENTO_APLANAMIENTO)
     for clave in ("alar", "apla"):
@@ -12126,7 +12103,6 @@ def generar_excel_alargamiento_aplanamiento(codigo, perf_codigo, muestra, projec
 
 
 def render_limite_contraccion_form(data, assay_id):
-    nota_ayuda("Formulario armado sobre la plantilla oficial GDA-FLC-022. El Excel para descargar está al final del ensayo.")
 
     def _campo(key, label, placeholder="0.00"):
         row = st.columns([2.2, 1])
@@ -12165,7 +12141,6 @@ def render_limite_contraccion_form(data, assay_id):
 
 
 def render_materia_organica_form(data, assay_id):
-    nota_ayuda("Formulario armado sobre la plantilla oficial GDA-FLC-003. El Excel para descargar está al final del ensayo.")
     with st.container(border=True):
         st.markdown(card_header_html("science", "Contenido de Materia Orgánica (w %)"), unsafe_allow_html=True)
         row = st.columns([2.2, 1])
@@ -12194,8 +12169,6 @@ def render_materia_organica_form(data, assay_id):
 
 
 def render_proctor_form(data, assay_id):
-    nota_ayuda("Formulario armado sobre la bitácora oficial GDA-FL-008: el Proctor y, abajo, su CBR de suelos "
-            "compactados. Los dos salen en el mismo Excel (GDA-FLC-002) al final del ensayo.")
 
     def _tabla(titulo, icono, filas):
         with st.container(border=True):
@@ -13242,9 +13215,6 @@ def render_assay_form(prueba=False):
 
     with st.container(border=True):
         st.markdown(card_header_html("info", "Información General"), unsafe_allow_html=True)
-        # Las notas de este ensayo (quién lo hace, de qué formato sale) se juntan aquí en un ícono de pregunta (ver nota_ayuda).
-        st.session_state["_notas_ensayo"] = []
-        st.session_state["_slot_notas"] = st.empty()
         g1, g2 = st.columns(2)
         g1.markdown(f'<div class="cell-muted">Proyecto</div><div style="font-weight:600;">{html.escape(codigo)}</div>', unsafe_allow_html=True)
         tipo_perf_txt = (get_perforacion(codigo, perf_codigo) or {}).get("tipo") or "Perforación"   # Sondeo, Apique o Fuente/Cantera, según se eligió
@@ -13296,8 +13266,10 @@ def render_assay_form(prueba=False):
                         if nuevo_hum != muestra.get(f"cond_{cond_key}_hum", ""):
                             cambios_cond[f"cond_{cond_key}_hum"] = nuevo_hum
                         if cambios_cond:
+                            _sucios_antes = st.session_state.get("_datos_sucios", False)
                             db.update_muestra(muestra["id"], **cambios_cond)
-                            muestra.update(cambios_cond)
+                            muestra.update(cambios_cond)   # ya queda al día en memoria: no obliga a recargar toda la base
+                            st.session_state["_datos_sucios"] = _sucios_antes
 
     # Pasa 200 comparte plantilla y datos con Granulometría: si la muestra también tiene un
     # ensayo de Granulometría, "Pasa 200" lee y escribe directamente sobre ESE diccionario de
@@ -13314,15 +13286,6 @@ def render_assay_form(prueba=False):
                     f'{icon("block", size=18)} <b>No se pudo realizar este ensayo.</b> {html.escape(motivo_no_realizado)}</div>',
                     unsafe_allow_html=True)
 
-    if jefe_edita:
-        nota_ayuda("Estás revisando este ensayo como Jefe de Laboratorio: si ves algo raro puedes corregirlo aquí. Los cambios se guardan solos y "
-                "quedan registrados en el historial.")
-    if jefe_trabaja:
-        nota_ayuda("Estás haciendo este ensayo como Jefe de Laboratorio: puedes digitarlo, guardarlo y enviarlo como lo haría el laboratorista. Tus cambios quedan "
-                "registrados en el historial a tu nombre.")
-    if ing_edita:
-        nota_ayuda("Estás revisando este ensayo como Director Técnico: el Jefe de Laboratorio ya lo confirmó. Si ves algo raro puedes corregirlo aquí; los "
-                "cambios se guardan solos y quedan registrados en el historial. Luego confírmalo o devuélvelo desde la muestra.")
     if read_only:
         if lab_entregado:
             st.info("Ya entregaste este ensayo: queda en revisión del Jefe de Laboratorio y no lo puedes editar. Si hay que corregir algo, "
@@ -13451,11 +13414,19 @@ def render_assay_form(prueba=False):
             # pestaña a medio guardar) se avisa con un error en vez de dejarlo pasar en silencio: sin este intento
             # explícito, la excepción tumbaba toda la página sin decir qué pasó ni qué hacer.
             hay_foto = any(isinstance(v, dict) and "b64" in v for v in data.values())
+            # El autoguardado ya deja el ensayo al día en memoria (abajo): no hace falta que la próxima pantalla vuelva a pedir toda la base
+            # (eso era lo que hacía lenta la navegación después de digitar). Si quien guarda es el Jefe o el Director Técnico, sí se recarga,
+            # porque además se registra quién hizo el último cambio.
+            _sucios_antes = st.session_state.get("_datos_sucios", False)
             try:
                 with st.spinner("Guardando la foto…" if hay_foto else "Guardando…"):
-                    db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status=nuevo_status)
+                    fila_guardada = db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status=nuevo_status)
                     if pasa200_gran_sibling:
                         db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
+                if not supervisor_registra and not pasa200_gran_sibling:
+                    st.session_state["_datos_sucios"] = _sucios_antes
+                if isinstance(fila_guardada, dict) and fila_guardada.get("updated_at"):
+                    assay["lastModified"] = fila_guardada["updated_at"]
                 assay["data"] = data
                 assay["observations"] = observations
                 assay["laboratorist"] = laboratorist

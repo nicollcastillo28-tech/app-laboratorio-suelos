@@ -85,7 +85,9 @@ class FormatosOficialesTest(unittest.TestCase):
               '_fecha_ddmmaaaa': lambda v: v, '_fecha_recepcion_perf': lambda *a: '12/10/2026',
               'fecha_ejecucion_informe': lambda *a: '13/10/2026', 'fecha_emision_hoy': lambda: '16/10/2026',
               'get_perforacion': lambda *a: {'tipo': 'Sondeo'}, 'TIPO_PERFORACION_EXCEL': {'Sondeo': 'SONDEO'},
-              'descripcion_para_informe': lambda m: 'SUELO DE PRUEBA'}
+              'descripcion_para_informe': lambda m: 'SUELO DE PRUEBA',
+              'perf_para_encabezado': lambda perf_codigo, muestra, por_defecto: por_defecto,
+              'muestra_para_encabezado': lambda perf_codigo, muestra: muestra['numero']}
         exec(compile(ast.Module(body=funciones, type_ignores=[]), str(ROOT/'app.py'), 'exec'), ns)
         muestra = {'numero': '13', 'profundidad_de': '2.31', 'profundidad_hasta': '3.47'}
         def formulas(xml):
