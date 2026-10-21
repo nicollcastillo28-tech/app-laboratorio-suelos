@@ -718,9 +718,6 @@ st.markdown(f"""
         box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important;
     }}
 
-    /* Nota de ayuda: botón redondo chico con el signo de pregunta (abre un cuadrito con el texto) */
-    [class*="st-key-ayuda-"] button {{ min-height: 30px !important; height: 30px !important; width: auto !important; min-width: 30px !important;
-        padding: 0 8px !important; border-radius: 15px !important; }}
     .perf-code-box {{
         display: inline-flex; align-items: center; justify-content: center;
         width: 30px; height: 30px; border-radius: 7px; background: {PRIMARY_CONTAINER};
@@ -3427,12 +3424,20 @@ def desarchivar_proyecto(codigo):
 
 
 def nota_ayuda(texto):
-    """Nota informativa que no ocupa la pantalla: queda tras un ícono de pregunta y, al tocarlo, se abre un cuadrito con el texto."""
-    import hashlib
-    clave = hashlib.md5(str(texto).encode("utf-8")).hexdigest()[:10]
-    with st.container(key=f"ayuda-{clave}"):
-        with st.popover(" ", icon=":material/help:", help="Ver nota"):
-            st.markdown(texto)
+    """Nota informativa que no ocupa la pantalla: queda tras un ícono de pregunta y, al tocarlo, se abre un cuadrito con el texto.
+    En la pantalla de un ensayo todas las notas se juntan en UN solo ícono dentro de la tarjeta de Información General (ver `_slot_notas`)."""
+    slot = st.session_state.get("_slot_notas")
+    if slot is not None:
+        notas = st.session_state.setdefault("_notas_ensayo", [])
+        if texto not in notas:
+            notas.append(texto)
+        with slot.container():
+            with st.popover(" ", icon=":material/help:", help="Notas de este ensayo"):
+                for t in notas:
+                    st.markdown(t)
+        return
+    with st.popover(" ", icon=":material/help:", help="Ver nota"):
+        st.markdown(texto)
 
 
 def confirm_delete(action_key, label, boton="Eliminar"):
@@ -13237,6 +13242,9 @@ def render_assay_form(prueba=False):
 
     with st.container(border=True):
         st.markdown(card_header_html("info", "Información General"), unsafe_allow_html=True)
+        # Las notas de este ensayo (quién lo hace, de qué formato sale) se juntan aquí en un ícono de pregunta (ver nota_ayuda).
+        st.session_state["_notas_ensayo"] = []
+        st.session_state["_slot_notas"] = st.empty()
         g1, g2 = st.columns(2)
         g1.markdown(f'<div class="cell-muted">Proyecto</div><div style="font-weight:600;">{html.escape(codigo)}</div>', unsafe_allow_html=True)
         tipo_perf_txt = (get_perforacion(codigo, perf_codigo) or {}).get("tipo") or "Perforación"   # Sondeo, Apique o Fuente/Cantera, según se eligió
@@ -13307,13 +13315,13 @@ def render_assay_form(prueba=False):
                     unsafe_allow_html=True)
 
     if jefe_edita:
-        st.info("Estás revisando este ensayo como Jefe de Laboratorio: si ves algo raro puedes corregirlo aquí. Los cambios se guardan solos y "
+        nota_ayuda("Estás revisando este ensayo como Jefe de Laboratorio: si ves algo raro puedes corregirlo aquí. Los cambios se guardan solos y "
                 "quedan registrados en el historial.")
     if jefe_trabaja:
         nota_ayuda("Estás haciendo este ensayo como Jefe de Laboratorio: puedes digitarlo, guardarlo y enviarlo como lo haría el laboratorista. Tus cambios quedan "
                 "registrados en el historial a tu nombre.")
     if ing_edita:
-        st.info("Estás revisando este ensayo como Director Técnico: el Jefe de Laboratorio ya lo confirmó. Si ves algo raro puedes corregirlo aquí; los "
+        nota_ayuda("Estás revisando este ensayo como Director Técnico: el Jefe de Laboratorio ya lo confirmó. Si ves algo raro puedes corregirlo aquí; los "
                 "cambios se guardan solos y quedan registrados en el historial. Luego confírmalo o devuélvelo desde la muestra.")
     if read_only:
         if lab_entregado:
