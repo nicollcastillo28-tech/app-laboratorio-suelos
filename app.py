@@ -7184,6 +7184,27 @@ def render_muestra_detail():
 # ════════════════════════════════════════════════════════════════════
 # GENERAR EXCEL DE BITÁCORA DE ORDEN (plantilla oficial GDA-FL-003)
 # ════════════════════════════════════════════════════════════════════
+def _apique_y_muestra(perf_codigo, numero):
+    """(apique, número de muestra) de una muestra de apiques agrupados en una perforación: la muestra 'AP-S-01-3' de la perforación 'AP-S' es la
+    muestra '3' del apique 'AP-S-01'. Si el número no es de esa forma devuelve (None, numero)."""
+    numero = str(numero).strip()
+    m = re.match(r"^(.+)-(\d+[A-Za-z]?)$", numero)
+    if m and perf_codigo and m.group(1).upper().startswith(str(perf_codigo).upper()) and m.group(1).upper() != str(perf_codigo).upper():
+        return m.group(1), m.group(2)
+    return None, numero
+
+
+def perf_para_encabezado(perf_codigo, muestra, por_defecto):
+    """Lo que va en la celda de número de perforación del Excel: el apique de la muestra (AP-S-01) cuando los apiques están agrupados en una
+    perforación, y si no, `por_defecto`."""
+    return _apique_y_muestra(perf_codigo, (muestra or {}).get("numero", ""))[0] or por_defecto
+
+
+def muestra_para_encabezado(perf_codigo, muestra):
+    """Lo que va en la celda de número de muestra del Excel (sin el código del apique: AP-S-01-3 -> 3)."""
+    return _apique_y_muestra(perf_codigo, muestra.get("numero", ""))[1]
+
+
 def _bitacora_filas_perforacion(codigo, perf_codigo):
     """Muestras de UNA perforación ya guardada, en el formato que espera
     generar_excel_bitacora_orden. Cada perforación se exporta a su propio Excel —
@@ -7259,8 +7280,9 @@ def generar_excel_bitacora_orden(project, filas, tipos_usados):
     truncado = len(filas) > BITACORA_XLSX_MAX_ROWS
     for i, fila in enumerate(filas[:BITACORA_XLSX_MAX_ROWS]):
         r = 18 + i
-        ws[f"A{r}"] = fila["perf_codigo"]
-        ws[f"B{r}"] = fila["numero"]
+        apique, num_muestra = _apique_y_muestra(fila["perf_codigo"], fila["numero"])   # apiques agrupados: cada fila vuelve a su apique
+        ws[f"A{r}"] = apique or fila["perf_codigo"]
+        ws[f"B{r}"] = num_muestra
         ws[f"C{r}"] = fila["tipo_muestra"]
         ws[f"D{r}"] = to_float(fila.get("profundidad_de"))
         ws[f"E{r}"] = to_float(fila.get("profundidad_hasta"))
@@ -7318,8 +7340,8 @@ def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observ
     ws["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""  # Tipo de perforación (lista desplegable)
     # El número de perforación cae en una celda distinta según la plantilla: F12 en la de
     # Humedad (GDA-FLC-014), F12 también en Granulometría/Límites (GDA-FLC-001, revisión de octubre de 2026).
-    ws[perf_numero_cell] = perf["consecutivo"] if perf else ""
-    ws["H12"] = muestra["numero"]
+    ws[perf_numero_cell] = perf_para_encabezado(perf_codigo, muestra, perf["consecutivo"] if perf else "")
+    ws["H12"] = muestra_para_encabezado(perf_codigo, muestra)
     ws["K12"] = to_float(muestra.get("profundidad_de"))
     ws["M12"] = to_float(muestra.get("profundidad_hasta"))
     # Descripción visual: primero la frase armada de los menús desplegables (+ notas
@@ -8244,8 +8266,8 @@ def _llenar_encabezado_masa_unitaria(ws, codigo, perf_codigo, muestra, project, 
 
     perf = get_perforacion(codigo, perf_codigo)
     ws["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""  # Tipo de perforación (lista desplegable)
-    ws["D12"] = perf["consecutivo"] if perf else ""  # Número de perforación
-    ws["F12"] = muestra["numero"]  # Muestra No.
+    ws["D12"] = perf_para_encabezado(perf_codigo, muestra, perf["consecutivo"] if perf else "")  # Número de perforación
+    ws["F12"] = muestra_para_encabezado(perf_codigo, muestra)  # Muestra No.
     ws["I12"] = to_float(muestra.get("profundidad_de"))
     ws["K12"] = to_float(muestra.get("profundidad_hasta"))
     ws["C13"] = descripcion_para_informe(muestra)
@@ -8295,8 +8317,8 @@ def _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observacio
 
     perf = get_perforacion(codigo, perf_codigo)
     ws["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""  # Tipo de perforación (lista desplegable)
-    ws["F12"] = perf["consecutivo"] if perf else ""  # Número de perforación
-    ws["H12"] = muestra["numero"]  # Muestra No.
+    ws["F12"] = perf_para_encabezado(perf_codigo, muestra, perf["consecutivo"] if perf else "")  # Número de perforación
+    ws["H12"] = muestra_para_encabezado(perf_codigo, muestra)  # Muestra No.
     prof_de, prof_hasta = to_float(muestra.get("profundidad_de")), to_float(muestra.get("profundidad_hasta"))
     ws["K12"] = f"{prof_de}-{prof_hasta}" if prof_de is not None and prof_hasta is not None else ""
     ws["C13"] = descripcion_para_informe(muestra)
@@ -8391,8 +8413,8 @@ def _generar_excel_gravedad(template, hoja, celdas, codigo, perf_codigo, muestra
     ws["K9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
     ws["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
-    ws["D12"] = perf_codigo
-    ws["F12"] = muestra["numero"]
+    ws["D12"] = perf_para_encabezado(perf_codigo, muestra, perf_codigo)
+    ws["F12"] = muestra_para_encabezado(perf_codigo, muestra)
     ws["I12"] = to_float(muestra.get("profundidad_de"))
     ws["K12"] = to_float(muestra.get("profundidad_hasta"))
     ws["C13"] = descripcion_para_informe(muestra)
@@ -8434,7 +8456,7 @@ def generar_excel_limite_contraccion(codigo, perf_codigo, muestra, project, data
     ws["N9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
     ws["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
-    ws["F12"] = perf_codigo
+    ws["F12"] = perf_para_encabezado(perf_codigo, muestra, perf_codigo)
     ws["I12"] = muestra["numero"]
     ws["L12"] = to_float(muestra.get("profundidad_de"))
     ws["N12"] = to_float(muestra.get("profundidad_hasta"))
@@ -8474,8 +8496,8 @@ def generar_excel_materia_organica(codigo, perf_codigo, muestra, project, data, 
     ws["M9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
     ws["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
-    ws["F12"] = perf_codigo
-    ws["H12"] = muestra["numero"]
+    ws["F12"] = perf_para_encabezado(perf_codigo, muestra, perf_codigo)
+    ws["H12"] = muestra_para_encabezado(perf_codigo, muestra)
     ws["K12"] = to_float(muestra.get("profundidad_de"))
     ws["M12"] = to_float(muestra.get("profundidad_hasta"))
     ws["D13"] = descripcion_para_informe(muestra)
@@ -8507,8 +8529,8 @@ def generar_excel_proctor(codigo, perf_codigo, muestra, project, data, observaci
     ws["M9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
     ws["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
-    ws["F12"] = perf_codigo
-    ws["H12"] = muestra["numero"]
+    ws["F12"] = perf_para_encabezado(perf_codigo, muestra, perf_codigo)
+    ws["H12"] = muestra_para_encabezado(perf_codigo, muestra)
     ws["K12"] = to_float(muestra.get("profundidad_de"))
     ws["M12"] = to_float(muestra.get("profundidad_hasta"))
     ws["D13"] = descripcion_para_informe(muestra)
@@ -8716,8 +8738,8 @@ def _ctx_bitacora(codigo, perf_codigo, muestra, project, datos):
         "fecha_ejecucion": _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, list(datos.values()))),
         "descripcion": descripcion_para_informe(muestra),
         "prof_de": muestra.get("profundidad_de"), "prof_a": muestra.get("profundidad_hasta"),
-        "localizacion": project.get("localizacion", "") or "", "tipo_perf": perf.get("tipo", ""), "perf_codigo": perf_codigo,
-        "muestra": muestra["numero"], "numero": project.get("numero", ""), "anio": project.get("anio", ""),
+        "localizacion": project.get("localizacion", "") or "", "tipo_perf": perf.get("tipo", ""), "perf_codigo": perf_para_encabezado(perf_codigo, muestra, perf_codigo),
+        "muestra": muestra_para_encabezado(perf_codigo, muestra), "numero": project.get("numero", ""), "anio": project.get("anio", ""),
         "realizo": ", ".join(laboratoristas),
     }
 
@@ -8863,7 +8885,7 @@ def generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, obs
     ws["L9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
     ws["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
-    ws["D12"] = perf_codigo
+    ws["D12"] = perf_para_encabezado(perf_codigo, muestra, perf_codigo)
     ws["G12"] = muestra["numero"]
     ws["J12"] = to_float(muestra.get("profundidad_de"))
     ws["L12"] = to_float(muestra.get("profundidad_hasta"))
@@ -9486,8 +9508,8 @@ def generar_excel_masa_unitaria_b(codigo, perf_codigo, muestra, project, data, o
     c["K9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
     c["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
-    c["D12"] = perf_codigo
-    c["F12"] = muestra["numero"]
+    c["D12"] = perf_para_encabezado(perf_codigo, muestra, perf_codigo)
+    c["F12"] = muestra_para_encabezado(perf_codigo, muestra)
     c["I12"] = to_float(muestra.get("profundidad_de"))
     c["K12"] = to_float(muestra.get("profundidad_hasta"))
     c["C13"] = descripcion_para_informe(muestra)
@@ -10202,7 +10224,7 @@ def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, obs
     ws["P9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
     ws["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
-    ws["F12"] = perf_codigo
+    ws["F12"] = perf_para_encabezado(perf_codigo, muestra, perf_codigo)
     ws["I12"] = muestra["numero"]
     ws["M12"] = to_float(muestra.get("profundidad_de"))
     ws["O12"] = to_float(muestra.get("profundidad_hasta"))
@@ -10736,8 +10758,8 @@ def generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, 
     c["N9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
     c["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
-    c["D12"] = perf_codigo
-    c["F12"] = muestra["numero"]
+    c["D12"] = perf_para_encabezado(perf_codigo, muestra, perf_codigo)
+    c["F12"] = muestra_para_encabezado(perf_codigo, muestra)
     c["H12"] = to_float(muestra.get("profundidad_de"))
     c["J12"] = to_float(muestra.get("profundidad_hasta"))
     c["C13"] = descripcion_para_informe(muestra)
@@ -10990,8 +11012,8 @@ def generar_excel_compresion_roca(codigo, perf_codigo, muestra, project, data, o
     c["N9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
     c["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
-    c["D12"] = perf_codigo
-    c["F12"] = muestra["numero"]
+    c["D12"] = perf_para_encabezado(perf_codigo, muestra, perf_codigo)
+    c["F12"] = muestra_para_encabezado(perf_codigo, muestra)
     c["H12"] = to_float(muestra.get("profundidad_de"))
     c["J12"] = to_float(muestra.get("profundidad_hasta"))
     c["C13"] = descripcion_para_informe(muestra)
@@ -11479,7 +11501,7 @@ def generar_excel_carga_puntual(codigo, perf_codigo, muestra, project, data, obs
     c["N9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
     c["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
-    c["F12"] = perf_codigo
+    c["F12"] = perf_para_encabezado(perf_codigo, muestra, perf_codigo)
     c["I12"] = muestra["numero"]
     c["L12"] = to_float(muestra.get("profundidad_de"))
     c["N12"] = to_float(muestra.get("profundidad_hasta"))
@@ -11718,8 +11740,8 @@ def generar_excel_solidez_sulfatos(codigo, perf_codigo, muestra, project, data, 
     c["K9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
     c["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
-    c["D12"] = perf_codigo
-    c["F12"] = muestra["numero"]
+    c["D12"] = perf_para_encabezado(perf_codigo, muestra, perf_codigo)
+    c["F12"] = muestra_para_encabezado(perf_codigo, muestra)
     c["I12"] = to_float(muestra.get("profundidad_de"))
     c["K12"] = to_float(muestra.get("profundidad_hasta"))
     c["C13"] = descripcion_para_informe(muestra)
@@ -11882,8 +11904,8 @@ def generar_excel_terrones_arcilla(codigo, perf_codigo, muestra, project, data, 
     c["J9"] = project.get("anio", "") if project else ""
     perf = get_perforacion(codigo, perf_codigo)
     c["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
-    c["D12"] = perf_codigo
-    c["F12"] = muestra["numero"]
+    c["D12"] = perf_para_encabezado(perf_codigo, muestra, perf_codigo)
+    c["F12"] = muestra_para_encabezado(perf_codigo, muestra)
     c["H12"] = to_float(muestra.get("profundidad_de"))
     c["J12"] = to_float(muestra.get("profundidad_hasta"))
     c["C13"] = descripcion_para_informe(muestra)
@@ -11997,8 +12019,8 @@ def generar_excel_alargamiento_aplanamiento(codigo, perf_codigo, muestra, projec
     c["K10"] = AA_CODIGO_INFORME
     perf = get_perforacion(codigo, perf_codigo)
     c["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
-    c["D12"] = perf_codigo
-    c["F12"] = muestra["numero"]
+    c["D12"] = perf_para_encabezado(perf_codigo, muestra, perf_codigo)
+    c["F12"] = muestra_para_encabezado(perf_codigo, muestra)
     c["H12"] = to_float(muestra.get("profundidad_de"))
     c["J12"] = to_float(muestra.get("profundidad_hasta"))
     c["C13"] = descripcion_para_informe(muestra)
