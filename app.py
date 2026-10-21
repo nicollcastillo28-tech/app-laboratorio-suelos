@@ -5966,6 +5966,10 @@ def _render_tabla_muestras_con_semaforo(muestras, codigo, perf_codigo):
                             st.session_state.selected_codigo = codigo
                             st.session_state.selected_perforacion = perf_codigo
                             st.session_state.selected_muestra_id = m["id_unico"]
+                            if tipo_interno in ("cbr", "proctor") and not get_assay(m["id_unico"], "cbr") and not get_assay(m["id_unico"], "proctor"):
+                                # Primero se elige si es CBR, Proctor o los dos (la orden a veces marca uno y pide los dos en observaciones)
+                                st.session_state["_elegir_cbr_proctor"] = m["id_unico"]
+                                navigate("muestra-detail")
                             if existing:
                                 st.session_state.selected_assay_id = existing["id"]
                             else:
@@ -6677,6 +6681,42 @@ def _guardar_descripcion_visual(muestra_id, campos):
                  icon=":material/warning:")
 
 
+def _render_seleccion_cbr_proctor(muestra, muestra_id, puede_editar):
+    """Cuando una muestra trae CBR o Proctor: lista de casillas para elegir qué se ensaya de verdad. La orden a veces marca solo CBR y en las
+    observaciones piden CBR y Proctor (o al revés); aquí se corrige la selección sin tener que editar la bitácora de orden."""
+    marcados = {e: bool(muestra["ensayos"].get(e)) for e in ("CBR", "Proctor")}
+    if not any(marcados.values()):
+        return
+    obs = str(muestra.get("observaciones") or "").strip()
+    mencionados = [e for e in ("CBR", "Proctor") if e.lower() in obs.lower() and not marcados[e]]
+    iniciados = {e: bool(get_assay(muestra_id, SUPPORTED_ASSAY_MAP[e])) for e in ("CBR", "Proctor")}
+    pendiente = st.session_state.get("_elegir_cbr_proctor") == muestra_id
+    with st.container(border=True):
+        st.markdown('<div class="section-title">CBR / Proctor: ¿qué se ensaya?</div>', unsafe_allow_html=True)
+        st.caption("La orden marca CBR y/o Proctor, pero a veces en las observaciones piden los dos. Marca lo que se va a ensayar en esta muestra "
+                   "y guarda: se crean los ensayos que marques.")
+        if obs:
+            st.markdown(f'<div class="cell-muted">Observaciones de la orden: {html.escape(obs)}</div>', unsafe_allow_html=True)
+        if mencionados:
+            st.warning(f"Las observaciones mencionan {' y '.join(mencionados)}, que no está marcado en la orden: revísalo.")
+        elif pendiente:
+            st.info("Confirma qué se ensaya antes de abrir el ensayo.")
+        cols = st.columns(2)
+        seleccion = {}
+        for col, e in zip(cols, ("CBR", "Proctor")):
+            seleccion[e] = col.checkbox(e, value=marcados[e] or iniciados[e], key=f"cbrproc_{e}_{muestra_id}",
+                                        disabled=not puede_editar or iniciados[e],
+                                        help="Ya se empezó este ensayo: no se puede quitar." if iniciados[e] else None)
+        if seleccion != marcados:
+            if not any(seleccion.values()):
+                st.error("Deja marcado al menos CBR o Proctor.")
+            elif st.button("Guardar selección", key=f"cbrproc_guardar_{muestra_id}", type="primary", icon=":material/save:"):
+                db.update_muestra(muestra["id"], ensayos={**muestra["ensayos"], **seleccion})
+                st.session_state.pop("_elegir_cbr_proctor", None)
+                st.toast("Selección guardada.", icon=":material/check_circle:")
+                st.rerun()
+
+
 def render_muestra_detail():
     codigo = st.session_state.selected_codigo
     perf_codigo = st.session_state.selected_perforacion
@@ -7005,6 +7045,8 @@ def render_muestra_detail():
             st.markdown(f'<div class="cell-muted" style="margin-top:16px;">{finalizados} de {total_sol} ensayos programados</div>',
                         unsafe_allow_html=True)
         st.progress(pct_ensayos / 100)
+
+    _render_seleccion_cbr_proctor(muestra, muestra_id, puede_editar_muestra and st.session_state.role in ("laboratorista", "jefe"))
 
     st.markdown('<div class="section-title">Ensayos asignados</div>', unsafe_allow_html=True)
     if not solicitados:
