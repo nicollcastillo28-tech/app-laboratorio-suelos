@@ -1741,6 +1741,27 @@ def _fila_sin_ensayos(fila):
     return not any(fila.get(e) for e in BITACORA_ENSAYOS)
 
 
+def _agrupar_apiques(perforaciones):
+    """Los apiques de una orden se manejan como UNA perforación con muchas muestras: cada apique trae una o pocas muestras ensayadas, y una
+    tarjeta de perforación por apique llenaba la pantalla. El código común (AP-S de AP-S-01, AP-S-02...) nombra la perforación y cada muestra
+    queda identificada con el código de su apique (AP-S-01-3 = muestra 3 del apique AP-S-01). Con un solo apique no se agrupa nada."""
+    apiques = [p for p in perforaciones if p["tipo"] == "Apique"]
+    if len(apiques) < 2:
+        return perforaciones
+    comun = os.path.commonprefix([p["codigo"] for p in apiques])
+    comun = re.sub(r"[\s\-_.]*\d*$", "", comun).strip()
+    codigo = comun if len(comun) >= 3 else "AP-1"
+    filas = []
+    for p in apiques:
+        for f in p["filas"]:
+            nueva = dict(f)
+            nueva["Número"] = f"{p['codigo']}-{f['Número']}"
+            filas.append(nueva)
+    grupo = {"tipo": "Apique", "codigo": codigo, "filas": filas, "fecha_orden": apiques[0].get("fecha_orden"),
+             "muestras_en_orden": sum(p["muestras_en_orden"] for p in apiques)}
+    return [p for p in perforaciones if p["tipo"] != "Apique"] + [grupo]
+
+
 def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
     """Lee un archivo .xlsx ya diligenciado con la plantilla oficial GDA-FL-003 y devuelve
     (perforaciones, advertencias, encabezado).
@@ -1855,6 +1876,7 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
             destino = max(filas_por_codigo, key=lambda c: len(filas_por_codigo[c]))
             numeros_orden.setdefault(destino, set()).update(numeros_orden.pop(None))
 
+        de_la_hoja = []
         for codigo, filas_codigo in filas_por_codigo.items():
             tipo = tipo_hoja or next((t for t, prefix in TIPO_PERFORACION_PREFIX.items()
                                        if codigo.upper().startswith(prefix)), None)
@@ -1862,8 +1884,13 @@ def parse_bitacora_orden_xlsx(nombre_archivo, file_bytes):
                 tipo = "Sondeo"
                 advertencias.append(f"{nombre_archivo} — hoja '{ws.title}' ({codigo}): no se marcó Sondeo/"
                                      "Apique/Fuente-Cantera — se asumió Sondeo, revísalo antes de guardar.")
-            perforaciones.append({"tipo": tipo, "codigo": codigo, "filas": filas_codigo, "fecha_orden": fecha_orden,
-                                  "muestras_en_orden": max(len(numeros_orden.get(codigo, ())), len(filas_codigo))})
+            de_la_hoja.append({"tipo": tipo, "codigo": codigo, "filas": filas_codigo, "fecha_orden": fecha_orden,
+                               "muestras_en_orden": max(len(numeros_orden.get(codigo, ())), len(filas_codigo))})
+        agrupadas = _agrupar_apiques(de_la_hoja)
+        if len(agrupadas) < len(de_la_hoja):
+            advertencias.append(f"{nombre_archivo} — hoja '{ws.title}': los apiques de la orden se agruparon en una sola perforación "
+                                 f"('{agrupadas[-1]['codigo']}'); cada muestra lleva el código de su apique (ej. {agrupadas[-1]['filas'][0]['Número']}).")
+        perforaciones.extend(agrupadas)
 
     return perforaciones, advertencias, encabezado
 
