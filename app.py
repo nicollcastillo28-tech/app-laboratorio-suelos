@@ -952,7 +952,7 @@ NORMAS_ENSAYO = {
     "corte-directo": ["INV E-154", "ASTM D3080"],
     "gravedad-especifica": ["INV E-222", "INV E-223", "INV E-128", "ASTM C128", "ASTM C127", "ASTM D854"],
     "proctor": ["INV E-141-13", "INV E-142-13"],
-    "materia-organica": ["INV E-121-13", "ASTM D2974"],
+    "materia-organica": ["INV E-121-13"],
     "limite-contraccion": ["INV E-129-13", "ASTM D4943"],
     "consolidacion": ["INV E-151-13", "ASTM D2435"],
     "compresion-inconfinada": ["INV E-152-13", "ASTM D2166"],
@@ -1076,6 +1076,9 @@ CBRC_PEN_FILAS_EXCEL = [22, 23, 24, 25, 26, 28, 30, 31, 33, 34, 35, 37]
 # Materia orgánica (INV E-121) — armado a partir de la plantilla GDA-FLC-003 (no hay bitácora en papel).
 MO_METODOS = ["A", "B"]
 MO_TEMPERATURAS = ["110 °C", "60 °C"]
+# Equipos del ensayo de pérdida por ignición (la plantilla GDA-FLC-003 no trae casillas para ellos; se registran en la app y son obligatorios para
+# enviar a revisión). Balanzas y hornos como en los demás ensayos; falta completar el código de la mufla.
+EQUIPO_MATERIA_ORGANICA = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Balanza GDA-E-012", "Horno GDA-E-007", "Horno GDA-E-404", "Mufla GDA-E-"]
 MO_CAMPOS = [
     ("mo_masa_crisol_seco", "Masa del crisol + muestra de suelo seco (g)"),
     ("mo_masa_crisol_ignicion", "Masa del crisol + muestra de suelo después de ignición (g)"),
@@ -9308,7 +9311,10 @@ def campos_faltantes(tipo, data):
             campos = []
         elif data.get("lim_np"):
             campos = [c for c in campos if not c[0].startswith("lim_lp_")]
-    return [(key, label) for key, label in campos if not str(data.get(key, "")).strip()]
+    faltan = [(key, label) for key, label in campos if not str(data.get(key, "")).strip()]
+    if tipo == "materia-organica" and not data.get("mo_equipos"):   # sin equipo escogido no se puede enviar a revisión
+        faltan.append(("mo_equipos", "Equipos utilizados (escoge al menos uno)"))
+    return faltan
 
 
 def render_pasa200_section(data, assay_id, requerido=True):
@@ -12169,6 +12175,8 @@ def render_limite_contraccion_form(data, assay_id):
 
 
 def render_materia_organica_form(data, assay_id):
+    render_norma_selector("materia-organica", data, "mo")
+    render_equipo(data, "mo", EQUIPO_MATERIA_ORGANICA)
     with st.container(border=True):
         st.markdown(card_header_html("science", "Contenido de Materia Orgánica (w %)"), unsafe_allow_html=True)
         row = st.columns([2.2, 1])
@@ -12193,7 +12201,6 @@ def render_materia_organica_form(data, assay_id):
             actual = data.get(key, opciones[0])
             data[key] = st.radio(label, opciones, horizontal=True, index=opciones.index(actual) if actual in opciones else 0,
                                   key=f"{key}_{assay_id}")
-    render_norma_selector("materia-organica", data, "mo")
 
 
 def render_proctor_form(data, assay_id):
@@ -12784,7 +12791,7 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                                          + resultados_materia_organica(data)
                                          + [("Método", data.get("mo_metodo")), ("Temperatura de ignición", data.get("mo_temp"))]),
                         unsafe_allow_html=True)
-        equipos, norma = [], data.get("mo_norma", "—")
+        equipos, norma = data.get("mo_equipos", []), data.get("mo_norma", "—")
     elif tipo == "proctor":
         for titulo, icono, filas in (("Compactación", "science", PROCTOR_FILAS), ("Humedad", "water_drop", PROCTOR_HUMEDAD_FILAS)):
             with st.container(border=True):
@@ -13861,7 +13868,7 @@ def _equipos_ejemplo(tipo, data):
         "gravedad-especifica": {"gesp_finos_equipos": EQUIPO_GESP_FINOS, "gesp_gruesos_equipos": EQUIPO_GESP_GRUESOS}, "proctor": {"proc_equipos": EQUIPO_PROCTOR},
         "consolidacion": {"cons_equipos": EQUIPO_CONSOLIDACION}, "compresion-inconfinada": {"ci_equipos": EQUIPO_COMPRESION_INCONFINADA},
         "compresion-roca": {"roca_equipos": EQUIPO_COMPRESION_ROCA}, "carga-puntual": {"cp_equipos": EQUIPO_CARGA_PUNTUAL},
-        "solidez-sulfatos": {"sulf_equipos": EQUIPO_SOLIDEZ_SULFATOS}, "terrones-arcilla": {"ter_equipos": EQUIPO_TERRONES_ARCILLA},
+        "solidez-sulfatos": {"sulf_equipos": EQUIPO_SOLIDEZ_SULFATOS}, "materia-organica": {"mo_equipos": EQUIPO_MATERIA_ORGANICA[:2]}, "terrones-arcilla": {"ter_equipos": EQUIPO_TERRONES_ARCILLA},
         "alargamiento-aplanamiento": {"aa_equipos": EQUIPO_ALARGAMIENTO_APLANAMIENTO},
     }
     return {clave: list(lista[:3]) for clave, lista in por_tipo.get(tipo, {}).items()}
