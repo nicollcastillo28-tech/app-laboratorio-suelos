@@ -6352,6 +6352,74 @@ def _sync_muestras_perforacion(perforacion_id, codigo, perf_codigo, nuevas_rows)
             db.archive_muestra(m["id"])
 
 
+def _render_actualizar_perforacion(codigo, project, perf, perforaciones):
+    """"Actualizar esta perforación": el cliente manda la misma orden con ensayos de más o de menos. Se sube el archivo AQUÍ, dentro de la
+    perforación, y se aplica a esta perforación aunque su nombre ya no coincida con el del archivo (renombrada, o los apiques agrupados): nunca crea
+    otra perforación. Agrega muestras y ensayos nuevos y quita los que ya no trae, salvo los ya empezados; los cambios quedan en la tabla de abajo
+    para revisarlos y solo se guardan con «Guardar bitácora»."""
+    import hashlib
+    with st.expander("Actualizar esta perforación con una orden", icon=":material/sync:"):
+        st.caption("Sube la orden actualizada de ESTA perforación (con ensayos de más o de menos). No se crea otra perforación: los cambios se aplican "
+                   "aquí, sin perder lo que ya está, y quedan en la tabla de abajo para revisarlos; se guardan con «Guardar bitácora».")
+        resumen_key = f"_resumen_perf_{perf['id']}"
+        archivo = st.file_uploader("Orden actualizada (.xlsx / .xlsm)", type=["xlsx", "xlsm"], key=f"act_orden_{perf['id']}")
+        quitar = st.checkbox("Quitar los ensayos que la orden ya no trae (los que ya se empezaron no se quitan, así no se pierden datos)",
+                             value=True, key=f"act_quitar_{perf['id']}")
+        if archivo is not None:
+            contenido = archivo.getvalue()
+            huella = hashlib.md5(contenido).hexdigest()
+            memo = st.session_state.get(f"_act_parse_{perf['id']}")
+            if not memo or memo[0] != huella:
+                memo = (huella, parse_bitacora_orden_xlsx(archivo.name, contenido))
+                st.session_state[f"_act_parse_{perf['id']}"] = memo
+            candidatas, advertencias, _hdr = memo[1]
+            if not candidatas:
+                for adv in advertencias:
+                    st.error(adv)
+                st.error("No se encontró ninguna muestra con ensayos en ese archivo.")
+            else:
+                codigos = [c["codigo"] for c in candidatas]
+                igual = next((i for i, c in enumerate(codigos) if c.strip().upper() == perf["codigo"].strip().upper()), 0)
+                if len(codigos) == 1:
+                    elegida = candidatas[0]
+                else:
+                    sel = st.selectbox("¿Cuál perforación del archivo es esta?", codigos, index=igual, key=f"act_cual_{perf['id']}")
+                    elegida = candidatas[codigos.index(sel)]
+                st.caption(f"El archivo trae {len(elegida['filas'])} muestra(s) con ensayos de «{elegida['codigo']}».")
+                if st.button("Actualizar perforación", key=f"act_aplicar_{perf['id']}", type="primary", icon=":material/sync:"):
+                    key = f"{codigo}::{perf['codigo']}"
+                    df_actual = _bitacora_draft_df(key, st.session_state.muestras.setdefault(key, []))
+                    df_actual, n_nuevas, n_cambiadas, quitadas, protegidas = _fusionar_orden_en_tabla(
+                        df_actual, elegida["filas"], elegida.get("numeros_en_orden", ()), quitar=quitar,
+                        iniciados=_ensayos_iniciados(codigo, perf["codigo"]))
+                    resumen = []
+                    if n_nuevas or n_cambiadas:
+                        st.session_state.bitacora_draft[key] = df_actual[BITACORA_BASE_COLS]
+                        st.session_state.pop(f"editor_{key}", None)   # el editor re-aplicaría sus ediciones por posición de fila
+                        resumen.append(("ok", f"Se agregaron {n_nuevas} muestra(s) nueva(s) y se actualizaron los ensayos de {n_cambiadas} muestra(s) que ya estaban. "
+                                              "Revisa la tabla de abajo; nada se guarda hasta que le des «Guardar bitácora»."))
+                    else:
+                        resumen.append(("ok", "La orden no trae cambios respecto a lo que ya tiene esta perforación."))
+                    if elegida.get("fecha_orden") and str(elegida["fecha_orden"]) != perf.get("fecha_ingreso"):
+                        try:
+                            db.set_perforacion_fecha_ingreso(perf["id"], str(elegida["fecha_orden"]))
+                            perf["fecha_ingreso"] = str(elegida["fecha_orden"])
+                            st.session_state.pop(f"fecha_ingreso_{perf['id']}", None)
+                        except Exception:
+                            resumen.append(("aviso", "No se pudo guardar la fecha de recepción de la orden (falta la migración 0033 en Supabase)."))
+                    if elegida.get("muestras_en_orden") and elegida["muestras_en_orden"] != perf.get("muestras_en_orden"):
+                        try:   # al actualizar, el total de la orden nueva es el que vale
+                            db.set_perforacion_muestras_en_orden(perf["id"], elegida["muestras_en_orden"])
+                            perf["muestras_en_orden"] = elegida["muestras_en_orden"]
+                        except Exception:
+                            resumen.append(("aviso", "No se pudo guardar cuántas muestras trae la orden (falta la migración 0038 en Supabase)."))
+                    resumen += [("aviso", a) for a in _avisos_actualizacion_orden(quitadas, protegidas) + list(advertencias)]
+                    st.session_state[resumen_key] = resumen
+                    st.rerun()
+        for tipo_msg, texto_msg in st.session_state.get(resumen_key, []):
+            (st.success if tipo_msg == "ok" else st.warning)(texto_msg)
+
+
 def render_bitacora():
     require_role("jefe")
     if _boton_atras():
@@ -6403,7 +6471,8 @@ def render_bitacora():
                                         key=f"btn_import_bitacora_{codigo}"):
                 advertencias_totales = []
                 importadas = actualizadas_total = 0
-                quitadas_total, protegidas_total = [], []
+                quitadas_total, protegidas_total, creadas = [], [], []
+                previas = len(perforaciones)
                 for archivo in archivos:
                     perfs_parseadas, advertencias, _hdr = parse_bitacora_orden_xlsx(archivo.name, archivo.getvalue())
                     advertencias_totales.extend(advertencias)
@@ -6414,6 +6483,7 @@ def render_bitacora():
                             consecutivo = len([p for p in perforaciones if p["tipo"] == pp["tipo"]]) + 1
                             perf = db.restore_or_create_perforacion(project["id"], pp["tipo"], consecutivo, pp["codigo"])
                             perforaciones.append(perf)
+                            creadas.append(pp["codigo"])
                         if pp.get("fecha_orden") and str(pp["fecha_orden"]) != perf.get("fecha_ingreso"):
                             try:   # la fecha que trae la orden es la de recepción de esta perforación
                                 db.set_perforacion_fecha_ingreso(perf["id"], str(pp["fecha_orden"]))
@@ -6450,6 +6520,10 @@ def render_bitacora():
                     resumen.append(("ok", f"Se importaron {importadas} muestra(s) nueva(s)"
                                     + (f" y se actualizaron los ensayos de {actualizadas_total} muestra(s) que ya estaban" if actualizadas_total else "")
                                     + ". Revísalas en la tabla de abajo; nada se guarda hasta que le des «Guardar bitácora»."))
+                if creadas and previas:
+                    resumen.append(("aviso", "Se crearon perforaciones nuevas: " + ", ".join(creadas) + ". Las perforaciones se reconocen por el nombre que "
+                                    "trae la orden: si ya tenías esta con otro nombre (por ejemplo, la renombraste), bórrala y usa «Actualizar esta perforación» "
+                                    "dentro de la perforación que ya existe."))
                 resumen += [("aviso", a) for a in _avisos_actualizacion_orden(quitadas_total, protegidas_total) + advertencias_totales]
                 st.session_state[f"_resumen_orden_{codigo}"] = resumen
                 if importadas or actualizadas_total:
@@ -6501,6 +6575,8 @@ def render_bitacora():
                                 st.session_state.selected_perforacion = nombre_nuevo
                             st.toast(f"Perforación renombrada a {nombre_nuevo}.", icon=":material/check_circle:")
                             st.rerun()
+            if es_jefe:
+                _render_actualizar_perforacion(codigo, project, perf, perforaciones)
             # Fecha de ingreso propia de la perforación (un mismo proyecto puede recibirlas en días distintos).
             # Se guarda sola al cambiarla -- no depende del botón "Guardar bitácora" de abajo.
             fecha_actual_perf = fecha_ingreso_perf(perf, project)
