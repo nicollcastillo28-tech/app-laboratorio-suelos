@@ -811,12 +811,25 @@ components.html("""
     // la barra superior, así que si hay más de una, todo lo que va desde la primera hasta la última es una copia vieja:
     // se OCULTA (no se borra, para no romper el árbol que maneja Streamlit) y queda visible solo la más reciente. Las
     // barras inferiores repetidas se tratan igual. En cada pasada se restaura lo ocultado antes y se recalcula.
+    var _dupConsecutivos = 0;
     function ocultarCopiasRepetidas() {
         var doc = window.parent.document;
         doc.querySelectorAll('[data-gd-copia]').forEach(function(e) {
             e.style.setProperty('display', '');
             e.removeAttribute('data-gd-copia');
         });
+        var hayRepetidas = doc.querySelectorAll('.st-key-topbar').length > 1 || doc.querySelectorAll('.st-key-bottomnav').length > 1;
+        var mainPrevio = doc.querySelector('[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"]');
+        if (!hayRepetidas && mainPrevio) {
+            var n = 0;
+            Array.prototype.slice.call(mainPrevio.children).forEach(function(h) {
+                if (h.classList.contains('st-key-topbar') || h.querySelector('.st-key-topbar')) n++;
+            });
+            hayRepetidas = n > 1;
+        }
+        if (!hayRepetidas) { _dupConsecutivos = 0; return; }
+        _dupConsecutivos++;
+        if (_dupConsecutivos < 2) { setTimeout(programarCopias, 450); return; }   // puede ser solo el instante de una recarga: se confirma antes de ocultar
         function ocultar(e) {
             e.style.setProperty('display', 'none', 'important');
             e.setAttribute('data-gd-copia', '1');
@@ -852,6 +865,39 @@ components.html("""
         window.parent.__gdPopAt = Date.now();
         window.parent.location.reload();
     });
+
+    // Guarda de scroll: al recargarse la pantalla por un cambio (elegir una opción, digitar el primer dato) la página a veces saltaba al final.
+    // Se recuerda hasta dónde bajó la persona (solo cuenta el scroll hecho con rueda, dedo o teclado) y, si la página se mueve sola sin que
+    // nadie la haya movido, se devuelve a ese punto. Al cambiar de pantalla (cambia la dirección) se parte de cero.
+    (function() {
+        var doc = window.parent.document, win = window.parent;
+        var guardado = 0, ultimoUsuario = 0, urlAntes = win.location.search, t1 = null, t2 = null;
+        function scroller() {
+            var c = [doc.querySelector('[data-testid="stMain"]'), doc.querySelector('section.main'), doc.scrollingElement];
+            for (var i = 0; i < c.length; i++) {
+                if (c[i] && c[i].scrollHeight > c[i].clientHeight + 5) return c[i];
+            }
+            return doc.scrollingElement;
+        }
+        ['wheel', 'touchmove', 'keydown'].forEach(function(ev) {
+            doc.addEventListener(ev, function() { ultimoUsuario = Date.now(); }, {capture: true, passive: true});
+        });
+        function revisar() {
+            var s = scroller();
+            if (!s) return;
+            var u = win.location.search;
+            if (u !== urlAntes) { urlAntes = u; guardado = s.scrollTop; return; }
+            if (Date.now() - ultimoUsuario < 1200) { guardado = s.scrollTop; return; }
+            if (Math.abs(s.scrollTop - guardado) > 120) s.scrollTop = guardado;
+        }
+        function programar() {
+            clearTimeout(t1); clearTimeout(t2);
+            t1 = setTimeout(revisar, 120);
+            t2 = setTimeout(revisar, 800);
+        }
+        doc.addEventListener('scroll', programar, {capture: true, passive: true});
+        new MutationObserver(programar).observe(doc.body, {childList: true, subtree: true});
+    })();
 
     // Gesto de "atrás": deslizar el dedo hacia la derecha empezando cerca del borde izquierdo aprieta el botón "← Atrás" de la pantalla
     // (si la pantalla lo tiene). Si el propio navegador ya hizo su gesto de atrás (popstate), no se repite para no retroceder dos veces.
