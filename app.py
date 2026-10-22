@@ -12326,10 +12326,10 @@ def render_materia_organica_form(data, assay_id):
     with st.container(border=True):
         st.markdown(card_header_html("science", "Contenido de Materia Orgánica (w %)"), unsafe_allow_html=True)
         row = st.columns([2.2, 1])
-        # En este ensayo el recipiente es el crisol y se numera: "Crisol No." (sin la palabra "recipiente", que abre el teclado de letras).
-        row[0].markdown('<div style="padding-top:8px;">Crisol No.</div>', unsafe_allow_html=True)
-        data["mo_recipiente"] = row[1].text_input("Crisol No.", value=data.get("mo_recipiente", ""),
-                                                   key=f"mo_recipiente_{assay_id}", label_visibility="collapsed", placeholder="1")
+        # El número de recipiente puede llevar letras: teclado normal (el script de la página lo deja así por la palabra "recipiente").
+        row[0].markdown('<div style="padding-top:8px;">Recipiente No.</div>', unsafe_allow_html=True)
+        data["mo_recipiente"] = row[1].text_input("Recipiente No.", value=data.get("mo_recipiente", ""),
+                                                   key=f"mo_recipiente_{assay_id}", label_visibility="collapsed")
         for key, label in MO_CAMPOS:
             row = st.columns([2.2, 1])
             row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
@@ -12933,7 +12933,7 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
     elif tipo == "materia-organica":
         with st.container(border=True):
             st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
-            st.markdown(param_table_html([("Crisol No.", data.get("mo_recipiente"))]
+            st.markdown(param_table_html([("Recipiente No.", data.get("mo_recipiente"))]
                                          + [(label, data.get(key)) for key, label in MO_CAMPOS]
                                          + resultados_materia_organica(data)
                                          + [("Método", data.get("mo_metodo")), ("Temperatura de ignición", data.get("mo_temp"))]),
