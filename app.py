@@ -205,6 +205,19 @@ st.markdown(f"""
     @media (max-width: 1180px) {{
         div[data-testid="stLayoutWrapper"]:has(> .st-key-back-sticky) {{ bottom: 84px; }}
     }}
+    /* "Ir al proyecto" flotante (pantalla del ensayo): igual que "Atrás" pero justo encima, para ir al proyecto al terminar de digitar sin subir. */
+    div[data-testid="stLayoutWrapper"]:has(> .st-key-proj-sticky) {{
+        position: fixed; left: 14px; bottom: 74px; z-index: 900; width: fit-content;
+    }}
+    @media (max-width: 1180px) {{
+        div[data-testid="stLayoutWrapper"]:has(> .st-key-proj-sticky) {{ bottom: 140px; }}
+    }}
+    div[data-testid="stVerticalBlock"].st-key-proj-sticky {{ background: transparent !important; border: none !important; box-shadow: none !important; padding: 0 !important; }}
+    .st-key-proj-sticky button {{
+        background: {PRIMARY_CONTAINER} !important; color: #FFFFFF !important; border: none !important; border-radius: 999px !important;
+        padding: 10px 20px !important; box-shadow: 0 3px 12px rgba(11,28,48,0.35) !important;
+    }}
+    .st-key-proj-sticky button p {{ color: #FFFFFF !important; font-weight: 700 !important; font-size: 15px !important; }}
     div[data-testid="stVerticalBlock"].st-key-back-sticky {{ background: transparent !important; border: none !important; box-shadow: none !important; padding: 0 !important; }}
     .st-key-back-sticky button {{
         background: {PRIMARY_CONTAINER} !important; color: #FFFFFF !important; border: none !important; border-radius: 999px !important;
@@ -277,7 +290,7 @@ st.markdown(f"""
     estuviera bien. Se excluyen los mismos contenedores de "no son una tarjeta" que ya excluía la
     regla del acento izquierdo, más "logout-btn" (el ícono de cerrar sesión, invisible cuando su
     contenedor quedaba con este fondo blanco por detrás). */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-back-sticky):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-back-sticky):not(.st-key-proj-sticky):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
         border-radius: 12px !important; border: 1px solid {BORDER} !important;
         box-shadow: 0 1px 4px rgba(11,28,48,0.08) !important; background: {SURFACE} !important;
     }}
@@ -358,7 +371,7 @@ st.markdown(f"""
        borde tapando el grupo entero en vez de resaltar una sola tarjeta. bell-alert/bell-quiet
        (el botón-contenedor de la campana en el topbar) tampoco: es un ícono, no una tarjeta —
        se veía como una rayita verde suelta pegada a la campana. */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-back-sticky):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-back-sticky):not(.st-key-proj-sticky):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
         border-left: 4px solid {PRIMARY} !important;
     }}
     /* Tarjetas de "Ensayos asignados" (una por ensayo): más separación entre sí y sombra
@@ -3881,6 +3894,15 @@ def _boton_ir_proyecto(codigo, clave):
     if st.button("Ir al proyecto →", key=f"ir_proyecto_{clave}", icon=":material/folder_open:"):
         st.session_state.selected_codigo = codigo
         navigate("project-detail")
+
+
+def _boton_ir_proyecto_flotante(codigo):
+    """"Ir al proyecto →" fijo en la esquina inferior izquierda, justo encima de "← Atrás": en la pantalla del ensayo se digita hasta abajo y ahí
+    mismo se guarda el progreso, así que el atajo no puede estar solo arriba."""
+    with st.container(key="proj-sticky"):
+        if st.button("Ir al proyecto →", key="ir_proyecto_flotante", icon=":material/folder_open:"):
+            st.session_state.selected_codigo = codigo
+            navigate("project-detail")
 
 
 def _boton_atras():
@@ -13376,7 +13398,7 @@ def render_assay_form(prueba=False):
         st.markdown(f'<div style="font-weight:700;font-size:13px;letter-spacing:0.02em;line-height:1.4;color:{PRIMARY};margin:-6px 0 10px;">'
                     f'{html.escape(" ".join(titulo_excel.split()))}</div>', unsafe_allow_html=True)
     if not prueba:
-        _boton_ir_proyecto(codigo, "ensayo")
+        _boton_ir_proyecto_flotante(codigo)
     st.caption("Resultados de Ensayo" if read_only else ("Revisión del Jefe de Laboratorio" if jefe_edita else ("Revisión del Director Técnico" if ing_edita else
                                                                     ("Registro de Ensayo (Jefe de Laboratorio)" if jefe_trabaja else "Registro de Ensayo"))))
     st.markdown(f'<div style="margin-bottom:10px;">{status_badge_html(assay_estado_display(assay))}&nbsp;&nbsp;'
