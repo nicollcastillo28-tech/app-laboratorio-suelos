@@ -775,12 +775,19 @@ components.html("""
             // placeholder sea un número. Solo el número — las masas de recipiente siguen siendo numéricas.
             var lbl = (input.getAttribute('aria-label') || '');
             var esNumeroRecipiente = /recipiente/i.test(lbl) && !/masa|peso|\\(g\\)/i.test(lbl);
-            if (esNumeroRecipiente) {
+            // Nombres que llevan letras (recipiente, molde, picnómetro): teclado normal. Las masas, alturas, lecturas, golpes... siguen siendo números.
+            var esNombre = /recipiente|molde|picn/i.test(lbl) && !/masa|peso|\\(g\\)|volumen|altura|di.metro|lectura|golpes|capas/i.test(lbl);
+            // En la pantalla de un ensayo, todo campo de texto es un dato numérico (menos los nombres de arriba): abre el teclado de números aunque
+            // no tenga un placeholder numérico. Las descripciones y observaciones escritas a mano son áreas de texto (no entran aquí).
+            var enEnsayo = /screen=assay-form/.test(window.parent.location.search);
+            if (esNumeroRecipiente || esNombre) {
                 mode = null;
             } else if (/^-?\\d+[.,]\\d+$/.test(ph)) {
                 mode = 'decimal';
             } else if (/^\\d[\\d\\s]*$/.test(ph)) {
                 mode = 'numeric';
+            } else if (enEnsayo) {
+                mode = 'decimal';
             }
             if (mode) {
                 if (input.getAttribute('inputmode') !== mode) input.setAttribute('inputmode', mode);
@@ -866,12 +873,14 @@ components.html("""
         window.parent.location.reload();
     });
 
-    // Guarda de scroll: al recargarse la pantalla por un cambio (elegir una opción, digitar el primer dato) la página a veces saltaba al final.
-    // Se recuerda hasta dónde bajó la persona (solo cuenta el scroll hecho con rueda, dedo o teclado) y, si la página se mueve sola sin que
-    // nadie la haya movido, se devuelve a ese punto. Al cambiar de pantalla (cambia la dirección) se parte de cero.
+    // Guarda de scroll: al recargarse la pantalla por un cambio (elegir una opción, digitar un dato) la página a veces saltaba al final.
+    // Se recuerda hasta dónde bajó la persona y, si la página se mueve sola, se devuelve a ese punto. Cuenta como movimiento de la persona:
+    // rueda, dedo, flechas/RePág/AvPág fuera de un campo y arrastrar la barra de desplazamiento (cualquier distancia); y, solo hasta ~500 px,
+    // lo que hace el navegador al enfocar un campo o saltar con Enter/Tab. Digitar NO cuenta (justo ahí ocurre la recarga). Al cambiar de
+    // pantalla (cambia la dirección) se parte de cero.
     (function() {
         var doc = window.parent.document, win = window.parent;
-        var guardado = 0, ultimoUsuario = 0, urlAntes = win.location.search, t1 = null, t2 = null;
+        var guardado = 0, fuerte = 0, suave = 0, urlAntes = win.location.search, t1 = null, t2 = null;
         function scroller() {
             var c = [doc.querySelector('[data-testid="stMain"]'), doc.querySelector('section.main'), doc.scrollingElement];
             for (var i = 0; i < c.length; i++) {
@@ -879,16 +888,25 @@ components.html("""
             }
             return doc.scrollingElement;
         }
-        ['wheel', 'touchmove', 'keydown'].forEach(function(ev) {
-            doc.addEventListener(ev, function() { ultimoUsuario = Date.now(); }, {capture: true, passive: true});
+        ['wheel', 'touchmove'].forEach(function(ev) {
+            doc.addEventListener(ev, function() { fuerte = Date.now(); }, {capture: true, passive: true});
         });
+        doc.addEventListener('keydown', function(e) {
+            var enCampo = e.target && e.target.matches && e.target.matches('input, textarea, select, [role="combobox"], [role="listbox"]');
+            if (['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' '].indexOf(e.key) >= 0 && !enCampo) fuerte = Date.now();
+            else if (e.key === 'Enter' || e.key === 'Tab') suave = Date.now();
+        }, true);
+        doc.addEventListener('focusin', function() { suave = Date.now(); }, true);
+        doc.addEventListener('mousedown', function(e) { if (e.target === scroller()) fuerte = Date.now(); }, true);
         function revisar() {
             var s = scroller();
             if (!s) return;
             var u = win.location.search;
             if (u !== urlAntes) { urlAntes = u; guardado = s.scrollTop; return; }
-            if (Date.now() - ultimoUsuario < 1200) { guardado = s.scrollTop; return; }
-            if (Math.abs(s.scrollTop - guardado) > 120) s.scrollTop = guardado;
+            var ahora = Date.now(), dif = Math.abs(s.scrollTop - guardado);
+            if (ahora - fuerte < 1200) { guardado = s.scrollTop; return; }
+            if (ahora - suave < 1200 && dif <= 500) { guardado = s.scrollTop; return; }
+            if (dif > 120) s.scrollTop = guardado;
         }
         function programar() {
             clearTimeout(t1); clearTimeout(t2);
