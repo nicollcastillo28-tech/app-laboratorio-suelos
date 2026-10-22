@@ -6890,47 +6890,10 @@ def _render_seleccion_cbr_proctor(muestra, muestra_id, puede_editar):
                 st.rerun()
 
 
-def render_muestra_detail():
-    codigo = st.session_state.selected_codigo
-    perf_codigo = st.session_state.selected_perforacion
-    muestra_id = st.session_state.selected_muestra_id
-    muestra = get_muestra(codigo, perf_codigo, muestra_id)
-    if not muestra:
-        navigate("home")
-        return
-
-    project = get_project(codigo)
-    if _boton_atras():
-        go_back(fallback="perforacion-detail")
-
-    # La descripción visual y las observaciones las digita el laboratorista; el Jefe de Laboratorio también puede corregirlas apenas el laboratorista
-    # entrega (envía a revisión) algún ensayo de la muestra, igual que los datos del ensayo.
-    _hay_entregado = any(a.get("muestra_id") == muestra_id and a.get("status") == "finalizado" for a in st.session_state.get("assays", []))
-    _hay_en_revision_dt = any(a.get("muestra_id") == muestra_id and a.get("status") == "finalizado" and a.get("etapa_revision") == "pendiente_ing"
-                              for a in st.session_state.get("assays", []))
-    puede_editar_muestra = (st.session_state.role == "laboratorista" or st.session_state.role == "jefe"
-                            or (st.session_state.role == "ingeniero" and _hay_en_revision_dt))
-
-    estado = compute_muestra_estado(muestra)
-    with st.container(border=True, key="muestra-header-card"):
-        top = st.columns([3, 1])
-        with top[0]:
-            st.markdown(f'<div style="display:flex;align-items:center;gap:8px;">'
-                        f'<h3 style="margin:0;">Muestra {muestra["numero"]}</h3>'
-                        f'{status_badge_html(estado, font_size=13)}</div>', unsafe_allow_html=True)
-            st.caption(f"{codigo} · {project['nombre'] if project else ''}")
-        with top[1]:
-            st.markdown(f'<div style="text-align:right;"><span class="assigned-chip">{html.escape(muestra["tipo_muestra"])}</span></div>',
-                        unsafe_allow_html=True)
-        c1, c2, c3 = st.columns(3)
-        c1.markdown(f'<div class="cell-muted">Identificador</div><div style="font-weight:600;">{html.escape(muestra["id_unico"])}</div>',
-                    unsafe_allow_html=True)
-        c2.markdown(f'<div class="cell-muted">Profundidad</div><div style="font-weight:600;">'
-                    f'{fmt_prof(muestra["profundidad_de"])}–{fmt_prof(muestra["profundidad_hasta"])} m</div>', unsafe_allow_html=True)
-        c3.markdown(f'<div class="cell-muted">Perforación</div><div style="font-weight:600;">{html.escape(perf_codigo)}</div>',
-                    unsafe_allow_html=True)
-        _boton_ir_proyecto(codigo, "muestra")
-
+@st.fragment
+def _render_descripcion_visual(muestra, muestra_id, puede_editar_muestra):
+    """Tarjeta de la descripción visual de la muestra. Es un fragmento: elegir una opción de los menús vuelve a dibujar SOLO esta tarjeta, no toda la
+    pantalla (antes cada elección recargaba la página completa y la mandaba hacia abajo). Guardar o editar sí refresca toda la pantalla (st.rerun)."""
     with st.container(border=True):
         st.markdown('<div class="section-title">Descripción visual de la muestra</div>', unsafe_allow_html=True)
         # La nota de "comparar con la clasificación USCS de abajo" solo tiene sentido si abajo salen las clasificaciones, es decir, si la muestra tiene
@@ -7094,6 +7057,50 @@ def render_muestra_detail():
                 if st.button("Editar descripción", icon=":material/edit:", key=f"desc_editar_{muestra_id}"):
                     st.session_state[desc_edit_key] = True
                     st.rerun()
+
+
+def render_muestra_detail():
+    codigo = st.session_state.selected_codigo
+    perf_codigo = st.session_state.selected_perforacion
+    muestra_id = st.session_state.selected_muestra_id
+    muestra = get_muestra(codigo, perf_codigo, muestra_id)
+    if not muestra:
+        navigate("home")
+        return
+
+    project = get_project(codigo)
+    if _boton_atras():
+        go_back(fallback="perforacion-detail")
+
+    # La descripción visual y las observaciones las digita el laboratorista; el Jefe de Laboratorio también puede corregirlas apenas el laboratorista
+    # entrega (envía a revisión) algún ensayo de la muestra, igual que los datos del ensayo.
+    _hay_entregado = any(a.get("muestra_id") == muestra_id and a.get("status") == "finalizado" for a in st.session_state.get("assays", []))
+    _hay_en_revision_dt = any(a.get("muestra_id") == muestra_id and a.get("status") == "finalizado" and a.get("etapa_revision") == "pendiente_ing"
+                              for a in st.session_state.get("assays", []))
+    puede_editar_muestra = (st.session_state.role == "laboratorista" or st.session_state.role == "jefe"
+                            or (st.session_state.role == "ingeniero" and _hay_en_revision_dt))
+
+    estado = compute_muestra_estado(muestra)
+    with st.container(border=True, key="muestra-header-card"):
+        top = st.columns([3, 1])
+        with top[0]:
+            st.markdown(f'<div style="display:flex;align-items:center;gap:8px;">'
+                        f'<h3 style="margin:0;">Muestra {muestra["numero"]}</h3>'
+                        f'{status_badge_html(estado, font_size=13)}</div>', unsafe_allow_html=True)
+            st.caption(f"{codigo} · {project['nombre'] if project else ''}")
+        with top[1]:
+            st.markdown(f'<div style="text-align:right;"><span class="assigned-chip">{html.escape(muestra["tipo_muestra"])}</span></div>',
+                        unsafe_allow_html=True)
+        c1, c2, c3 = st.columns(3)
+        c1.markdown(f'<div class="cell-muted">Identificador</div><div style="font-weight:600;">{html.escape(muestra["id_unico"])}</div>',
+                    unsafe_allow_html=True)
+        c2.markdown(f'<div class="cell-muted">Profundidad</div><div style="font-weight:600;">'
+                    f'{fmt_prof(muestra["profundidad_de"])}–{fmt_prof(muestra["profundidad_hasta"])} m</div>', unsafe_allow_html=True)
+        c3.markdown(f'<div class="cell-muted">Perforación</div><div style="font-weight:600;">{html.escape(perf_codigo)}</div>',
+                    unsafe_allow_html=True)
+        _boton_ir_proyecto(codigo, "muestra")
+
+    _render_descripcion_visual(muestra, muestra_id, puede_editar_muestra)
 
     # Las clasificaciones USCS y AASHTO salen de la Granulometría: las muestras que no la tienen (no se pidió, todavía no se abrió o se marcó
     # "no se pudo realizar") muestran solo la descripción visual, que es la que va al Excel.
