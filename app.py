@@ -761,8 +761,20 @@ st.markdown(f"""
 components.html("""
 <script>
 (function() {
-    if (window.parent.__geodeltaInputModeInit) return;
-    window.parent.__geodeltaInputModeInit = true;
+    var VERSION = 'v4';
+    if (window.parent.__geodeltaInputModeInit === VERSION) return;
+    // Una versión anterior del script (de antes de un despliegue nuevo) puede seguir viva en esta pestaña: se desconecta antes de empezar,
+    // porque dos versiones a la vez se pisaban (una quitaba el teclado numérico que la otra ponía).
+    if (window.parent.__gdLimpiar) { try { window.parent.__gdLimpiar(); } catch (e) {} }
+    var limpiar = [];
+    window.parent.__gdLimpiar = function() { limpiar.forEach(function(f) { try { f(); } catch (e) {} }); };
+    window.parent.__geodeltaInputModeInit = VERSION;
+    function escuchar(obj, ev, fn, op) { obj.addEventListener(ev, fn, op); limpiar.push(function() { obj.removeEventListener(ev, fn, op); }); }
+    function observar(fn, destino) {
+        var o = new MutationObserver(fn);
+        o.observe(destino, {childList: true, subtree: true});
+        limpiar.push(function() { o.disconnect(); });
+    }
 
     function applyInputMode() {
         var inputs = window.parent.document.querySelectorAll(
@@ -779,7 +791,7 @@ components.html("""
             var esNombre = /recipiente|molde|picn/i.test(lbl) && !/masa|peso|\\(g\\)|volumen|altura|di.metro|lectura|golpes|capas/i.test(lbl);
             // En la pantalla de un ensayo, todo campo de texto es un dato numérico (menos los nombres de arriba): abre el teclado de números aunque
             // no tenga un placeholder numérico. Las descripciones y observaciones escritas a mano son áreas de texto (no entran aquí).
-            var enEnsayo = /screen=assay-form/.test(window.parent.location.search);
+            var enEnsayo = /screen=(assay-form|pruebas)/.test(window.parent.location.search);
             if (esNumeroRecipiente || esNombre) {
                 mode = null;
             } else if (/^-?\\d+[.,]\\d+$/.test(ph)) {
@@ -866,9 +878,9 @@ components.html("""
 
     applyInputMode();
     ocultarCopiasRepetidas();
-    new MutationObserver(function() { applyInputMode(); programarCopias(); }).observe(window.parent.document.body, {childList: true, subtree: true});
-    window.parent.document.addEventListener('keydown', focusNextOnEnter, true);
-    window.parent.addEventListener('popstate', function() {
+    observar(function() { applyInputMode(); programarCopias(); }, window.parent.document.body);
+    escuchar(window.parent.document, 'keydown', focusNextOnEnter, true);
+    escuchar(window.parent, 'popstate', function() {
         window.parent.__gdPopAt = Date.now();
         window.parent.location.reload();
     });
@@ -889,15 +901,15 @@ components.html("""
             return doc.scrollingElement;
         }
         ['wheel', 'touchmove'].forEach(function(ev) {
-            doc.addEventListener(ev, function() { fuerte = Date.now(); }, {capture: true, passive: true});
+            escuchar(doc, ev, function() { fuerte = Date.now(); }, {capture: true, passive: true});
         });
-        doc.addEventListener('keydown', function(e) {
+        escuchar(doc, 'keydown', function(e) {
             var enCampo = e.target && e.target.matches && e.target.matches('input, textarea, select, [role="combobox"], [role="listbox"]');
             if (['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' '].indexOf(e.key) >= 0 && !enCampo) fuerte = Date.now();
             else if (e.key === 'Enter' || e.key === 'Tab') suave = Date.now();
         }, true);
-        doc.addEventListener('focusin', function() { suave = Date.now(); }, true);
-        doc.addEventListener('mousedown', function(e) { if (e.target === scroller()) fuerte = Date.now(); }, true);
+        escuchar(doc, 'focusin', function() { suave = Date.now(); }, true);
+        escuchar(doc, 'mousedown', function(e) { if (e.target === scroller()) fuerte = Date.now(); }, true);
         function revisar() {
             var s = scroller();
             if (!s) return;
@@ -913,8 +925,8 @@ components.html("""
             t1 = setTimeout(revisar, 120);
             t2 = setTimeout(revisar, 800);
         }
-        doc.addEventListener('scroll', programar, {capture: true, passive: true});
-        new MutationObserver(programar).observe(doc.body, {childList: true, subtree: true});
+        escuchar(doc, 'scroll', programar, {capture: true, passive: true});
+        observar(programar, doc.body);
     })();
 
     // Gesto de "atrás": deslizar el dedo hacia la derecha empezando cerca del borde izquierdo aprieta el botón "← Atrás" de la pantalla
