@@ -2077,6 +2077,8 @@ def _load_data(solo_balanzas=False):
         a["muestra_numero"] = muestra["numero"]
         a["lastModified"] = a["updated_at"]
         a["createdAt"] = a["created_at"]
+        if a.get("status") == "en-proceso" and not tiene_valores_digitados(a.get("data")):
+            a["status"] = "sin-iniciar"   # abierto pero sin ningún valor digitado (o borrado): sigue en rojo
         assays.append(a)
     st.session_state.assays = assays
 
@@ -2367,6 +2369,27 @@ def tiene_datos_digitados(data):
     defecto (método, tipo de corte...) ni los textos como el número de recipiente: eso no es "ingresar el primer dato"."""
     for k, v in (data or {}).items():
         if k.startswith("_"):
+            continue
+        if isinstance(v, list) and v:
+            return True
+        if isinstance(v, dict) and "b64" in v:
+            return True
+        if isinstance(v, str) and to_float(v) is not None:
+            return True
+    return False
+
+
+# Campos que traen un valor por defecto al abrir el formulario (golpes de los moldes, fuerza en 0 in, rango de la prensa): no cuentan como
+# "valor digitado" para el estado del ensayo.
+_CLAVES_CON_VALOR_POR_DEFECTO = re.compile(r"^(cbrc_\d_golpes|cbr_pen_(antes|despues)_0|cbr_rango|cbr_pesas_.*|cbr_tiempo_.*)$")
+
+
+def tiene_valores_digitados(data):
+    """True si el laboratorista ya digitó algún valor del ensayo (un número, lecturas de la máquina o una foto). Escoger equipos, la norma, el método o
+    dejar los valores por defecto NO cuenta: mientras no haya un valor, el ensayo sigue "sin iniciar" (rojo); al digitar el primero pasa a "en
+    ejecución" (naranja) y, si se borran todos, vuelve a rojo."""
+    for k, v in (data or {}).items():
+        if k.startswith("_") or k.endswith("_equipos") or _CLAVES_CON_VALOR_POR_DEFECTO.match(k):
             continue
         if isinstance(v, list) and v:
             return True
@@ -13706,7 +13729,8 @@ def render_assay_form(prueba=False):
             data["_fecha_primer_dato"] = hoy_colombia().isoformat()
         if (data != assay.get("data", {}) or observations != assay.get("observations", "")
                 or laboratorist != assay.get("laboratorist", "")):
-            nuevo_status = "en-proceso" if assay["status"] == "sin-iniciar" else assay["status"]
+            nuevo_status = (("en-proceso" if tiene_valores_digitados(data) else "sin-iniciar")
+                            if assay["status"] in ("sin-iniciar", "en-proceso") else assay["status"])
             # Un ensayo con foto (compresión inconfinada) manda un jsonb varias veces más pesado que uno solo con
             # números — en una red de celular lenta la escritura a Supabase puede tardar; se avisa con un spinner
             # en vez de dejar la pantalla quieta sin explicación. Si la escritura falla (señal mala, se cierra la
@@ -13762,10 +13786,11 @@ def render_assay_form(prueba=False):
             if not supervisor_edita and st.button("Guardar borrador", use_container_width=True, icon=":material/save:"):
                 try:
                     with st.spinner("Guardando…"):
-                        db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status="en-proceso")
+                        estado_borrador = "en-proceso" if tiene_valores_digitados(data) else "sin-iniciar"
+                        db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status=estado_borrador)
                         if pasa200_gran_sibling:
                             db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
-                    assay.update(data=data, observations=observations, laboratorist=laboratorist, status="en-proceso")
+                    assay.update(data=data, observations=observations, laboratorist=laboratorist, status=estado_borrador)
                     st.toast("Borrador guardado.", icon=":material/check_circle:")
                 except Exception:
                     st.error("No se pudo guardar (revisa tu conexión) — vuelve a intentarlo.")
