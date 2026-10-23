@@ -10,6 +10,7 @@ import base64
 import html
 import json
 import math
+import contextlib
 import os
 import re
 import time
@@ -6057,6 +6058,16 @@ def _perforacion_ensayos_progress(codigo, perf_codigo):
     return completados, total_ensayos
 
 
+def _recipientes_limites_txt(assay):
+    """Números de los recipientes de Límites de Atterberg: los del límite líquido y, después de una barra, los del plástico (26 - 25 - 25 / 12 - 13)."""
+    d = (assay or {}).get("data") or {}
+
+    def lista(prefijo, n):
+        return [str(d.get(f"{prefijo}_{i}") or "").strip() for i in range(1, n + 1) if str(d.get(f"{prefijo}_{i}") or "").strip()]
+    ll, lp = lista("lim_ll_recipiente", 3), lista("lim_lp_recipiente", 2)
+    return " - ".join(ll) + ("  /  " + " - ".join(lp) if lp else "") if (ll or lp) else ""
+
+
 def _render_tabla_muestras_con_semaforo(muestras, codigo, perf_codigo):
     """Tabla de muestras con chips de color por ensayo (semáforo: rojo sin iniciar/amarillo en
     proceso/verde finalizado, ver STATUS_BADGE) y un botón "Abrir" que va directo al detalle de
@@ -6100,28 +6111,36 @@ def _render_tabla_muestras_con_semaforo(muestras, codigo, perf_codigo):
                         st.markdown(f'<span class="assigned-chip assigned-chip-sm assigned-chip-muted">{html.escape(e)}</span>', unsafe_allow_html=True)
                         continue
                     slug = re.sub(r"[^a-z0-9]+", "-", e.lower())
-                    with st.container(key=f"chipens-{clase}-{m['id_unico']}-{slug}"):
-                        if st.button(e, key=f"chip_abrir_{m['id_unico']}_{slug}", disabled=bloqueada,
-                                     help=("Primero digita la descripción visual de la muestra (botón Iniciar)" if bloqueada
-                                           else f"Abrir {e} · {STATUS_LABELS[estado]}")):
-                            st.session_state.selected_codigo = codigo
-                            st.session_state.selected_perforacion = perf_codigo
-                            st.session_state.selected_muestra_id = m["id_unico"]
-                            if tipo_interno in ("cbr", "proctor") and not get_assay(m["id_unico"], "cbr") and not get_assay(m["id_unico"], "proctor"):
-                                # Primero se elige si es CBR, Proctor o los dos (la orden a veces marca uno y pide los dos en observaciones)
-                                st.session_state["_elegir_cbr_proctor"] = m["id_unico"]
-                                navigate("muestra-detail")
-                            if existing:
-                                st.session_state.selected_assay_id = existing["id"]
-                            else:
-                                try:
-                                    st.session_state.selected_assay_id = db.create_assay(m["id"], tipo_interno)["id"]
-                                except Exception:
-                                    st.error("No se pudo abrir el ensayo. Si es un ensayo nuevo en la app, falta aplicar su migración en Supabase "
-                                             "(la última de la carpeta supabase/migrations).")
-                                    st.stop()
-                            st.session_state.selected_assay_type = tipo_interno
-                            navigate("assay-form")
+                    # Límites de Atterberg: al lado de la etiqueta, en gris y chico, los recipientes que se usaron (para ubicarlos de un vistazo).
+                    nota_rec = _recipientes_limites_txt(existing) if tipo_interno == "limites" else ""
+                    envoltura = (st.container(horizontal=True, vertical_alignment="center", key=f"chiprow-{m['id_unico']}-{slug}")
+                                 if nota_rec else contextlib.nullcontext())
+                    with envoltura:
+                        with st.container(key=f"chipens-{clase}-{m['id_unico']}-{slug}"):
+                            if st.button(e, key=f"chip_abrir_{m['id_unico']}_{slug}", disabled=bloqueada,
+                                         help=("Primero digita la descripción visual de la muestra (botón Iniciar)" if bloqueada
+                                               else f"Abrir {e} · {STATUS_LABELS[estado]}")):
+                                st.session_state.selected_codigo = codigo
+                                st.session_state.selected_perforacion = perf_codigo
+                                st.session_state.selected_muestra_id = m["id_unico"]
+                                if tipo_interno in ("cbr", "proctor") and not get_assay(m["id_unico"], "cbr") and not get_assay(m["id_unico"], "proctor"):
+                                    # Primero se elige si es CBR, Proctor o los dos (la orden a veces marca uno y pide los dos en observaciones)
+                                    st.session_state["_elegir_cbr_proctor"] = m["id_unico"]
+                                    navigate("muestra-detail")
+                                if existing:
+                                    st.session_state.selected_assay_id = existing["id"]
+                                else:
+                                    try:
+                                        st.session_state.selected_assay_id = db.create_assay(m["id"], tipo_interno)["id"]
+                                    except Exception:
+                                        st.error("No se pudo abrir el ensayo. Si es un ensayo nuevo en la app, falta aplicar su migración en Supabase "
+                                                 "(la última de la carpeta supabase/migrations).")
+                                        st.stop()
+                                st.session_state.selected_assay_type = tipo_interno
+                                navigate("assay-form")
+                        if nota_rec:
+                            st.markdown(f'<span style="color:#8B9099;font-size:12px;font-weight:600;white-space:nowrap;" '
+                                        f'title="Recipientes: límite líquido / límite plástico">{html.escape(nota_rec)}</span>', unsafe_allow_html=True)
         with cols[1]:
             if st.button("Iniciar" if es_lab else "Abrir", key=f"open_muestra_{m['id_unico']}", use_container_width=True,
                          type="primary" if bloqueada else "secondary"):
