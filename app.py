@@ -6087,10 +6087,13 @@ def _perforacion_ensayos_progress(codigo, perf_codigo):
 
 
 def _recipientes_txt(assay, tipo=None, maximo=8):
-    """Números de los recipientes que se usaron en un ensayo, en el orden del formulario (26 - 25 - 25). Son los campos «…recipiente…» que no son una
+    """Números de los recipientes que se usaron en un ensayo, en el orden del formulario (26 - 25 - 25); en el CBR, el molde. Son los campos «…recipiente…» que no son una
     masa (hum_recipiente, p200_recipiente_antes, lim_ll_recipiente_1, cbrc_1_hc_recipiente...). En Límites van los del límite líquido y, tras una
     barra, los del plástico. Con más de `maximo` se corta con «…»."""
     d = (assay or {}).get("data") or {}
+    if tipo == "cbr":   # en el CBR lo que identifica la muestra en el laboratorio es el molde, no el recipiente de la humedad
+        molde = str(d.get("cbr_molde") or "").strip()
+        return f"Molde {molde}" if molde else ""
     claves = sorted((k for k, v in d.items() if "recipiente" in k and "masa" not in k and not k.startswith("_") and str(v or "").strip()
                      and not isinstance(v, (list, dict))), key=lambda k: (k.startswith("cbrc"), k))   # Proctor primero, luego su CBR compactado
     if not claves:
