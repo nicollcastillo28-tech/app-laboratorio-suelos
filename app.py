@@ -6086,14 +6086,24 @@ def _perforacion_ensayos_progress(codigo, perf_codigo):
     return completados, total_ensayos
 
 
-def _recipientes_limites_txt(assay):
-    """Números de los recipientes de Límites de Atterberg: los del límite líquido y, después de una barra, los del plástico (26 - 25 - 25 / 12 - 13)."""
+def _recipientes_txt(assay, tipo=None, maximo=8):
+    """Números de los recipientes que se usaron en un ensayo, en el orden del formulario (26 - 25 - 25). Son los campos «…recipiente…» que no son una
+    masa (hum_recipiente, p200_recipiente_antes, lim_ll_recipiente_1, cbrc_1_hc_recipiente...). En Límites van los del límite líquido y, tras una
+    barra, los del plástico. Con más de `maximo` se corta con «…»."""
     d = (assay or {}).get("data") or {}
+    claves = sorted((k for k, v in d.items() if "recipiente" in k and "masa" not in k and not k.startswith("_") and str(v or "").strip()
+                     and not isinstance(v, (list, dict))), key=lambda k: (k.startswith("cbrc"), k))   # Proctor primero, luego su CBR compactado
+    if not claves:
+        return ""
 
-    def lista(prefijo, n):
-        return [str(d.get(f"{prefijo}_{i}") or "").strip() for i in range(1, n + 1) if str(d.get(f"{prefijo}_{i}") or "").strip()]
-    ll, lp = lista("lim_ll_recipiente", 3), lista("lim_lp_recipiente", 2)
-    return " - ".join(ll) + ("  /  " + " - ".join(lp) if lp else "") if (ll or lp) else ""
+    def valores(ks):
+        return [str(d[k]).strip() for k in ks]
+    if tipo == "limites":
+        ll = valores([k for k in claves if "_ll_" in k])
+        lp = valores([k for k in claves if "_lp_" in k])
+        return " - ".join(ll) + ("  /  " + " - ".join(lp) if lp else "")
+    todos = valores(claves)
+    return " - ".join(todos[:maximo]) + (" …" if len(todos) > maximo else "")
 
 
 def _render_tabla_muestras_con_semaforo(muestras, codigo, perf_codigo):
@@ -6139,8 +6149,8 @@ def _render_tabla_muestras_con_semaforo(muestras, codigo, perf_codigo):
                         st.markdown(f'<span class="assigned-chip assigned-chip-sm assigned-chip-muted">{html.escape(e)}</span>', unsafe_allow_html=True)
                         continue
                     slug = re.sub(r"[^a-z0-9]+", "-", e.lower())
-                    # Límites de Atterberg: al lado de la etiqueta, en gris y chico, los recipientes que se usaron (para ubicarlos de un vistazo).
-                    nota_rec = _recipientes_limites_txt(existing) if tipo_interno == "limites" else ""
+                    # Al lado de la etiqueta de cada ensayo, en gris y chico, los recipientes que se usaron (para ubicarlos de un vistazo).
+                    nota_rec = _recipientes_txt(existing, tipo_interno)
                     envoltura = (st.container(horizontal=True, vertical_alignment="center", key=f"chiprow-{m['id_unico']}-{slug}")
                                  if nota_rec else contextlib.nullcontext())
                     with envoltura:
@@ -6168,7 +6178,7 @@ def _render_tabla_muestras_con_semaforo(muestras, codigo, perf_codigo):
                                 navigate("assay-form")
                         if nota_rec:
                             st.markdown(f'<span style="color:#8B9099;font-size:12px;font-weight:600;white-space:nowrap;" '
-                                        f'title="Recipientes: límite líquido / límite plástico">{html.escape(nota_rec)}</span>', unsafe_allow_html=True)
+                                        f'title="Números de recipiente usados en este ensayo">{html.escape(nota_rec)}</span>', unsafe_allow_html=True)
         with cols[1]:
             if st.button("Iniciar" if es_lab else "Abrir", key=f"open_muestra_{m['id_unico']}", use_container_width=True,
                          type="primary" if bloqueada else "secondary"):
