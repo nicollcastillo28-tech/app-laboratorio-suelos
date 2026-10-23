@@ -313,6 +313,12 @@ def get_assay(muestra_id: str, tipo: str) -> dict | None:
     return rows[0] if rows else None
 
 
+def get_assay_fila(assay_id: str, columnas: str = "*") -> dict | None:
+    """Una fila de ensayos por id, con las columnas pedidas (para partir de lo que de verdad está guardado)."""
+    filas = get_client().table("assays").select(columnas).eq("id", assay_id).execute().data or []
+    return filas[0] if filas else None
+
+
 def create_assay(muestra_id: str, tipo: str, **defaults) -> dict:
     res = get_client().table("assays").insert({"muestra_id": muestra_id, "tipo": tipo, **defaults}).execute()
     return res.data[0]

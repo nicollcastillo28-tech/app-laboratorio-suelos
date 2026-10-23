@@ -2289,6 +2289,7 @@ def navigate(screen):
     if actual and actual != screen:
         st.session_state.nav_stack.append(actual)
     st.session_state.screen = screen
+    st.session_state["_nav_token"] = st.session_state.get("_nav_token", 0) + 1
     _sync_query_params()
     st.session_state._pending_history_push = True
     st.rerun()
@@ -2302,6 +2303,7 @@ def go_back(fallback="home"):
         st.session_state.screen = st.session_state.nav_stack.pop()
     else:
         st.session_state.screen = fallback
+    st.session_state["_nav_token"] = st.session_state.get("_nav_token", 0) + 1
     _sync_query_params()
     st.session_state._pending_history_push = True
     st.rerun()
@@ -2384,20 +2386,23 @@ def tiene_datos_digitados(data):
 _CLAVES_CON_VALOR_POR_DEFECTO = re.compile(r"^(cbrc_\d_golpes|cbr_pen_(antes|despues)_0|cbr_rango|cbr_pesas_.*|cbr_tiempo_.*)$")
 
 
+def _es_valor_digitado(k, v):
+    """True si el campo `k` con valor `v` es algo que digitó la persona (número, número de recipiente, lecturas de la máquina o foto): no cuentan
+    los que empiezan con «_», los equipos ni los valores por defecto. Es la base de `tiene_valores_digitados`."""
+    if k.startswith("_") or k.endswith("_equipos") or _CLAVES_CON_VALOR_POR_DEFECTO.match(k):
+        return False
+    if isinstance(v, list):
+        return bool(v)
+    if isinstance(v, dict):
+        return "b64" in v
+    return isinstance(v, str) and (to_float(v) is not None or ("recipiente" in k and bool(v.strip())))
+
+
 def tiene_valores_digitados(data):
     """True si el laboratorista ya digitó algo del ensayo: un número, el número de un recipiente (aunque lleve letras), lecturas de la máquina o una
     foto. Escoger equipos, la norma, el método o dejar los valores por defecto NO cuenta: mientras no haya nada digitado, el ensayo sigue "sin iniciar"
     (rojo); al digitar lo primero pasa a "en ejecución" (naranja) y, si se borra todo, vuelve a rojo."""
-    for k, v in (data or {}).items():
-        if k.startswith("_") or k.endswith("_equipos") or _CLAVES_CON_VALOR_POR_DEFECTO.match(k):
-            continue
-        if isinstance(v, list) and v:
-            return True
-        if isinstance(v, dict) and "b64" in v:
-            return True
-        if isinstance(v, str) and (to_float(v) is not None or ("recipiente" in k and v.strip())):
-            return True
-    return False
+    return any(_es_valor_digitado(k, v) for k, v in (data or {}).items())
 
 
 def fecha_ejecucion_informe(muestra, datas):
@@ -13481,6 +13486,23 @@ def render_assay_form(prueba=False):
         navigate("muestra-detail")
         return
 
+    # Al entrar al ensayo se parte de lo que de verdad está guardado: los datos en memoria pueden ser de hace hasta 45 s (o de otra pestaña/tableta que
+    # guardó después). Sin esto, retomar un ensayo podía mostrar lo viejo y el autoguardado pisar lo nuevo.
+    visto = (assay_id, st.session_state.get("_nav_token", 0))
+    if not prueba and st.session_state.get("_ensayo_visto") != visto:
+        st.session_state["_ensayo_visto"] = visto
+        try:
+            fila_bd = db.get_assay_fila(assay_id, "updated_at,data,historial,status,observations,laboratorist,etapa_revision")
+        except Exception:
+            fila_bd = None
+        if fila_bd and fila_bd.get("updated_at") != assay.get("lastModified"):
+            for col_bd in ("data", "historial", "status", "observations", "laboratorist", "etapa_revision"):
+                if col_bd in fila_bd:
+                    assay[col_bd] = fila_bd[col_bd]
+            assay["lastModified"] = fila_bd["updated_at"]
+            if assay.get("status") == "en-proceso" and not tiene_valores_digitados(assay.get("data")):
+                assay["status"] = "sin-iniciar"
+
     codigo, perf_codigo, muestra_id = assay["codigo_interno"], assay["perforacion_codigo"], assay["muestra_id"]
     project = get_project(codigo)
     muestra = get_muestra(codigo, perf_codigo, muestra_id)
@@ -13727,8 +13749,22 @@ def render_assay_form(prueba=False):
         # re-fecha con el día en que alguien lo edite).
         if "_fecha_primer_dato" not in data and tiene_datos_digitados(data) and not tiene_datos_digitados(assay.get("data")):
             data["_fecha_primer_dato"] = hoy_colombia().isoformat()
-        if (data != assay.get("data", {}) or observations != assay.get("observations", "")
-                or laboratorist != assay.get("laboratorist", "")):
+        # Freno de seguridad: si de un solo cambio desaparecen de golpe muchos datos que ya estaban guardados (5 o más y la mayoría), casi seguro es
+        # un fallo de la pantalla (campos que aparecen en blanco al recargarse), no que la persona los haya borrado: no se guarda y se ofrece
+        # recuperar lo último guardado. Borrar a mano un dato por vez nunca activa esto.
+        _previos = {k for k, v in (assay.get("data") or {}).items() if _es_valor_digitado(k, v)}
+        _perdidos = _previos - {k for k, v in data.items() if _es_valor_digitado(k, v)}
+        autoguardado_bloqueado = len(_perdidos) >= 5 and len(_perdidos) >= 0.6 * len(_previos)
+        if autoguardado_bloqueado:
+            st.error("⚠️ Por seguridad NO se guardó el último cambio: varios datos que ya estaban guardados aparecieron en blanco de golpe. "
+                     "Tus datos anteriores siguen guardados. Pulsa «Recuperar lo último guardado» para volver a verlos.")
+            if st.button("Recuperar lo último guardado", key=f"recuperar_{assay_id}", type="primary", icon=":material/history:"):
+                for _k in list(st.session_state.keys()):   # se olvidan los campos de este ensayo y se vuelven a leer de lo guardado
+                    if isinstance(_k, str) and _k.endswith(f"_{assay_id}") and not _k.startswith(("recuperar_", "_")):
+                        del st.session_state[_k]
+                st.rerun()
+        if not autoguardado_bloqueado and (data != assay.get("data", {}) or observations != assay.get("observations", "")
+                                           or laboratorist != assay.get("laboratorist", "")):
             nuevo_status = (("en-proceso" if tiene_valores_digitados(data) else "sin-iniciar")
                             if assay["status"] in ("sin-iniciar", "en-proceso") else assay["status"])
             # Un ensayo con foto (compresión inconfinada) manda un jsonb varias veces más pesado que uno solo con
@@ -13754,6 +13790,7 @@ def render_assay_form(prueba=False):
                 assay["observations"] = observations
                 assay["laboratorist"] = laboratorist
                 assay["status"] = nuevo_status
+                st.session_state[f"_guardado_{assay_id}"] = (datetime.utcnow() - timedelta(hours=5)).strftime("%I:%M:%S %p")   # hora de Colombia
                 # Si el ensayo ya se había enviado a revisión, lo que se cambia desde entonces queda registrado en el historial.
                 registrar_edicion_en_curso(assay, data, observations, actor_edicion)
                 if supervisor_registra:
@@ -13764,8 +13801,9 @@ def render_assay_form(prueba=False):
             except Exception:
                 st.error("No se pudo guardar el último cambio (revisa tu conexión). Sigue en pantalla — vuelve a intentarlo "
                           "digitando algo más o dale a \"Guardar borrador\".")
-        st.markdown(f'<div class="timestamp-caption">{icon("cloud_done", size=13)} Los cambios se guardan automáticamente mientras digitas.</div>',
-                    unsafe_allow_html=True)
+        _hora_guardado = st.session_state.get(f"_guardado_{assay_id}")
+        st.markdown(f'<div class="timestamp-caption">{icon("cloud_done", size=13)} Los cambios se guardan automáticamente mientras digitas.'
+                    + (f' <b>Último guardado: {_hora_guardado}</b>' if _hora_guardado else "") + '</div>', unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
         if supervisor_edita:
