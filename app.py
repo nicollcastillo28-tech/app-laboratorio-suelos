@@ -2385,9 +2385,9 @@ _CLAVES_CON_VALOR_POR_DEFECTO = re.compile(r"^(cbrc_\d_golpes|cbr_pen_(antes|des
 
 
 def tiene_valores_digitados(data):
-    """True si el laboratorista ya digitó algún valor del ensayo (un número, lecturas de la máquina o una foto). Escoger equipos, la norma, el método o
-    dejar los valores por defecto NO cuenta: mientras no haya un valor, el ensayo sigue "sin iniciar" (rojo); al digitar el primero pasa a "en
-    ejecución" (naranja) y, si se borran todos, vuelve a rojo."""
+    """True si el laboratorista ya digitó algo del ensayo: un número, el número de un recipiente (aunque lleve letras), lecturas de la máquina o una
+    foto. Escoger equipos, la norma, el método o dejar los valores por defecto NO cuenta: mientras no haya nada digitado, el ensayo sigue "sin iniciar"
+    (rojo); al digitar lo primero pasa a "en ejecución" (naranja) y, si se borra todo, vuelve a rojo."""
     for k, v in (data or {}).items():
         if k.startswith("_") or k.endswith("_equipos") or _CLAVES_CON_VALOR_POR_DEFECTO.match(k):
             continue
@@ -2395,7 +2395,7 @@ def tiene_valores_digitados(data):
             return True
         if isinstance(v, dict) and "b64" in v:
             return True
-        if isinstance(v, str) and to_float(v) is not None:
+        if isinstance(v, str) and (to_float(v) is not None or ("recipiente" in k and v.strip())):
             return True
     return False
 
