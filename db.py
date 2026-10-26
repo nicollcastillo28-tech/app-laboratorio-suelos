@@ -319,6 +319,15 @@ def get_assay_fila(assay_id: str, columnas: str = "*") -> dict | None:
     return filas[0] if filas else None
 
 
+def list_assay_versions(assay_id: str, limite: int = 40) -> list[dict]:
+    """Versiones anteriores del ensayo (la más reciente primero). Vacío si la tabla aún no existe en la base."""
+    try:
+        return (get_client().table("assay_versions").select("id,data,status,saved_at").eq("assay_id", assay_id)
+                .order("saved_at", desc=True).limit(limite).execute().data or [])
+    except Exception:
+        return []
+
+
 def create_assay(muestra_id: str, tipo: str, **defaults) -> dict:
     res = get_client().table("assays").insert({"muestra_id": muestra_id, "tipo": tipo, **defaults}).execute()
     return res.data[0]

@@ -13949,6 +13949,47 @@ def render_assay_form(prueba=False):
                             raise
                         st.error("No se pudo restaurar (revisa tu conexión) — vuelve a intentarlo.")
 
+        if not read_only:
+            with st.expander("Historial de versiones", icon=":material/history:"):
+                st.caption("Cada vez que cambia un dato, la versión de antes queda guardada en la base (últimas 40). Elige una para ver qué cambió y, si hace "
+                           "falta, restaurarla; lo actual queda como respaldo.")
+                if st.button("Cargar historial", key=f"cargar_hist_{assay_id}", icon=":material/refresh:"):
+                    st.session_state[f"_hist_{assay_id}"] = db.list_assay_versions(assay["id"])
+                _versiones = st.session_state.get(f"_hist_{assay_id}")
+                if _versiones is not None and not _versiones:
+                    st.caption("Todavía no hay versiones anteriores guardadas.")
+                elif _versiones:
+                    _opc = {f"{str(v['saved_at'])[:19].replace('T', ' ')} (UTC)": v for v in _versiones}
+                    _sel = _opc[st.selectbox("Versión", list(_opc), key=f"sel_hist_{assay_id}")]
+                    _actual_h = {k: v for k, v in (assay.get("data") or {}).items() if not k.startswith("_")}
+                    _dif = [(k, _sel["data"].get(k), _actual_h.get(k)) for k in sorted(set(_sel["data"]) | set(_actual_h))
+                            if not k.startswith("_") and _sel["data"].get(k) != _actual_h.get(k)]
+                    if _dif:
+                        st.dataframe([{"Campo": k, "Esa versión": str(a), "Ahora": str(b)} for k, a, b in _dif], hide_index=True, use_container_width=True)
+                    else:
+                        st.caption("Es igual a lo actual.")
+                    if _dif and st.button("Restaurar esta versión", key=f"rest_hist_{assay_id}", icon=":material/restore:"):
+                        _fuente = assay.get("data") or {}
+                        _actual = {k: v for k, v in _fuente.items() if not k.startswith("_") and not (isinstance(v, dict) and "b64" in v)}
+                        _fotos = {k: v for k, v in _fuente.items() if isinstance(v, dict) and "b64" in v}
+                        _restaurado = {**{k: v for k, v in _fuente.items() if k.startswith("_") and k != "_respaldo"}, **_fotos, **_sel["data"],
+                                       "_respaldo": _actual}
+                        try:
+                            db.update_assay_data(assay["id"], data=_restaurado)
+                            if pasa200_gran_sibling:
+                                db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], _restaurado)
+                            assay["data"] = _restaurado
+                            st.session_state.pop(f"_hist_{assay_id}", None)
+                            for _k in list(st.session_state.keys()):
+                                if isinstance(_k, str) and _k.endswith(f"_{assay_id}") and not _k.startswith("_"):
+                                    del st.session_state[_k]
+                            st.toast("Versión restaurada.", icon=":material/check_circle:")
+                            st.rerun()
+                        except Exception as _e:
+                            if "RerunData" in type(_e).__name__ or "Stop" in type(_e).__name__:
+                                raise
+                            st.error("No se pudo restaurar (revisa tu conexión) — vuelve a intentarlo.")
+
         st.markdown("<br>", unsafe_allow_html=True)
         if supervisor_edita:
             if st.button("Guardar cambios", type="primary", use_container_width=True, icon=":material/save:"):
