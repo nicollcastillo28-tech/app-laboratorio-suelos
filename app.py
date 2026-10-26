@@ -12740,7 +12740,18 @@ def render_limites_form(data, assay_id):
             if r["ip"] is not None:
                 partes.append(f"IP: {r['ip']} %")
             titulo_res = "Resultado — " + " · ".join(partes) if partes else "Resultado del Límite Plástico (digita las masas)"
+        pref, n_ens = ("lim_ll", LIMITE_LIQUIDO_N) if tipo == "ll" else ("lim_lp", LIMITE_PLASTICO_N)
+        revisar = []
+        for i in range(1, n_ens + 1):
+            hum, sec, rec = (to_float(data.get(f"{pref}_{c}_{i}")) for c in ("humedo", "seco", "recip_masa"))
+            if sec is not None and rec is not None and (sec - rec <= 0 or (hum is not None and hum < sec)):
+                revisar.append(str(i))
+        if revisar:
+            titulo_res += " ⚠️"
         with st.expander(titulo_res, icon=":material/calculate:"):
+            if revisar:
+                st.warning(f"Revisa los datos del ensayo {', '.join(revisar)}: la masa del recipiente no puede ser igual o mayor a la del suelo seco + rec., "
+                           "ni el suelo húmedo menor que el seco. Por eso no se calcula la humedad.")
             if tipo == "ll":
                 filas_ll = [(f"Ensayo {p['ensayo']}", fmt_num(p["golpes"], 0) if p["golpes"] is not None else "—", fmt(p["w"])) for p in r["puntos"]]
                 st.markdown(param_table_ncol_html(("ENSAYO", "GOLPES", "HUMEDAD (%)"), filas_ll), unsafe_allow_html=True)
