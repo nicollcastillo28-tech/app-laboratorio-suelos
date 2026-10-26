@@ -12726,7 +12726,34 @@ def render_limites_form(data, assay_id):
         data["lim_metodo"] = st.radio("Método de Ensayo", METODO_HUMEDAD, index=midx, horizontal=True, key=f"lim_metodo_{assay_id}",
                                       disabled=sin_limites)
 
-    def _tabla_limite(icono, titulo, filas, n):
+    def _resultado_en_la_tarjeta(tipo):
+        """Desplegable con el resultado de ESTE límite, justo debajo de sus casillas: para verificar lo digitado sin bajar hasta el final de la
+        pantalla. En el título ya va el valor (LL, o LP e IP), así se ve sin abrirlo."""
+        r = calcular_limites(data)
+        fmt = lambda v: fmt_num(v, 2) if v is not None else "—"
+        if tipo == "ll":
+            titulo_res = f"Resultado — Límite Líquido: {r['ll']} %" if r["ll"] is not None else "Resultado del Límite Líquido (digita las masas)"
+        else:
+            partes = []
+            if r["lp"] is not None:
+                partes.append(f"Límite Plástico: {r['lp']} %")
+            if r["ip"] is not None:
+                partes.append(f"IP: {r['ip']} %")
+            titulo_res = "Resultado — " + " · ".join(partes) if partes else "Resultado del Límite Plástico (digita las masas)"
+        with st.expander(titulo_res, icon=":material/calculate:"):
+            if tipo == "ll":
+                filas_ll = [(f"Ensayo {p['ensayo']}", fmt_num(p["golpes"], 0) if p["golpes"] is not None else "—", fmt(p["w"])) for p in r["puntos"]]
+                st.markdown(param_table_ncol_html(("ENSAYO", "GOLPES", "HUMEDAD (%)"), filas_ll), unsafe_allow_html=True)
+                st.markdown(param_table_html([("Límite Líquido — LL (%)", r["ll"] if r["ll"] is not None else "—")], header_left="RESULTADO",
+                                             header_right="VALOR"), unsafe_allow_html=True)
+            else:
+                filas_lp = [(f"Ensayo {i}", fmt(w)) for i, w in enumerate(r["plasticos"], 1)]
+                st.markdown(param_table_html(filas_lp, header_left="ENSAYO", header_right="HUMEDAD (%)"), unsafe_allow_html=True)
+                st.markdown(param_table_html([("Límite Plástico — LP (%)", r["lp"] if r["lp"] is not None else "—"),
+                                              ("Índice de Plasticidad — IP (%)", r["ip"] if r["ip"] is not None else "—")],
+                                             header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+
+    def _tabla_limite(icono, titulo, filas, n, tipo):
         with st.container(border=True):
             st.markdown(card_header_html(icono, titulo), unsafe_allow_html=True)
             head = st.columns([2] + [1] * n)
@@ -12759,11 +12786,12 @@ def render_limites_form(data, assay_id):
                                 st.session_state[f"{hkey}_{assay_id}"] = current_val
                                 data[hkey] = current_val
                             data[lastsync_key] = current_val
+            _resultado_en_la_tarjeta(tipo)
 
     sin_limites = bool(data["lim_nl"] or data["lim_np"])
     if not sin_limites:
-        _tabla_limite("water_drop", "Límite Líquido (INV. 125 - 13)", LIMITE_LIQUIDO_FILAS, LIMITE_LIQUIDO_N)
-        _tabla_limite("gesture", "Límite Plástico (INV. 126 - 13)", LIMITE_PLASTICO_FILAS, LIMITE_PLASTICO_N)
+        _tabla_limite("water_drop", "Límite Líquido (INV. 125 - 13)", LIMITE_LIQUIDO_FILAS, LIMITE_LIQUIDO_N, "ll")
+        _tabla_limite("gesture", "Límite Plástico (INV. 126 - 13)", LIMITE_PLASTICO_FILAS, LIMITE_PLASTICO_N, "lp")
 
     if sin_limites:
         # Sin límites no se usó ningún equipo: se muestra bloqueado y se limpia lo que hubiera quedado marcado.
