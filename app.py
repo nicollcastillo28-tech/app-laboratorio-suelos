@@ -738,6 +738,11 @@ st.markdown(f"""
         color: #fff; font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 12px;
     }}
 
+    .perf-code-box.perf-code-largo {{
+        display: flex; width: 100%; min-height: 30px; height: auto; padding: 5px 10px; box-sizing: border-box;
+        justify-content: flex-start; text-align: left; line-height: 1.25; font-size: 13px; overflow-wrap: anywhere;
+    }}
+
     /* Botón flotante "+" para crear proyecto desde Proyectos en ejecución */
     .st-key-fab-new-project {{
         position: fixed; right: 24px; bottom: 28px; z-index: 998; width: 56px !important;
@@ -5876,9 +5881,14 @@ def render_project_detail():
         muestras_con_ensayo = sum(1 for m in muestras if any(v for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS))
 
         with st.container(border=True):
-            top = st.columns([1, 3, 1.3])
-            with top[0]:
-                st.markdown(f'<div class="perf-code-box">{html.escape(perf["codigo"])}</div>', unsafe_allow_html=True)
+            _codigo_largo = len(str(perf["codigo"])) > 4   # un nombre largo no cabe en la cajita cuadrada: va en su propia línea, a lo ancho
+            if _codigo_largo:
+                st.markdown(f'<div class="perf-code-box perf-code-largo">{html.escape(perf["codigo"])}</div>', unsafe_allow_html=True)
+                top = [None] + list(st.columns([3, 1.3]))
+            else:
+                top = st.columns([1, 3, 1.3])
+                with top[0]:
+                    st.markdown(f'<div class="perf-code-box">{html.escape(perf["codigo"])}</div>', unsafe_allow_html=True)
             with top[1]:
                 st.markdown(f'<span style="font-weight:700;">{perf_pct}%</span>&nbsp;&nbsp;'
                             f'<span class="badge {estado_badge}">{estado_label}</span>', unsafe_allow_html=True)
