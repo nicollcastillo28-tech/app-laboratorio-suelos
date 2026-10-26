@@ -739,7 +739,7 @@ st.markdown(f"""
     }}
 
     .perf-code-box.perf-code-largo {{
-        display: flex; width: 100%; min-height: 30px; height: auto; padding: 5px 10px; box-sizing: border-box;
+        display: flex; width: 100%; min-height: 30px; height: auto; padding: 5px 10px; box-sizing: border-box; margin-bottom: 12px;
         justify-content: flex-start; text-align: left; line-height: 1.25; font-size: 13px; overflow-wrap: anywhere;
     }}
 
