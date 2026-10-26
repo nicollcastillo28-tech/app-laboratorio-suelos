@@ -5652,8 +5652,8 @@ def _render_perforaciones_compactas(codigo, perforaciones):
             else:
                 texto = f'<span class="cell-muted">Sin muestras ensayadas ({en_orden} en la orden)</span>'
             cols[1].markdown(texto, unsafe_allow_html=True)
-            if total == 0:
-                badge, etiqueta = "badge-muted", "Pendiente"
+            if total == 0 or not any(compute_muestra_estado(m) != "sin-iniciar" for m in muestras):
+                badge, etiqueta = "badge-muted", "Por iniciar"   # ningún laboratorista ha empezado esta perforación
             elif hechos == total:
                 badge, etiqueta = "badge-success", "Completado"
             else:
@@ -5871,8 +5871,8 @@ def render_project_detail():
             counts[compute_muestra_estado(m)] += 1
         perf_total = len(muestras)
         perf_pct = round(counts["finalizado"] / perf_total * 100) if perf_total else 0
-        if perf_total == 0:
-            estado_badge, estado_label = "badge-muted", "Pendiente"
+        if perf_total == 0 or counts["sin-iniciar"] == perf_total:
+            estado_badge, estado_label = "badge-muted", "Por iniciar"   # ningún laboratorista ha empezado esta perforación
         elif counts["finalizado"] == perf_total:
             estado_badge, estado_label = "badge-success", "Completado"
         else:
