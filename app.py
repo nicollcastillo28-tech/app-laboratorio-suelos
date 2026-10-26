@@ -2516,6 +2516,22 @@ def limites_sin_limites(data):
     return bool((data or {}).get("lim_nl")) or (bool((data or {}).get("lim_np")) and not _tiene_datos_ll(data))
 
 
+def limites_incoherentes(data):
+    """Ensayos de Límites cuyas masas no cuadran: el recipiente no puede pesar igual o más que el suelo seco + rec., ni el suelo húmedo menos que el
+    seco. Devuelve [(prefijo, número, [campos a resaltar], mensaje)]; vacío si todo cuadra."""
+    salida = []
+    for pref, n_ens, nombre in (("lim_ll", LIMITE_LIQUIDO_N, "Límite Líquido"), ("lim_lp", LIMITE_PLASTICO_N, "Límite Plástico")):
+        for i in range(1, n_ens + 1):
+            hum, sec, rec = (to_float(data.get(f"{pref}_{c}_{i}")) for c in ("humedo", "seco", "recip_masa"))
+            if sec is not None and rec is not None and sec - rec <= 0:
+                salida.append((pref, i, [f"{pref}_seco_{i}", f"{pref}_recip_masa_{i}"],
+                               f"{nombre}, ensayo {i}: la masa del recipiente ({fmt_num(rec, 2)} g) es igual o mayor que la del suelo seco + rec. ({fmt_num(sec, 2)} g)."))
+            elif hum is not None and sec is not None and hum < sec:
+                salida.append((pref, i, [f"{pref}_humedo_{i}", f"{pref}_seco_{i}"],
+                               f"{nombre}, ensayo {i}: el suelo húmedo + rec. ({fmt_num(hum, 2)} g) es menor que el seco + rec. ({fmt_num(sec, 2)} g)."))
+    return salida
+
+
 def calcular_limites(data):
     """Límite Líquido / Plástico / Índice de Plasticidad con las fórmulas de la plantilla oficial
     (CLASIFICACION_DE_SUELOS.xlsm): humedad = (húmedo−seco)/(seco−recipiente)·100; LL = ROUNDDOWN(promedio de
@@ -12803,6 +12819,12 @@ def render_limites_form(data, assay_id):
     if not sin_limites:
         _tabla_limite("water_drop", "Límite Líquido (INV. 125 - 13)", LIMITE_LIQUIDO_FILAS, LIMITE_LIQUIDO_N, "ll")
         _tabla_limite("gesture", "Límite Plástico (INV. 126 - 13)", LIMITE_PLASTICO_FILAS, LIMITE_PLASTICO_N, "lp")
+        _dudosos = limites_incoherentes(data)
+        if _dudosos:
+            _css = "".join(f".st-key-{c}_{assay_id} input {{ border: 2px solid #f9a825 !important; background-color: #fff8e1 !important; }}\n"
+                           for _p, _i, campos, _m in _dudosos for c in campos)
+            st.markdown(f"<style>{_css}</style>", unsafe_allow_html=True)
+            st.warning("Revisa lo digitado (resaltado en amarillo):\n\n" + "\n".join(f"- {m}" for _p, _i, _c, m in _dudosos))
 
     if sin_limites:
         # Sin límites no se usó ningún equipo: se muestra bloqueado y se limpia lo que hubiera quedado marcado.
@@ -13822,6 +13844,12 @@ def render_assay_form(prueba=False):
             else:
                 st.session_state.pop(intento_incompleto_key, None)
 
+        if st.session_state.get(f"_intento_incoherente_{assay_id}"):
+            if assay["tipo"] == "limites" and limites_incoherentes(data):
+                st.error("⚠️ No se puede enviar a revisión: hay masas que no cuadran (resaltadas en amarillo abajo). Corrígelas y vuelve a enviar.")
+            else:
+                st.session_state.pop(f"_intento_incoherente_{assay_id}", None)
+
         if assay["tipo"] == "granulometria":
             render_granulometria_form(data, assay_id)
         elif assay["tipo"] == "pasa200":
@@ -14036,6 +14064,9 @@ def render_assay_form(prueba=False):
                 faltantes = campos_faltantes(assay["tipo"], data)
                 if faltantes:
                     st.session_state[intento_incompleto_key] = True
+                    st.rerun()
+                elif assay["tipo"] == "limites" and limites_incoherentes(data):
+                    st.session_state[f"_intento_incoherente_{assay_id}"] = True
                     st.rerun()
                 else:
                     st.session_state.pop(intento_incompleto_key, None)
