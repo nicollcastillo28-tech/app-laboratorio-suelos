@@ -6147,7 +6147,7 @@ def _render_tabla_muestras_con_semaforo(muestras, codigo, perf_codigo):
                          f'<div class="cell-muted">{html.escape(m["tipo_muestra"])}</div>'
                          f'<div class="cell-muted">{fmt_prof(m["profundidad_de"])}–{fmt_prof(m["profundidad_hasta"])} m</div>{aviso_desc}',
                          unsafe_allow_html=True)
-        ensayos_sol = unificar_ensayos([e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS])
+        ensayos_sol = _ensayos_visibles(m)
         with cols[2]:
             if not ensayos_sol:
                 st.markdown('<span class="cell-muted">—</span>', unsafe_allow_html=True)
@@ -6348,6 +6348,29 @@ def _fusionar_orden_en_tabla(df_actual, filas, numeros_en_orden=(), quitar=False
     return df_actual, len(nuevas), len(cambiadas), quitadas, protegidas
 
 
+def _etiquetas_ensayos_con_datos(m):
+    """Etiquetas (de BITACORA_ENSAYOS) de los ensayos de la muestra que ya se empezaron: tienen datos o salieron de «sin iniciar». Esos ensayos no
+    pueden desaparecer de la muestra aunque la bitácora, una orden actualizada o una tabla vieja los dejen sin marcar."""
+    por_tipo = {}
+    for etiqueta, tipo in SUPPORTED_ASSAY_MAP.items():
+        if etiqueta in BITACORA_ENSAYOS:
+            por_tipo.setdefault(tipo, []).append(etiqueta)
+    salida = []
+    for tipo, etiquetas in por_tipo.items():
+        a = get_assay(m["id_unico"], tipo)
+        if a and (a.get("status") != "sin-iniciar" or tiene_datos_digitados(a.get("data"))):
+            marcada = next((e for e in etiquetas if m["ensayos"].get(e)), None)
+            salida.append(marcada or etiquetas[0])
+    return salida
+
+
+def _ensayos_visibles(m):
+    """Ensayos que se muestran de una muestra: los marcados en la bitácora MÁS los que ya tienen datos aunque hayan quedado sin marcar (así un ensayo
+    con datos nunca se oculta)."""
+    marcados = [e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS]
+    return unificar_ensayos(marcados + [e for e in _etiquetas_ensayos_con_datos(m) if e not in marcados])
+
+
 def _ensayos_iniciados(codigo, perf_codigo):
     """{(número de muestra, ensayo)} de los ensayos ya empezados (con datos o fuera de "sin iniciar") de una perforación: la actualización de una
     orden no los quita."""
@@ -6404,6 +6427,7 @@ def _sync_muestras_perforacion(perforacion_id, codigo, perf_codigo, nuevas_rows)
     actuales_by_id_unico = {m["id_unico"]: m for m in actuales}
     actuales_by_numero = {str(m["numero"]).strip(): m for m in actuales}
     vistos = set()
+    conservadas = []
     for row in nuevas_rows:
         id_unico = row["id_unico"]
         vistos.add(id_unico)
@@ -6415,12 +6439,25 @@ def _sync_muestras_perforacion(perforacion_id, codigo, perf_codigo, nuevas_rows)
             vistos.add(existente["id_unico"])
             if existente["id_unico"] != id_unico:
                 campos["id_unico"] = id_unico
+            # Los ensayos que ya se empezaron NUNCA se desmarcan al guardar la bitácora (una tabla vieja o una orden que ya no los trae no pueden
+            # esconder datos digitados).
+            ensayos = dict(campos.get("ensayos") or {})
+            for etiqueta in _etiquetas_ensayos_con_datos(existente):
+                ensayos[etiqueta] = True
+            campos["ensayos"] = ensayos
             db.update_muestra(existente["id"], **campos)
         else:
             db.upsert_muestra(perforacion_id, id_unico, **campos)
     for id_unico, m in actuales_by_id_unico.items():
         if id_unico not in vistos:
+            if _etiquetas_ensayos_con_datos(m):   # una muestra con ensayos ya empezados no se archiva por quedar fuera de la tabla
+                conservadas.append(str(m["numero"]))
+                continue
             db.archive_muestra(m["id"])
+    if conservadas:
+        st.session_state.setdefault(f"_resumen_orden_{codigo}", []).append((
+            "aviso", f"No se quitó la(s) muestra(s) {', '.join(conservadas)} de {perf_codigo} porque ya tienen ensayos con datos. "
+                     "Si de verdad hay que quitarlas, usa «Eliminar» en la perforación."))
 
 
 def _render_actualizar_perforacion(codigo, project, perf, perforaciones):
@@ -6755,7 +6792,9 @@ def render_bitacora():
         for perf in perforaciones:
             key = f"{codigo}::{perf['codigo']}"
             df_rows = edited_frames.get(key)
-            rows = df_rows.to_dict("records") if df_rows is not None else []
+            if df_rows is None:   # sin la tabla de esta perforación NO se toca nada (antes se tomaba como «sin muestras» y se archivaba todo)
+                continue
+            rows = df_rows.to_dict("records")
             nuevas = []
             for row in rows:
                 numero = str(row.get("Número", "")).strip()
@@ -7389,7 +7428,7 @@ def render_muestra_detail():
 
     # Filtra por si la muestra guarda un ensayo que ya no es seleccionable (p. ej. "Pasa 200",
     # que quedó incluido dentro de Granulometría) — no se muestra aunque quede marcado en datos viejos.
-    solicitados = unificar_ensayos([e for e, v in muestra["ensayos"].items() if v and e in BITACORA_ENSAYOS])
+    solicitados = _ensayos_visibles(muestra)
     finalizados = sum(
         1 for e in solicitados
         if SUPPORTED_ASSAY_MAP.get(e) and (get_assay(muestra_id, SUPPORTED_ASSAY_MAP[e]) or {}).get("status") == "finalizado"
@@ -13557,6 +13596,9 @@ def render_assay_form(prueba=False):
     puede_descargar = es_supervisor or prueba
 
     st.markdown(f"## {ASSAY_LABELS[assay['tipo']]}")
+    if st.session_state.get(f"_fallo_guardado_{assay_id}") and not prueba:
+        st.error("⚠️ El último cambio NO se guardó en la base de datos (falló la conexión). Lo que ves en pantalla todavía no está guardado: no cierres "
+                 "esta pantalla y vuelve a digitar o pulsa «Guardar borrador» hasta ver la hora de «Último guardado» al final del ensayo.")
     titulo_excel = titulo_oficial_ensayo(assay["tipo"], assay.get("data"))
     if titulo_excel:   # el mismo título del encabezado del Excel del ensayo
         st.markdown(f'<div style="font-weight:700;font-size:13px;letter-spacing:0.02em;line-height:1.4;color:{PRIMARY};margin:-6px 0 10px;">'
@@ -13773,11 +13815,26 @@ def render_assay_form(prueba=False):
         # re-fecha con el día en que alguien lo edite).
         if "_fecha_primer_dato" not in data and tiene_datos_digitados(data) and not tiene_datos_digitados(assay.get("data")):
             data["_fecha_primer_dato"] = hoy_colombia().isoformat()
+        # Qué se guarda: SOLO lo que la persona cambió desde la última corrida de esta sesión (más los valores nuevos que antes no existían), mezclado sobre
+        # lo que ya estaba guardado. Los campos de la pantalla pueden traer valores VIEJOS (la tableta se durmió y se reconectó, o el ensayo está abierto
+        # en otra pestaña o dispositivo): antes el autoguardado escribía todos los campos y pisaba datos más nuevos guardados desde otro lado. La primera
+        # corrida de la sesión solo toma una foto de lo que muestran los campos: eso no cuenta como cambio de la persona.
+        _snap_key = f"_snap_{assay_id}"
+        _base = assay.get("data") or {}
+        _snap = st.session_state.get(_snap_key)
+        if _snap is None:
+            _snap = dict(data)
+        _cambios = {k: v for k, v in data.items() if (k not in _snap or _snap[k] != v) or k not in _base}
+        _quitados = [k for k in _snap if k not in data and k in _base]
+        data_guardar = dict(_base)
+        data_guardar.update(_cambios)
+        for _k in _quitados:
+            data_guardar.pop(_k, None)
         # Freno de seguridad: si de un solo cambio desaparecen de golpe muchos datos que ya estaban guardados (5 o más y la mayoría), casi seguro es
         # un fallo de la pantalla (campos que aparecen en blanco al recargarse), no que la persona los haya borrado: no se guarda y se ofrece
         # recuperar lo último guardado. Borrar a mano un dato por vez nunca activa esto.
         _previos = {k for k, v in (assay.get("data") or {}).items() if _es_valor_digitado(k, v)}
-        _perdidos = _previos - {k for k, v in data.items() if _es_valor_digitado(k, v)}
+        _perdidos = _previos - {k for k, v in data_guardar.items() if _es_valor_digitado(k, v)}
         autoguardado_bloqueado = len(_perdidos) >= 5 and len(_perdidos) >= 0.6 * len(_previos)
         if autoguardado_bloqueado:
             st.error("⚠️ Por seguridad NO se guardó el último cambio: varios datos que ya estaban guardados aparecieron en blanco de golpe. "
@@ -13787,58 +13844,93 @@ def render_assay_form(prueba=False):
                     if isinstance(_k, str) and _k.endswith(f"_{assay_id}") and not _k.startswith(("recuperar_", "_")):
                         del st.session_state[_k]
                 st.rerun()
-        if not autoguardado_bloqueado and (data != assay.get("data", {}) or observations != assay.get("observations", "")
+        _guardado_ok = not autoguardado_bloqueado   # bloqueado: la foto de los campos NO avanza, así el aviso y el botón de recuperar siguen ahí
+        if not autoguardado_bloqueado and (data_guardar != assay.get("data", {}) or observations != assay.get("observations", "")
                                            or laboratorist != assay.get("laboratorist", "")):
-            nuevo_status = (("en-proceso" if tiene_valores_digitados(data) else "sin-iniciar")
+            nuevo_status = (("en-proceso" if tiene_valores_digitados(data_guardar) else "sin-iniciar")
                             if assay["status"] in ("sin-iniciar", "en-proceso") else assay["status"])
+            # Respaldo: si este guardado CAMBIA o QUITA algún valor ya guardado, la versión anterior queda dentro del propio ensayo (clave «_respaldo»)
+            # para poder restaurarla desde la pantalla. Agregar valores nuevos no genera respaldo.
+            _prev = assay.get("data") or {}
+            if any(_es_valor_digitado(k, v) and data_guardar.get(k) != v for k, v in _prev.items()):
+                data_guardar["_respaldo"] = {k: v for k, v in _prev.items() if not k.startswith("_") and not (isinstance(v, dict) and "b64" in v)}
             # Un ensayo con foto (compresión inconfinada) manda un jsonb varias veces más pesado que uno solo con
             # números — en una red de celular lenta la escritura a Supabase puede tardar; se avisa con un spinner
             # en vez de dejar la pantalla quieta sin explicación. Si la escritura falla (señal mala, se cierra la
             # pestaña a medio guardar) se avisa con un error en vez de dejarlo pasar en silencio: sin este intento
             # explícito, la excepción tumbaba toda la página sin decir qué pasó ni qué hacer.
-            hay_foto = any(isinstance(v, dict) and "b64" in v for v in data.values())
+            hay_foto = any(isinstance(v, dict) and "b64" in v for v in data_guardar.values())
             # El autoguardado ya deja el ensayo al día en memoria (abajo): no hace falta que la próxima pantalla vuelva a pedir toda la base
             # (eso era lo que hacía lenta la navegación después de digitar). Si quien guarda es el Jefe o el Director Técnico, sí se recarga,
             # porque además se registra quién hizo el último cambio.
             _sucios_antes = st.session_state.get("_datos_sucios", False)
             try:
                 with st.spinner("Guardando la foto…" if hay_foto else "Guardando…"):
-                    fila_guardada = db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status=nuevo_status)
+                    fila_guardada = db.update_assay_data(assay["id"], data=data_guardar, observations=observations, laboratorist=laboratorist,
+                                                         status=nuevo_status)
                     if pasa200_gran_sibling:
-                        db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
+                        db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data_guardar)
                 if not supervisor_registra and not pasa200_gran_sibling:
                     st.session_state["_datos_sucios"] = _sucios_antes
                 if isinstance(fila_guardada, dict) and fila_guardada.get("updated_at"):
                     assay["lastModified"] = fila_guardada["updated_at"]
-                assay["data"] = data
+                assay["data"] = data_guardar
                 assay["observations"] = observations
                 assay["laboratorist"] = laboratorist
                 assay["status"] = nuevo_status
+                st.session_state.pop(f"_fallo_guardado_{assay_id}", None)
                 st.session_state[f"_guardado_{assay_id}"] = (datetime.utcnow() - timedelta(hours=5)).strftime("%I:%M:%S %p")   # hora de Colombia
                 # Si el ensayo ya se había enviado a revisión, lo que se cambia desde entonces queda registrado en el historial.
-                registrar_edicion_en_curso(assay, data, observations, actor_edicion)
+                registrar_edicion_en_curso(assay, data_guardar, observations, actor_edicion)
                 if supervisor_registra:
                     try:
                         db.registrar_ultimo_cambio(assay["id"], actor_edicion)   # quién hizo el último cambio y cuándo (hora de Colombia)
                     except Exception:
                         pass   # el rastro nunca debe impedir guardar el ensayo
             except Exception:
-                st.error("No se pudo guardar el último cambio (revisa tu conexión). Sigue en pantalla — vuelve a intentarlo "
-                          "digitando algo más o dale a \"Guardar borrador\".")
+                _guardado_ok = False
+                st.session_state[f"_fallo_guardado_{assay_id}"] = True
+                st.error("⚠️ NO SE GUARDÓ el último cambio (revisa tu conexión). Lo que ves en pantalla todavía NO está en la base de datos. No cierres "
+                         "esta pantalla: vuelve a intentarlo digitando algo más o pulsa «Guardar borrador».")
+        if _guardado_ok:
+            st.session_state[_snap_key] = dict(data)   # lo que muestran los campos ya quedó atendido; el próximo cambio se mide contra esto
         _hora_guardado = st.session_state.get(f"_guardado_{assay_id}")
         st.markdown(f'<div class="timestamp-caption">{icon("cloud_done", size=13)} Los cambios se guardan automáticamente mientras digitas.'
                     + (f' <b>Último guardado: {_hora_guardado}</b>' if _hora_guardado else "") + '</div>', unsafe_allow_html=True)
+        if (assay.get("data") or {}).get("_respaldo") and not read_only:
+            with st.expander("Respaldo de la versión anterior", icon=":material/history:"):
+                st.caption("Cuando un guardado cambia o quita un dato que ya estaba, la versión de antes queda aquí. Si algo se borró por error, restáurala; "
+                           "lo actual queda como respaldo por si cambias de opinión.")
+                if st.button("Restaurar la versión anterior", key=f"restaurar_{assay_id}", icon=":material/restore:"):
+                    _fuente = assay.get("data") or {}
+                    _anterior = dict(_fuente["_respaldo"])
+                    _actual = {k: v for k, v in _fuente.items() if not k.startswith("_") and not (isinstance(v, dict) and "b64" in v)}
+                    _restaurado = {**{k: v for k, v in _fuente.items() if k.startswith("_") and k != "_respaldo"}, **_anterior, "_respaldo": _actual}
+                    try:
+                        db.update_assay_data(assay["id"], data=_restaurado)
+                        if pasa200_gran_sibling:
+                            db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], _restaurado)
+                        assay["data"] = _restaurado
+                        for _k in list(st.session_state.keys()):   # los campos se vuelven a leer de lo restaurado
+                            if isinstance(_k, str) and _k.endswith(f"_{assay_id}") and not _k.startswith("_"):
+                                del st.session_state[_k]
+                        st.toast("Versión anterior restaurada.", icon=":material/check_circle:")
+                        st.rerun()
+                    except Exception as _e:
+                        if "RerunData" in type(_e).__name__ or "Stop" in type(_e).__name__:
+                            raise
+                        st.error("No se pudo restaurar (revisa tu conexión) — vuelve a intentarlo.")
 
         st.markdown("<br>", unsafe_allow_html=True)
         if supervisor_edita:
             if st.button("Guardar cambios", type="primary", use_container_width=True, icon=":material/save:"):
                 try:
                     with st.spinner("Guardando…"):
-                        db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status="finalizado")
+                        db.update_assay_data(assay["id"], data=data_guardar, observations=observations, laboratorist=laboratorist, status="finalizado")
                         if pasa200_gran_sibling:
-                            db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
-                    assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado")
-                    registrar_edicion_en_curso(assay, data, observations, actor_edicion)
+                            db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data_guardar)
+                    assay.update(data=data_guardar, observations=observations, laboratorist=laboratorist, status="finalizado")
+                    registrar_edicion_en_curso(assay, data_guardar, observations, actor_edicion)
                     db.registrar_ultimo_cambio(assay["id"], actor_edicion)
                     st.toast("Cambios guardados.", icon=":material/check_circle:")
                 except Exception:
@@ -13849,10 +13941,10 @@ def render_assay_form(prueba=False):
                 try:
                     with st.spinner("Guardando…"):
                         estado_borrador = "en-proceso" if tiene_valores_digitados(data) else "sin-iniciar"
-                        db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status=estado_borrador)
+                        db.update_assay_data(assay["id"], data=data_guardar, observations=observations, laboratorist=laboratorist, status=estado_borrador)
                         if pasa200_gran_sibling:
-                            db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
-                    assay.update(data=data, observations=observations, laboratorist=laboratorist, status=estado_borrador)
+                            db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data_guardar)
+                    assay.update(data=data_guardar, observations=observations, laboratorist=laboratorist, status=estado_borrador)
                     st.toast("Borrador guardado.", icon=":material/check_circle:")
                 except Exception:
                     st.error("No se pudo guardar (revisa tu conexión) — vuelve a intentarlo.")
@@ -13865,13 +13957,13 @@ def render_assay_form(prueba=False):
                 else:
                     st.session_state.pop(intento_incompleto_key, None)
                     ya_estaba_finalizado = assay["status"] == "finalizado"
-                    db.update_assay_data(assay["id"], data=data, observations=observations, laboratorist=laboratorist, status="finalizado")
-                    assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado")
+                    db.update_assay_data(assay["id"], data=data_guardar, observations=observations, laboratorist=laboratorist, status="finalizado")
+                    assay.update(data=data_guardar, observations=observations, laboratorist=laboratorist, status="finalizado")
                     if pasa200_gran_sibling:
-                        db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
+                        db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data_guardar)
                     if muestra:
                         actor_lab = actor_edicion
-                        registrar_envio_ensayo(assay, data, observations, "Enviado a Revisión", actor_lab)
+                        registrar_envio_ensayo(assay, data_guardar, observations, "Enviado a Revisión", actor_lab)
                         # Cada ensayo que el laboratorista termina se avisa al Jefe (nunca al Director Técnico,
                         # que solo entra en juego cuando el Jefe confirma ese ensayo individual).
                         if not ya_estaba_finalizado and not jefe_trabaja:
@@ -13911,15 +14003,15 @@ def render_assay_form(prueba=False):
                     try:
                         with st.spinner("Guardando…"):
                             ya_estaba_finalizado = assay["status"] == "finalizado"
-                            db.update_assay_data(assay["id"], data=data, observations=observations,
+                            db.update_assay_data(assay["id"], data=data_guardar, observations=observations,
                                                   laboratorist=laboratorist, status="finalizado")
                             if pasa200_gran_sibling:
-                                db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data)
-                        assay.update(data=data, observations=observations, laboratorist=laboratorist, status="finalizado")
+                                db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data_guardar)
+                        assay.update(data=data_guardar, observations=observations, laboratorist=laboratorist, status="finalizado")
                         st.session_state.pop(no_realizado_key, None)
                         if muestra:
                             actor_lab = actor_edicion
-                            registrar_envio_ensayo(assay, data, observations, "Marcado como no realizado", actor_lab, "block", "danger")
+                            registrar_envio_ensayo(assay, data_guardar, observations, "Marcado como no realizado", actor_lab, "block", "danger")
                             if not ya_estaba_finalizado:
                                 add_notification("jefe", f"El laboratorista marcó {ASSAY_LABELS[assay['tipo']]} de la Muestra "
                                                           f"{muestra['numero']} de {codigo} como NO REALIZADO: {data['_motivo_no_realizado']}",
@@ -14393,7 +14485,7 @@ def render_search():
         for m in muestras:
             if muestra_choice != "(todas)" and m["id_unico"] != muestra_choice:
                 continue
-            solicitados = unificar_ensayos([e for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS])
+            solicitados = _ensayos_visibles(m)
             if f_type != "(todos)":
                 solicitados = [e for e in solicitados if ASSAY_LABELS.get(SUPPORTED_ASSAY_MAP.get(e), None) == f_type]
             for ensayo_label in solicitados:

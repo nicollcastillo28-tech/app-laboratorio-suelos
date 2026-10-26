@@ -25,6 +25,7 @@ def ahora():
 
 
 TABLAS = {"projects": [], "perforaciones": [], "muestras": [], "assays": [], "notifications": [], "balance_checks": [], "profiles": []}
+FALLAR_ESCRITURAS = [False]   # simula que la base no responde al guardar
 
 
 class Q:
@@ -83,6 +84,8 @@ class Q:
             return True
         sel = [r for r in filas if cumple(r)]
         if s.upd is not None:
+            if FALLAR_ESCRITURAS[0]:
+                raise ConnectionError("sin conexión")
             for r in sel:
                 r.update(copy.deepcopy(s.upd))
                 r["updated_at"] = ahora()
@@ -195,6 +198,52 @@ class GuardadoEnsayoTest(unittest.TestCase):
         at.text_input(key=MASA).set_value("").run()
         self.assertNotIn("hum_masa_recipiente", _valores_bd()[1])
         self.assertEqual(len(at.error), 0)
+
+    def test_el_respaldo_permite_restaurar_la_version_anterior(self):
+        at = _sesion()
+        at.run()
+        at.text_input(key=MASA).set_value("18.45").run()
+        at.text_input(key=HUM).set_value("117.65").run()
+        self.assertNotIn("_respaldo", TABLAS["assays"][0]["data"])      # agregar valores no genera respaldo
+        at.text_input(key=MASA).set_value("20.00").run()                 # cambiar un valor ya guardado sí
+        self.assertEqual(TABLAS["assays"][0]["data"]["_respaldo"]["hum_masa_recipiente"], "18.45")
+        at.button(key="restaurar_a1").click().run()
+        self.assertEqual(_valores_bd()[1]["hum_masa_recipiente"], "18.45")
+        self.assertEqual(at.text_input(key=MASA).value, "18.45")
+
+    def test_campos_viejos_tras_reconectar_no_pisan_lo_guardado_despues(self):
+        """La tableta se durmió y al reconectar la pantalla trae los valores VIEJOS en los campos, pero otro dispositivo ya guardó datos más nuevos."""
+        a = _sesion()
+        a.run()
+        a.text_input(key=MASA).set_value("18.45").run()
+        a.text_input(key=HUM).set_value("117.65").run()
+        TABLAS["assays"][0]["data"]["hum_masa_recipiente"] = "99.00"               # otro dispositivo corrigió
+        TABLAS["assays"][0]["data"]["hum_masa_humedo_mas_recipiente"] = "200.00"
+        TABLAS["assays"][0]["updated_at"] = ahora()
+        b = _sesion()                                                              # sesión nueva: el navegador reenvía los campos viejos
+        b.session_state[MASA] = "18.45"
+        b.session_state[HUM] = "117.65"
+        b.run()
+        self.assertEqual(_valores_bd()[1]["hum_masa_recipiente"], "99.00")         # no se pisó
+        self.assertEqual(_valores_bd()[1]["hum_masa_humedo_mas_recipiente"], "200.00")
+        b.text_input(key=REC).set_value("A-12").run()                              # la persona digita OTRO campo
+        self.assertEqual(_valores_bd()[1]["hum_recipiente"], "A-12")
+        self.assertEqual(_valores_bd()[1]["hum_masa_recipiente"], "99.00")         # y lo viejo de los otros campos tampoco se pisa
+        self.assertEqual(_valores_bd()[1]["hum_masa_humedo_mas_recipiente"], "200.00")
+
+    def test_si_la_base_falla_se_avisa_y_se_reintenta(self):
+        at = _sesion()
+        at.run()
+        FALLAR_ESCRITURAS[0] = True
+        try:
+            at.text_input(key=MASA).set_value("18.45").run()
+            self.assertTrue(any("NO SE GUARDÓ" in e.value for e in at.error))
+            self.assertNotIn("hum_masa_recipiente", _valores_bd()[1])
+        finally:
+            FALLAR_ESCRITURAS[0] = False
+        at.text_input(key=HUM).set_value("117.65").run()                           # vuelve la conexión: se guarda TODO lo pendiente
+        self.assertEqual(_valores_bd()[1]["hum_masa_recipiente"], "18.45")
+        self.assertEqual(_valores_bd()[1]["hum_masa_humedo_mas_recipiente"], "117.65")
 
     def test_al_entrar_se_parte_de_lo_guardado_en_la_base(self):
         at = _sesion()
