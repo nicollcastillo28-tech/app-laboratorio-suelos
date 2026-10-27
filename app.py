@@ -9714,6 +9714,18 @@ def render_pasa200_section(data, assay_id, requerido=True):
     def _valor_vivo(widget_key, clave_data):
         v = st.session_state.get(widget_key)
         return v if v is not None else data.get(clave_data)
+    # El recipiente (su número y su masa) es el mismo antes y después del lavado: lo digitado en «Antes» se copia solo a «Después». Si la persona lo cambia
+    # a mano en «Después», ese valor manda hasta que «Antes» vuelva a cambiar. En ensayos guardados antes de este cambio no se pisa lo que ya había.
+    for _k in ("p200_recipiente", "p200_masa_recipiente"):
+        _antes = _valor_vivo(f"{_k}_antes_{assay_id}", f"{_k}_antes") or ""
+        _ultimo = f"{_k}_despues_espejo_lastsync"
+        _wk = f"{_k}_despues_{assay_id}"
+        if _ultimo not in data and str(_valor_vivo(_wk, f"{_k}_despues") or "").strip():
+            data[_ultimo] = _antes
+        elif data.get(_ultimo) != _antes:
+            st.session_state[_wk] = _antes
+            data[f"{_k}_despues"] = _antes
+            data[_ultimo] = _antes
     _tam = [_valor_vivo(f"retenido_{k}_{assay_id}", k) for k, _l, _a, _c in SIEVES]
     suma_tamices = None
     if any(str(v or "").strip() for v in _tam):
