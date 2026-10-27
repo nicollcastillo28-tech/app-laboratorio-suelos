@@ -2621,7 +2621,7 @@ def _pasa200_masa_seca_despues(data):
     if sr is not None and rc is not None:
         return sr - rc
     if any(str(data.get(k, "")).strip() for k, _l, _a, _c in SIEVES):
-        return sum(to_float(data.get(k)) or 0.0 for k, _l, _a, _c in SIEVES)
+        return sum(to_float(data.get(k)) or 0.0 for k, _l, _a, _c in SIEVES) + (to_float(data.get("s_fondo")) or 0.0)
     return None
 
 
@@ -2674,17 +2674,21 @@ def resultados_granulometria(data, lim_data=None):
     total = sum(to_float(data.get(k)) or 0.0 for k, *_ in SIEVES)
     # Lo que pasa el No. 200 queda en el fondo: se calcula como lo que falta para la masa inicial. La suma (tamices + fondo) debe dar la masa
     # inicial y el 100 %; si los retenidos suman MÁS que la masa inicial, el fondo sale negativo y se avisa.
-    fondo_g = masa_ini - total
+    fondo_digitado = to_float(data.get("s_fondo"))
+    fondo_g = fondo_digitado if fondo_digitado is not None else masa_ini - total
     fondo_pct = fondo_g / masa_ini * 100
     filas.append(("FONDO", "—", fmt_num(fondo_g, 2), fmt_num(fondo_pct, 2), fmt_num(acumulado + fondo_pct, 2), "—"))
     filas.append(("SUMA", "", fmt_num(total + fondo_g, 2), fmt_num(acumulado + fondo_pct, 2), "", ""))
     st.markdown("**Granulometría**")
     st.markdown(param_table_ncol_html(("TAMIZ", "ABERTURA (mm)", "W RET. (g)", "% RET.", "% RET. ACUM.", "% PASA"), filas, negrita_ultima=True),
                 unsafe_allow_html=True)
+    if fondo_digitado is not None and abs(masa_ini - total - fondo_digitado) > 0.1:
+        st.warning(f"Tamices ({fmt_num(total, 2)} g) + fondo ({fmt_num(fondo_digitado, 2)} g) suman {fmt_num(total + fondo_digitado, 2)} g y la masa inicial seca es "
+                   f"{fmt_num(masa_ini, 2)} g: faltan {fmt_num(masa_ini - total - fondo_digitado, 2)} g. Revisa los pesos digitados.")
     if fondo_g < -0.005:
         st.warning(f"Los retenidos suman {fmt_num(total, 2)} g, más que la masa inicial seca ({fmt_num(masa_ini, 2)} g): el fondo sale negativo. "
                    "Revisa los pesos digitados.")
-    st.caption(f"Masa inicial seca: {fmt_num(masa_ini, 2)} g · suma de retenidos: {fmt_num(total, 2)} g · pasa el No. 200 en el fondo: {fmt_num(masa_ini - total, 2)} g")
+    st.caption(f"Masa inicial seca: {fmt_num(masa_ini, 2)} g · suma de retenidos: {fmt_num(total, 2)} g · pasa el No. 200 en el fondo: {fmt_num(fondo_g, 2)} g")
     uscs = clasificar_uscs(data, lim_data)
     aashto = clasificar_aashto(data, lim_data)
     f1 = lambda v: fmt_num(v, 1) if v is not None else "—"
@@ -9726,7 +9730,7 @@ def render_pasa200_section(data, assay_id, requerido=True):
             st.session_state[_wk] = _antes
             data[f"{_k}_despues"] = _antes
             data[_ultimo] = _antes
-    _tam = [_valor_vivo(f"retenido_{k}_{assay_id}", k) for k, _l, _a, _c in SIEVES]
+    _tam = [_valor_vivo(f"retenido_{k}_{assay_id}", k) for k, _l, _a, _c in SIEVES] + [_valor_vivo(f"retenido_s_fondo_{assay_id}", "s_fondo")]
     suma_tamices = None
     if any(str(v or "").strip() for v in _tam):
         suma_tamices = sum(to_float(v) or 0.0 for v in _tam)
@@ -9825,6 +9829,15 @@ def render_granulometria_form(data, assay_id):
                 raw = data.get(key, "")
                 st.session_state[widget_key] = "" if raw in (None, "") else str(raw)
             data[key] = row[2].text_input(f"Retenido {label}", key=widget_key, label_visibility="collapsed", placeholder="0.00")
+        # Fondo: lo que quedó en la bandeja después del No. 200. Es opcional: si no se digita, los resultados lo calculan como lo que falta para la masa inicial.
+        row = st.columns([1.2, 1, 1.4])
+        row[0].markdown('<div style="padding-top:8px;font-weight:700;">Fondo</div>', unsafe_allow_html=True)
+        row[1].markdown('<div style="padding-top:8px;text-align:center;">—</div>', unsafe_allow_html=True)
+        widget_key = f"retenido_s_fondo_{assay_id}"
+        if widget_key not in st.session_state:
+            raw = data.get("s_fondo", "")
+            st.session_state[widget_key] = "" if raw in (None, "") else str(raw)
+        data["s_fondo"] = row[2].text_input("Retenido fondo", key=widget_key, label_visibility="collapsed", placeholder="0.00")
 
     _lim = get_assay(st.session_state.get("selected_muestra_id"), "limites")
     with resultados_desplegable("Resultados: granulometría y clasificación"):
