@@ -6135,8 +6135,9 @@ def _recipientes_txt(assay, tipo=None, maximo=8):
         proctor, cbr = moldes("proc", 4), moldes("cbrc", 3)
         texto = (("Molde " if len(proctor) == 1 else "Moldes ") + " - ".join(proctor)) if proctor else ""
         return texto + (("  /  " if texto else "") + "CBR " + " - ".join(cbr) if cbr else "")
-    claves = sorted((k for k, v in d.items() if "recipiente" in k and "masa" not in k and not k.startswith("_") and str(v or "").strip()
-                     and not isinstance(v, (list, dict))), key=lambda k: (k.startswith("cbrc"), k))   # Proctor primero, luego su CBR compactado
+    # Solo el NÚMERO del recipiente: se descartan las masas («masa…», «seco_mas_recipiente…») y las claves de control de la app («…_lastsync»).
+    claves = sorted((k for k, v in d.items() if "recipiente" in k and "masa" not in k and "mas_recipiente" not in k and "lastsync" not in k
+                     and not k.startswith("_") and str(v or "").strip() and not isinstance(v, (list, dict))), key=lambda k: (k.startswith("cbrc"), k))   # Proctor primero, luego su CBR compactado
     if not claves:
         return ""
 
@@ -6146,7 +6147,10 @@ def _recipientes_txt(assay, tipo=None, maximo=8):
         ll = valores([k for k in claves if "_ll_" in k])
         lp = valores([k for k in claves if "_lp_" in k])
         return " - ".join(ll) + ("  /  " + " - ".join(lp) if lp else "")
-    todos = valores(claves)
+    todos = []
+    for v in valores(claves):   # antes y después del lavado es el mismo recipiente: no se repite
+        if v not in todos:
+            todos.append(v)
     return " - ".join(todos[:maximo]) + (" …" if len(todos) > maximo else "")
 
 
