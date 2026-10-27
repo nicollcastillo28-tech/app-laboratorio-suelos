@@ -9709,9 +9709,15 @@ def render_pasa200_section(data, assay_id, requerido=True):
     # solo, igual que si el laboratorista lo hubiera escrito a mano. Si el laboratorista lo cambia después,
     # ese valor manda hasta que la suma de tamices vuelva a cambiar (mismo patrón que el resto de autocompletados
     # de esta pantalla).
+    # Esta tarjeta se dibuja ANTES que la tabla de tamices: `data` todavía trae lo de la corrida anterior, así que la suma iba un paso atrás (no se
+    # completaba hasta digitar otra cosa). Se lee el valor actual de cada casilla de la pantalla y, si no existe aún, lo guardado.
+    def _valor_vivo(widget_key, clave_data):
+        v = st.session_state.get(widget_key)
+        return v if v is not None else data.get(clave_data)
+    _tam = [_valor_vivo(f"retenido_{k}_{assay_id}", k) for k, _l, _a, _c in SIEVES]
     suma_tamices = None
-    if any(str(data.get(k, "")).strip() for k, _l, _a, _c in SIEVES):
-        suma_tamices = sum(to_float(data.get(k)) or 0.0 for k, _l, _a, _c in SIEVES)
+    if any(str(v or "").strip() for v in _tam):
+        suma_tamices = sum(to_float(v) or 0.0 for v in _tam)
     with st.container(border=True):
         st.markdown(card_header_html("water_drop", "Determinación Pasa No. 200", badge), unsafe_allow_html=True)
         head = st.columns([2.2, 1, 1])
@@ -9724,7 +9730,7 @@ def render_pasa200_section(data, assay_id, requerido=True):
                 field_key = f"{key}_{suffix}"
                 widget_key = f"{field_key}_{assay_id}"
                 if key == "p200_seco_mas_recipiente" and suffix == "despues" and suma_tamices is not None:
-                    masa_recip_despues = to_float(data.get("p200_masa_recipiente_despues"))
+                    masa_recip_despues = to_float(_valor_vivo(f"p200_masa_recipiente_despues_{assay_id}", "p200_masa_recipiente_despues"))
                     if masa_recip_despues is not None:
                         candidato = fmt_num(suma_tamices + masa_recip_despues, 2)
                         lastsync_key = f"{field_key}_gran_lastsync"
@@ -9739,8 +9745,12 @@ def render_pasa200_section(data, assay_id, requerido=True):
                 data[field_key] = col.text_input(
                     f"{label} {suffix}", key=widget_key, label_visibility="collapsed", placeholder="0.00")
             if key == "p200_seco_mas_recipiente" and suma_tamices is not None:
-                st.caption("La masa después del lavado se suma sola a partir de lo digitado en la tabla de "
-                           "Granulometría — puedes corregirla a mano si hace falta.")
+                if to_float(_valor_vivo(f"p200_masa_recipiente_despues_{assay_id}", "p200_masa_recipiente_despues")) is None:
+                    st.warning(f"Ya hay {fmt_num(suma_tamices, 2)} g de suelo en los tamices. Para que la masa seco + recipiente de después del lavado "
+                               "se complete sola, digita la «Masa del recipiente» (columna Después del lavado) al final de esta tarjeta.")
+                else:
+                    st.caption("La masa después del lavado se suma sola (tamices + recipiente) a partir de lo digitado en la tabla de "
+                               "Granulometría — puedes corregirla a mano si hace falta.")
             if key == "p200_seco_mas_recipiente":
                 # Autocompleta las 3 lecturas de horas con esta masa apenas se digita, pero si el
                 # laboratorista ya las cambió a mano, no se vuelven a pisar en el siguiente rerun —
