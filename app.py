@@ -5652,10 +5652,17 @@ def _render_perforaciones_compactas(codigo, perforaciones):
                     lineas.append(f'<span class="cell-id">M-{html.escape(str(m["numero"]))}</span> '
                                   f'<span class="cell-muted">{fmt_prof(m["profundidad_de"])}–{fmt_prof(m["profundidad_hasta"])} m · '
                                   f'{html.escape(", ".join(ens))}</span>')
-                texto = "<br>".join(lineas) + f'<div class="cell-muted" style="font-size:11px;">de {en_orden} muestra(s) en la orden</div>'
+                pie = f'<div class="cell-muted" style="font-size:11px;">de {en_orden} muestra(s) en la orden</div>'
+                # Una perforación con decenas de muestras (apiques agrupados) estiraba la fila: se ven las primeras y el resto va en un desplegable.
+                _VISIBLES = 4
+                texto = "<br>".join(lineas[:_VISIBLES]) + (f'<div class="cell-muted">… y {len(lineas) - _VISIBLES} más</div>' if len(lineas) > _VISIBLES else "") + pie
             else:
-                texto = f'<span class="cell-muted">Sin muestras ensayadas ({en_orden} en la orden)</span>'
-            cols[1].markdown(texto, unsafe_allow_html=True)
+                lineas, texto = [], f'<span class="cell-muted">Sin muestras ensayadas ({en_orden} en la orden)</span>'
+            with cols[1]:
+                st.markdown(texto, unsafe_allow_html=True)
+                if len(lineas) > 4:
+                    with st.expander(f"Ver las {len(lineas)} muestras ensayadas"):
+                        st.markdown("<br>".join(lineas), unsafe_allow_html=True)
             if total == 0 or not any(compute_muestra_estado(m) != "sin-iniciar" for m in muestras):
                 badge, etiqueta = "badge-muted", "Por iniciar"   # ningún laboratorista ha empezado esta perforación
             elif hechos == total:
