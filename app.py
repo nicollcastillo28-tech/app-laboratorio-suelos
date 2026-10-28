@@ -5868,17 +5868,7 @@ def render_project_detail():
                 unsafe_allow_html=True)
     if not perforaciones:
         st.info("Este proyecto todavía no tiene perforaciones. Usa la Bitácora para agregarlas.")
-    # Con muchas perforaciones (p. ej. una orden de apiques) se muestra una lista compacta; la tarjeta completa (fechas, descarga de la orden,
-    # tabla de muestras) se ve de la que se elija debajo.
-    perforaciones_tarjeta = perforaciones
-    vista_key = f"vista_perf_{codigo}"
-    if len(perforaciones) > 3:
-        # Con más de 3 perforaciones se pasa sola a la lista compacta; esta opción deja volver a las tarjetas completas de todas.
-        st.segmented_control("Vista de perforaciones", ["Lista compacta", "Tarjetas"], default="Lista compacta", key=vista_key, label_visibility="collapsed")
-    if len(perforaciones) > 3 and st.session_state.get(vista_key) != "Tarjetas":
-        _render_perforaciones_compactas(codigo, perforaciones)
-        elegida = st.selectbox("Ver el detalle de una perforación", ["—"] + [p["codigo"] for p in perforaciones], key=f"detalle_perf_{codigo}")
-        perforaciones_tarjeta = [p for p in perforaciones if p["codigo"] == elegida]
+    perforaciones_tarjeta = perforaciones   # siempre la tarjeta completa de cada perforación (la lista compacta se quitó a pedido)
     for perf in perforaciones_tarjeta:
         muestras = st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", [])
         counts = {"sin-iniciar": 0, "en-proceso": 0, "finalizado": 0}
