@@ -298,7 +298,7 @@ st.markdown(f"""
     estuviera bien. Se excluyen los mismos contenedores de "no son una tarjeta" que ya excluía la
     regla del acento izquierdo, más "logout-btn" (el ícono de cerrar sesión, invisible cuando su
     contenedor quedaba con este fondo blanco por detrás). */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-back-sticky):not(.st-key-proj-sticky):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-back-sticky):not(.st-key-proj-sticky):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-modo-jefe"]):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
         border-radius: 12px !important; border: 1px solid {BORDER} !important;
         box-shadow: 0 1px 4px rgba(11,28,48,0.08) !important; background: {SURFACE} !important;
     }}
@@ -379,7 +379,7 @@ st.markdown(f"""
        borde tapando el grupo entero en vez de resaltar una sola tarjeta. bell-alert/bell-quiet
        (el botón-contenedor de la campana en el topbar) tampoco: es un ícono, no una tarjeta —
        se veía como una rayita verde suelta pegada a la campana. */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-back-sticky):not(.st-key-proj-sticky):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-back-sticky):not(.st-key-proj-sticky):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-modo-jefe"]):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
         border-left: 4px solid {PRIMARY} !important;
     }}
     /* Tarjetas de "Ensayos asignados" (una por ensayo): más separación entre sí y sombra
@@ -3814,7 +3814,7 @@ def render_topbar():
     with st.container(key="topbar"):
         es_jefe_barra = st.session_state.role == "jefe"
         if es_jefe_barra:
-            c_brand, c_nav, c_modo, c_bell, c_avatar, c_logout = st.columns([2.2, 3.7, 1.8, 0.7, 0.7, 0.7])
+            c_brand, c_nav, c_modo, c_bell, c_avatar, c_logout = st.columns([2.2, 4.2, 1.0, 0.7, 0.7, 0.7])
         else:
             c_brand, c_nav, c_bell, c_avatar, c_logout = st.columns([2.2, 4.2, 0.7, 0.7, 0.7])
         with c_brand:
@@ -3833,9 +3833,9 @@ def render_topbar():
                 # Casilla marcada = trabaja como laboratorista (puede digitar); sin marcar = modo Revisión (casillas bloqueadas). Es un botón con casilla
                 # (como las demás casillas de la app, que en la tableta responden mejor que los widgets nativos) y avisa del cambio con un mensaje.
                 lab_activo = modo_jefe() == "Laboratorista"
-                if st.button("Modo laboratorista", key="modo_jefe_btn", use_container_width=True, type="primary" if lab_activo else "secondary",
+                if st.button("Lab", key="modo_jefe_btn", use_container_width=True, type="primary" if lab_activo else "secondary",
                              icon=":material/check_box:" if lab_activo else ":material/check_box_outline_blank:",
-                             help="Marcado: digitas como un laboratorista. Sin marcar: modo Revisión (las casillas de digitar quedan bloqueadas)."):
+                             help="Modo laboratorista. Marcado: digitas como un laboratorista. Sin marcar: modo Revisión (las casillas de digitar quedan bloqueadas)."):
                     st.session_state.modo_jefe = "Revisión" if lab_activo else "Laboratorista"
                     st.toast("Modo Revisión: las casillas de digitar quedan bloqueadas." if lab_activo
                              else "Modo Laboratorista: ya puedes digitar y enviar ensayos.", icon=":material/swap_horiz:")
@@ -7643,7 +7643,7 @@ def render_muestra_detail():
                         pass
                     elif jefe_en_modo_laboratorista():
                         # En modo Laboratorista el Jefe trabaja como un laboratorista: confirmar y devolver son de la revisión.
-                        st.caption("Modo laboratorista: para confirmar o devolver este ensayo, desmarca «Modo laboratorista» en la barra de arriba.")
+                        st.caption("Modo laboratorista: para confirmar o devolver este ensayo, desmarca «Lab» en la barra de arriba.")
                     elif etapa == "aprobado":
                         if st.session_state.role == "ingeniero":
                             with st.popover("Desconfirmar", use_container_width=True):
@@ -14016,7 +14016,7 @@ def render_assay_form(prueba=False):
             st.info("Ya entregaste este ensayo: queda en revisión del Jefe de Laboratorio y no lo puedes editar. Si hay que corregir algo, "
                     "el Jefe te lo devuelve.")
         elif es_jefe and not prueba and modo_jefe() == "Revisión":
-            st.info("Estás en modo Revisión: las casillas están bloqueadas. Para digitar, marca «Modo laboratorista» en la barra de arriba.")
+            st.info("Estás en modo Revisión: las casillas están bloqueadas. Para digitar, marca «Lab» en la barra de arriba.")
         elif es_supervisor:
             st.info("Estás viendo el ensayo en modo consulta — solo el laboratorista puede digitar estos datos.")
         else:
