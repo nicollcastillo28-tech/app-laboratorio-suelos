@@ -239,12 +239,8 @@ st.markdown(f"""
         background: rgba(255,255,255,0.10) !important; border: none !important; color: #FFFFFF !important;
     }}
     .st-key-bell-quiet button:hover, .st-key-logout-btn button:hover {{ background: rgba(255,255,255,0.20) !important; }}
-    .st-key-avatar-btn {{ margin-left: auto; }}
-    .st-key-avatar-btn button {{
-        width: 36px; min-width: 36px; height: 36px; min-height: 36px; padding: 0 !important; border-radius: 999px !important;
-        background: {ACCENT_BRIGHT} !important; color: {PRIMARY_CONTAINER} !important; border: none !important;
-        font-weight: 800; font-size: 13px;
-    }}
+    .st-key-modo-jefe {{ display: flex; justify-content: flex-end; }}
+    .st-key-modo-jefe label p, .st-key-modo-jefe label span {{ color: #FFFFFF !important; font-weight: 700; font-size: 13px; white-space: nowrap; }}
 
     /* ---- BOTTOM NAV (celular y tablet, ambas orientaciones) ----
        900px solo cubría tablet en vertical; en horizontal (~1024-1194px, iPad/Android típico)
@@ -3775,22 +3771,6 @@ def jefe_en_modo_laboratorista():
     return st.session_state.get("role") == "jefe" and modo_jefe() == "Laboratorista"
 
 
-@_dialog("Mi perfil", width="small")
-def dialogo_perfil():
-    perfil = st.session_state.profile or {}
-    st.markdown(f'<div style="font-weight:700;font-size:16px;">{html.escape(perfil.get("full_name") or "—")}</div>'
-                f'<div class="cell-muted">Jefe de Laboratorio</div>', unsafe_allow_html=True)
-    st.markdown('<div class="cell-muted" style="font-weight:700;margin-top:14px;">Modo de trabajo</div>', unsafe_allow_html=True)
-    actual = modo_jefe()
-    elegido = st.segmented_control("Modo de trabajo", list(MODOS_JEFE), default=actual, key="modo_jefe_sel", label_visibility="collapsed")
-    if elegido and elegido != actual:
-        st.session_state.modo_jefe = elegido
-        st.rerun()
-    st.caption("**Revisión:** ves los ensayos y los resultados, y confirmas o devuelves; las casillas de digitar quedan bloqueadas."
-               if actual == "Revisión" else
-               "**Laboratorista:** puedes digitar, guardar y enviar ensayos como un laboratorista (lo que hagas queda a tu nombre en el historial).")
-
-
 @_dialog("Notificaciones", width="small")
 def dialogo_notificaciones(mis_notifs, no_leidas):
     if not mis_notifs:
@@ -3827,7 +3807,11 @@ def dialogo_notificaciones(mis_notifs, no_leidas):
 def render_topbar():
     active = ACTIVE_MAP.get(st.session_state.screen)
     with st.container(key="topbar"):
-        c_brand, c_nav, c_bell, c_avatar, c_logout = st.columns([2.2, 4.2, 0.7, 0.7, 0.7])
+        es_jefe_barra = st.session_state.role == "jefe"
+        if es_jefe_barra:
+            c_brand, c_nav, c_modo, c_bell, c_avatar, c_logout = st.columns([2.2, 3.6, 1.7, 0.7, 0.7, 0.7])
+        else:
+            c_brand, c_nav, c_bell, c_avatar, c_logout = st.columns([2.2, 4.2, 0.7, 0.7, 0.7])
         with c_brand:
             st.markdown(f'<div class="topbar-brand"><span class="mark">{icon("biotech", size=20)}</span>'
                         f'<span class="brand-title">Geodelta Lab</span></div>', unsafe_allow_html=True)
@@ -3839,6 +3823,13 @@ def render_topbar():
                         if st.button(label, key=f"nav_{key}", use_container_width=True, icon=f":material/{icono}:",
                                      type="primary" if active == key else "secondary"):
                             navigate(key)
+        if es_jefe_barra:
+            with c_modo, st.container(key="modo-jefe"):
+                # Interruptor deslizable: apagado = Revisión (casillas bloqueadas), encendido = trabaja como laboratorista. Se lee antes de dibujar la
+                # pantalla, así el cambio se aplica en la misma corrida.
+                activo = st.toggle("Laboratorista", value=(modo_jefe() == "Laboratorista"), key="modo_jefe_toggle",
+                                   help="Apagado: modo Revisión (las casillas de digitar quedan bloqueadas). Encendido: digitas como un laboratorista.")
+                st.session_state.modo_jefe = "Laboratorista" if activo else "Revisión"
         with c_bell:
             mis_notifs = sorted(
                 (n for n in st.session_state.notifications if n["role"] == st.session_state.role),
@@ -3853,12 +3844,7 @@ def render_topbar():
                     dialogo_notificaciones(mis_notifs, no_leidas)
         with c_avatar:
             iniciales = ROLE_INICIALES.get(st.session_state.role, "LB")
-            if st.session_state.role == "jefe":
-                with st.container(key="avatar-btn"):
-                    if st.button(iniciales, key="avatar_perfil", help=f"Mi perfil · modo {modo_jefe()}"):
-                        dialogo_perfil()
-            else:
-                st.markdown(f'<div class="topbar-avatar">{iniciales}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="topbar-avatar">{iniciales}</div>', unsafe_allow_html=True)
         with c_logout, st.container(key="logout-btn"):
             if st.button("", key="logout_top", help="Cerrar sesión", use_container_width=True, icon=":material/logout:"):
                 db.sign_out()
@@ -14015,7 +14001,7 @@ def render_assay_form(prueba=False):
             st.info("Ya entregaste este ensayo: queda en revisión del Jefe de Laboratorio y no lo puedes editar. Si hay que corregir algo, "
                     "el Jefe te lo devuelve.")
         elif es_jefe and not prueba and modo_jefe() == "Revisión":
-            st.info("Estás en modo Revisión: las casillas están bloqueadas. Para digitar, cambia a modo Laboratorista en tu perfil (el círculo «JL» de arriba).")
+            st.info("Estás en modo Revisión: las casillas están bloqueadas. Para digitar, enciende el interruptor «Laboratorista» de la barra de arriba.")
         elif es_supervisor:
             st.info("Estás viendo el ensayo en modo consulta — solo el laboratorista puede digitar estos datos.")
         else:
