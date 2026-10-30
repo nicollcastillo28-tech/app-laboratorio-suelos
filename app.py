@@ -3969,7 +3969,7 @@ def _render_por_revisar(por_revisar):
         if not por_revisar:
             st.info("No hay ensayos entregados esperando tu revisión.")
             return
-        st.caption("Ábrelos para revisarlos: si ves algo raro puedes corregirlo ahí mismo; luego confirma o devuelve el ensayo desde la muestra.")
+        st.caption("Ábrelos para ver lo digitado y los resultados; luego confirma o devuelve el ensayo desde la muestra. Si algo hay que corregirlo, devuélvelo al laboratorista.")
         for a in por_revisar:
             proyecto = get_project(a["codigo_interno"])
             cols = st.columns([3, 1.4], vertical_alignment="center")
@@ -4110,8 +4110,9 @@ def render_home():
 
     if es_supervisor:
         # Dos vistas: lo último que se hizo, o lo que falta por hacer (con los mismos filtros del laboratorista).
-        _por_revisar = _calcular_por_revisar() if es_jefe else []
-        _opciones_vista = ["Actividad reciente", "Ensayos pendientes"] + ([f"Por revisar ({len(_por_revisar)})"] if es_jefe else [])
+        _revisa = es_jefe and not jefe_en_modo_laboratorista()   # en modo Laboratorista no se revisa: la lista «Por revisar» es del modo Revisión
+        _por_revisar = _calcular_por_revisar() if _revisa else []
+        _opciones_vista = ["Actividad reciente", "Ensayos pendientes"] + ([f"Por revisar ({len(_por_revisar)})"] if _revisa else [])
         if st.session_state.get("home_vista_sup") not in _opciones_vista:   # el contador de "Por revisar" cambia: se conserva la elección
             if str(st.session_state.get("home_vista_sup", "")).startswith("Por revisar"):
                 st.session_state["home_vista_sup"] = _opciones_vista[-1]
@@ -7597,9 +7598,10 @@ def render_muestra_detail():
                             st.markdown(status_badge_html(status), unsafe_allow_html=True)
 
                     with cols[3]:
-                        # Para el Jefe, un ensayo ya entregado y sin la aprobación final se abre para revisarlo y, si hace falta, corregir sus datos.
+                        # Para el Jefe en modo Revisión, un ensayo ya entregado y sin la aprobación final se abre para revisarlo. En modo Laboratorista
+                        # no revisa: el botón dice «Abrir» como el de cualquier laboratorista.
                         _etiqueta_abrir = ("Revisar" if (existing and status == "finalizado" and (
-                            (st.session_state.role == "jefe" and etapa != "aprobado")
+                            (st.session_state.role == "jefe" and etapa != "aprobado" and not jefe_en_modo_laboratorista())
                             or (st.session_state.role == "ingeniero" and etapa == "pendiente_ing"))) else "Abrir")
                         if st.button(_etiqueta_abrir, key=f"open_ensayo_{ensayo_label}", use_container_width=True, disabled=bloqueo_lab):
                             if existing:
