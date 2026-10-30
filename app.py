@@ -239,8 +239,13 @@ st.markdown(f"""
         background: rgba(255,255,255,0.10) !important; border: none !important; color: #FFFFFF !important;
     }}
     .st-key-bell-quiet button:hover, .st-key-logout-btn button:hover {{ background: rgba(255,255,255,0.20) !important; }}
-    .st-key-modo-jefe {{ display: flex; justify-content: flex-end; }}
-    .st-key-modo-jefe label p, .st-key-modo-jefe label span {{ color: #FFFFFF !important; font-weight: 700; font-size: 13px; white-space: nowrap; }}
+    .st-key-modo-jefe button {{ white-space: nowrap; font-weight: 700; font-size: 13px; }}
+    .st-key-modo-jefe button[kind="secondary"] {{
+        background: rgba(255,255,255,0.10) !important; border: 1px solid rgba(255,255,255,0.35) !important; color: #FFFFFF !important;
+    }}
+    .st-key-modo-jefe button[kind="primary"] {{
+        background: {ACCENT_BRIGHT} !important; border: 1px solid {ACCENT_BRIGHT} !important; color: {PRIMARY_CONTAINER} !important;
+    }}
 
     /* ---- BOTTOM NAV (celular y tablet, ambas orientaciones) ----
        900px solo cubría tablet en vertical; en horizontal (~1024-1194px, iPad/Android típico)
@@ -3825,11 +3830,16 @@ def render_topbar():
                             navigate(key)
         if es_jefe_barra:
             with c_modo, st.container(key="modo-jefe"):
-                # Interruptor deslizable: apagado = Revisión (casillas bloqueadas), encendido = trabaja como laboratorista. Se lee antes de dibujar la
-                # pantalla, así el cambio se aplica en la misma corrida.
-                activo = st.toggle("Laboratorista", value=(modo_jefe() == "Laboratorista"), key="modo_jefe_toggle",
-                                   help="Apagado: modo Revisión (las casillas de digitar quedan bloqueadas). Encendido: digitas como un laboratorista.")
-                st.session_state.modo_jefe = "Laboratorista" if activo else "Revisión"
+                # Casilla marcada = trabaja como laboratorista (puede digitar); sin marcar = modo Revisión (casillas bloqueadas). Es un botón con casilla
+                # (como las demás casillas de la app, que en la tableta responden mejor que los widgets nativos) y avisa del cambio con un mensaje.
+                lab_activo = modo_jefe() == "Laboratorista"
+                if st.button("Modo laboratorista", key="modo_jefe_btn", use_container_width=True, type="primary" if lab_activo else "secondary",
+                             icon=":material/check_box:" if lab_activo else ":material/check_box_outline_blank:",
+                             help="Marcado: digitas como un laboratorista. Sin marcar: modo Revisión (las casillas de digitar quedan bloqueadas)."):
+                    st.session_state.modo_jefe = "Revisión" if lab_activo else "Laboratorista"
+                    st.toast("Modo Revisión: las casillas de digitar quedan bloqueadas." if lab_activo
+                             else "Modo Laboratorista: ya puedes digitar y enviar ensayos.", icon=":material/swap_horiz:")
+                    st.rerun()
         with c_bell:
             mis_notifs = sorted(
                 (n for n in st.session_state.notifications if n["role"] == st.session_state.role),
@@ -14001,7 +14011,7 @@ def render_assay_form(prueba=False):
             st.info("Ya entregaste este ensayo: queda en revisión del Jefe de Laboratorio y no lo puedes editar. Si hay que corregir algo, "
                     "el Jefe te lo devuelve.")
         elif es_jefe and not prueba and modo_jefe() == "Revisión":
-            st.info("Estás en modo Revisión: las casillas están bloqueadas. Para digitar, enciende el interruptor «Laboratorista» de la barra de arriba.")
+            st.info("Estás en modo Revisión: las casillas están bloqueadas. Para digitar, marca «Modo laboratorista» en la barra de arriba.")
         elif es_supervisor:
             st.info("Estás viendo el ensayo en modo consulta — solo el laboratorista puede digitar estos datos.")
         else:
