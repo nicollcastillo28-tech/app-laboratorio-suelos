@@ -258,6 +258,20 @@ class GuardadoEnsayoTest(unittest.TestCase):
         self.assertEqual(bd["hum_masa_recipiente"], "18.45")
         self.assertEqual(bd["hum_masa_humedo_mas_recipiente"], "200.00")
 
+    def test_quien_solo_mira_el_ensayo_no_queda_como_el_ultimo(self):
+        a = _sesion()
+        a.run()
+        a.text_input(key=MASA).set_value("18.45").run()                             # Laura digita
+        self.assertEqual(TABLAS["assays"][0]["laboratorist"], "Laura Gómez")
+        self.assertIn("Laura Gómez", TABLAS["assays"][0].get("editado_por", ""))
+        b = _sesion()
+        b.session_state["profile"] = {"full_name": "Nicoll Castillo", "role": "laboratorista", "id": "u2"}
+        b.run()                                                                     # Nicoll solo entra a mirar
+        self.assertEqual(TABLAS["assays"][0]["laboratorist"], "Laura Gómez")
+        b.text_input(key=REC).set_value("A-12").run()                               # y cuando digita algo, sí queda él
+        self.assertEqual(TABLAS["assays"][0]["laboratorist"], "Nicoll Castillo")
+        self.assertIn("Nicoll Castillo", TABLAS["assays"][0]["editado_por"])
+
     def test_si_la_base_falla_se_avisa_y_se_reintenta(self):
         at = _sesion()
         at.run()

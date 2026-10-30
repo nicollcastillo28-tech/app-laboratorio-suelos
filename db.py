@@ -322,8 +322,11 @@ def get_assay_fila(assay_id: str, columnas: str = "*") -> dict | None:
 def list_assay_versions(assay_id: str, limite: int = 40) -> list[dict]:
     """Versiones anteriores del ensayo (la más reciente primero). Vacío si la tabla aún no existe en la base."""
     try:
-        return (get_client().table("assay_versions").select("id,data,status,saved_at").eq("assay_id", assay_id)
-                .order("saved_at", desc=True).limit(limite).execute().data or [])
+        q = get_client().table("assay_versions")
+        try:
+            return q.select("id,data,status,saved_at,digitado_por,digitado_en").eq("assay_id", assay_id).order("saved_at", desc=True).limit(limite).execute().data or []
+        except Exception:   # todavía sin las columnas de la migración 0041
+            return q.select("id,data,status,saved_at").eq("assay_id", assay_id).order("saved_at", desc=True).limit(limite).execute().data or []
     except Exception:
         return []
 
@@ -333,8 +336,12 @@ def create_assay(muestra_id: str, tipo: str, **defaults) -> dict:
     return res.data[0]
 
 
+_SIN_EDITADO_POR = False   # la base todavía no tiene la columna assays.editado_por (falta correr la migración 0041)
+
+
 def update_assay_data(assay_id: str, data: dict = None, observations: str = None,
-                       laboratorist: str = None, status: str = None) -> dict:
+                       laboratorist: str = None, status: str = None, editado_por: str = None) -> dict:
+    global _SIN_EDITADO_POR
     fields = {}
     if data is not None:
         fields["data"] = data
@@ -344,7 +351,16 @@ def update_assay_data(assay_id: str, data: dict = None, observations: str = None
         fields["laboratorist"] = laboratorist
     if status is not None:
         fields["status"] = status
-    res = get_client().table("assays").update(fields).eq("id", assay_id).execute()
+    if editado_por and not _SIN_EDITADO_POR:
+        fields["editado_por"] = editado_por
+    try:
+        res = get_client().table("assays").update(fields).eq("id", assay_id).execute()
+    except Exception as e:
+        if "editado_por" not in fields or "editado_por" not in str(e):
+            raise
+        _SIN_EDITADO_POR = True   # sin la columna el guardado sigue funcionando, solo no se anota quién fue
+        fields.pop("editado_por")
+        res = get_client().table("assays").update(fields).eq("id", assay_id).execute()
     return res.data[0]
 
 

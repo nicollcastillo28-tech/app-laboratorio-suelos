@@ -7533,7 +7533,8 @@ def render_muestra_detail():
                                     f'{icon("fact_check", size=13)} Consultar resultados ({len(alertas_card)})</span>')
                     meta = ""
                     if existing:
-                        quien = f' · {html.escape(existing["laboratorist"])}' if existing.get("laboratorist") else ""
+                        _quien = existing.get("editado_por") or existing.get("laboratorist")   # quien puso el último dato, no quien solo lo abrió
+                        quien = f' · {html.escape(_quien)}' if _quien else ""
                         meta = (f'<div class="ens-meta">{icon("history", size=13)} Última actualización: '
                                 f'{format_dt(existing["lastModified"])}{quien}</div>')
                     st.markdown(f'<div class="ens-info"><div class="ens-titulo-fila"><span class="ens-titulo">{html.escape(ensayo_label)}</span>{chip}</div>'
@@ -13922,7 +13923,10 @@ def render_assay_form(prueba=False):
             if _versiones is not None and not _versiones:
                 st.caption("Todavía no hay versiones anteriores guardadas.")
             elif _versiones:
-                _opc = {f"{str(v['saved_at'])[:19].replace('T', ' ')} (UTC)": v for v in _versiones}
+                def _etiqueta_version(v):
+                    cuando = str(v.get("digitado_en") or v["saved_at"])[:19].replace("T", " ")
+                    return f"{cuando} (UTC)" + (f" — digitado por {v['digitado_por']}" if v.get("digitado_por") else "")
+                _opc = {_etiqueta_version(v): v for v in _versiones}
                 _sel = _opc[st.selectbox("Versión", list(_opc), key=f"sel_hist_{assay_id}")]
                 _actual_h = {k: v for k, v in (assay.get("data") or {}).items() if not k.startswith("_")}
                 _dif = [(k, _sel["data"].get(k), _actual_h.get(k)) for k in sorted(set(_sel["data"]) | set(_actual_h))
@@ -14069,7 +14073,7 @@ def render_assay_form(prueba=False):
         actor_edicion = (f"{_nombre_sup or 'Jefe de Laboratorio'} (Jefe de Laboratorio)" if (jefe_edita or jefe_trabaja)
                          else f"{_nombre_sup or 'Director Técnico'} (Director Técnico)" if ing_edita
                          else (f"{laboratorist} (Laboratorista)" if laboratorist else "Laboratorista"))
-        st.markdown(f'<div style="font-weight:600;">{html.escape(laboratorist or "—")}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-weight:600;">{html.escape(assay.get("laboratorist") or laboratorist or "—")}</div>', unsafe_allow_html=True)
 
         # Autoguardado: si el laboratorista digita y se le olvida darle a "Guardar borrador"
         # antes de salir, los datos no se pierden — se persisten solos en cada rerun (cada vez
@@ -14112,8 +14116,8 @@ def render_assay_form(prueba=False):
                         del st.session_state[_k]
                 st.rerun()
         _guardado_ok = not autoguardado_bloqueado   # bloqueado: la foto de los campos NO avanza, así el aviso y el botón de recuperar siguen ahí
-        if not autoguardado_bloqueado and (data_guardar != assay.get("data", {}) or observations != assay.get("observations", "")
-                                           or laboratorist != assay.get("laboratorist", "")):
+        # (Entrar a mirar un ensayo NO lo guarda: antes bastaba con que otra persona lo abriera para que quedara su nombre como el último.)
+        if not autoguardado_bloqueado and (data_guardar != assay.get("data", {}) or observations != assay.get("observations", "")):
             # La copia del ensayo que trae esta pantalla puede estar vieja (el mismo ensayo abierto en otra pestaña, tableta o por otra persona que ya
             # guardó). Escribir «copia vieja + mis cambios» BORRABA lo que la otra pantalla guardó después. Por eso, justo antes de escribir, se lee lo que
             # hay AHORA en la base y los cambios de esta pantalla se mezclan sobre eso: solo se tocan los campos que esta persona cambió.
@@ -14145,7 +14149,7 @@ def render_assay_form(prueba=False):
             try:
                 with st.spinner("Guardando la foto…" if hay_foto else "Guardando…"):
                     fila_guardada = db.update_assay_data(assay["id"], data=data_guardar, observations=observations, laboratorist=laboratorist,
-                                                         status=nuevo_status)
+                                                         status=nuevo_status, editado_por=actor_edicion)
                     if pasa200_gran_sibling:
                         db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data_guardar)
                 if not supervisor_registra and not pasa200_gran_sibling:
@@ -14155,6 +14159,7 @@ def render_assay_form(prueba=False):
                 assay["data"] = data_guardar
                 assay["observations"] = observations
                 assay["laboratorist"] = laboratorist
+                assay["editado_por"] = actor_edicion
                 assay["status"] = nuevo_status
                 st.session_state.pop(f"_fallo_guardado_{assay_id}", None)
                 st.session_state[f"_guardado_{assay_id}"] = (datetime.utcnow() - timedelta(hours=5)).strftime("%I:%M:%S %p")   # hora de Colombia
@@ -14216,7 +14221,7 @@ def render_assay_form(prueba=False):
                 data_guardar = _datos_frescos()
                 try:
                     with st.spinner("Guardando…"):
-                        db.update_assay_data(assay["id"], data=data_guardar, observations=observations, laboratorist=laboratorist, status="finalizado")
+                        db.update_assay_data(assay["id"], data=data_guardar, observations=observations, laboratorist=laboratorist, status="finalizado", editado_por=actor_edicion)
                         if pasa200_gran_sibling:
                             db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data_guardar)
                     assay.update(data=data_guardar, observations=observations, laboratorist=laboratorist, status="finalizado")
@@ -14232,7 +14237,7 @@ def render_assay_form(prueba=False):
                 try:
                     with st.spinner("Guardando…"):
                         estado_borrador = "en-proceso" if tiene_valores_digitados(data) else "sin-iniciar"
-                        db.update_assay_data(assay["id"], data=data_guardar, observations=observations, laboratorist=laboratorist, status=estado_borrador)
+                        db.update_assay_data(assay["id"], data=data_guardar, observations=observations, laboratorist=laboratorist, status=estado_borrador, editado_por=actor_edicion)
                         if pasa200_gran_sibling:
                             db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data_guardar)
                     assay.update(data=data_guardar, observations=observations, laboratorist=laboratorist, status=estado_borrador)
@@ -14252,7 +14257,7 @@ def render_assay_form(prueba=False):
                     st.session_state.pop(intento_incompleto_key, None)
                     data_guardar = _datos_frescos()
                     ya_estaba_finalizado = assay["status"] == "finalizado"
-                    db.update_assay_data(assay["id"], data=data_guardar, observations=observations, laboratorist=laboratorist, status="finalizado")
+                    db.update_assay_data(assay["id"], data=data_guardar, observations=observations, laboratorist=laboratorist, status="finalizado", editado_por=actor_edicion)
                     assay.update(data=data_guardar, observations=observations, laboratorist=laboratorist, status="finalizado")
                     if pasa200_gran_sibling:
                         db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data_guardar)
@@ -14300,7 +14305,7 @@ def render_assay_form(prueba=False):
                         with st.spinner("Guardando…"):
                             ya_estaba_finalizado = assay["status"] == "finalizado"
                             db.update_assay_data(assay["id"], data=data_guardar, observations=observations,
-                                                  laboratorist=laboratorist, status="finalizado")
+                                                  laboratorist=laboratorist, status="finalizado", editado_por=actor_edicion)
                             if pasa200_gran_sibling:
                                 db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], data_guardar)
                         assay.update(data=data_guardar, observations=observations, laboratorist=laboratorist, status="finalizado")
