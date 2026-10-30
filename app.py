@@ -780,7 +780,7 @@ st.markdown(f"""
 components.html("""
 <script>
 (function() {
-    var VERSION = 'v4';
+    var VERSION = 'v5';
     if (window.parent.__geodeltaInputModeInit === VERSION) return;
     // Una versión anterior del script (de antes de un despliegue nuevo) puede seguir viva en esta pestaña: se desconecta antes de empezar,
     // porque dos versiones a la vez se pisaban (una quitaba el teclado numérico que la otra ponía).
@@ -837,7 +837,17 @@ components.html("""
         );
         var idx = inputs.indexOf(target);
         if (idx === -1 || idx === inputs.length - 1) return;
+        // En tablas con varias columnas (fuerza antes / después, ensayo 1 / 2 / 3...) Enter baja por la MISMA columna: se busca, hacia adelante,
+        // el primer campo visible que esté justo debajo (mismo borde izquierdo). Si no hay ninguno, se sigue el orden normal.
         var next = inputs[idx + 1];
+        var r0 = target.getBoundingClientRect();
+        for (var j = idx + 1; j < inputs.length; j++) {
+            var rj = inputs[j].getBoundingClientRect();
+            if (inputs[j].offsetParent !== null && rj.width > 0 && Math.abs(rj.left - r0.left) < 8 && rj.top > r0.top + 5) {
+                next = inputs[j];
+                break;
+            }
+        }
         setTimeout(function() {
             next.focus();
             next.select();
