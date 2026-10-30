@@ -5968,11 +5968,7 @@ def render_project_detail():
 
             # (Antes había aquí un botón "Ver detalle del sondeo": las muestras y sus ensayos ya se abren directo desde
             # "Ver muestras", así que esa pantalla intermedia no hacía falta.)
-            filas_perf = _bitacora_filas_perforacion(codigo, perf["codigo"])
-            st.download_button("Descargar orden", data=_excel_orden_diferido(project, filas_perf, {perf["tipo"]}), icon=":material/download:",
-                                file_name=f"{codigo} Bitacora de orden {perf['codigo']}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True, key=f"dl_perf_{perf['codigo']}")
+            render_descarga_excel_perforacion(codigo, perf, project, muestras)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -9197,6 +9193,48 @@ def render_descarga_por_lote(codigo, perf_codigo, project, muestras):
                         data=excel_bytes, file_name=f"{cfg['prefijo']}_{codigo}_{perf_codigo}.{cfg['ext']}",
                         mime=cfg["mime"], use_container_width=True, key=f"lote_dl_{tipo}_{perf_codigo}",
                         icon=":material/download:")
+
+
+def _paquete_excel_diferido(codigo, perf_codigo, project, tipo, pares):
+    """Función que arma el paquete de Excel de un ensayo solo cuando se pulsa «descargar» (descarga diferida): una muestra = su Excel normal; varias =
+    un solo libro con una hoja por muestra (ver empaquetar_hojas)."""
+    def _armar():
+        cfg = EXCEL_LOTE_CONFIG[tipo]
+        ordenados = sorted(pares, key=lambda par: clave_numero_muestra(par[0]["numero"]))
+        archivos = [(f"M{m['numero']}", cfg["generar"](codigo, perf_codigo, m, project, data, "")) for m, data in ordenados]
+        return archivos[0][1] if len(archivos) == 1 else empaquetar_hojas(cfg["hoja"], archivos)
+    return _armar
+
+
+def render_descarga_excel_perforacion(codigo, perf, project, muestras):
+    """«Descargar Excel» de una perforación: un paquete por tipo de ensayo (todas las muestras en un solo libro, una hoja por muestra). Un tipo solo
+    aparece cuando TODAS las muestras que lo piden ya lo terminaron (ensayo en «finalizado»); si falta alguna, no se ofrece la descarga y se dice
+    cuántas faltan. Las muestras marcadas «no se pudo realizar» cuentan como terminadas pero no llevan hoja."""
+    perf_codigo = perf["codigo"]
+    listos, pendientes = [], []
+    for tipo, cfg in EXCEL_LOTE_CONFIG.items():
+        pedidas = [m for m in muestras if m["ensayos"].get(cfg["bitacora"])]
+        if not pedidas:
+            continue
+        terminadas = [m for m in pedidas if (get_assay(m["id_unico"], tipo) or {}).get("status") == "finalizado"]
+        if len(terminadas) < len(pedidas):
+            pendientes.append((cfg["etiqueta"], len(pedidas) - len(terminadas), len(pedidas)))
+            continue
+        pares = _muestras_para_lote(pedidas, tipo)
+        if pares:
+            listos.append((tipo, cfg, pares))
+    with st.expander("Descargar Excel", icon=":material/download:"):
+        if not listos:
+            st.caption("Todavía no hay ningún tipo de ensayo terminado en todas sus muestras.")
+        for tipo, cfg, pares in listos:
+            st.download_button(
+                f"{cfg['etiqueta']} — {len(pares)} muestra(s)", data=_paquete_excel_diferido(codigo, perf_codigo, project, tipo, pares),
+                on_click=_marcar_emision, args=(codigo, perf_codigo),
+                file_name=f"{cfg['prefijo']}_{codigo}_{perf_codigo}.{cfg['ext']}", mime=cfg["mime"], use_container_width=True,
+                key=f"dlx_{tipo}_{perf_codigo}", icon=":material/download:")
+        if pendientes:
+            st.caption("Aún sin terminar (no se pueden descargar todavía): "
+                       + " · ".join(f"{etq} ({falta} de {total} por terminar)" for etq, falta, total in pendientes))
 
 
 # ════════════════════════════════════════════════════════════════════
