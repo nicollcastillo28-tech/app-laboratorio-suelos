@@ -7625,7 +7625,7 @@ def render_muestra_detail():
                             with st.expander(f"Historial de Cambios ({len(ens_historial)})", icon=":material/history:"):
                                 st.markdown(historial_timeline_html(ens_historial), unsafe_allow_html=True)
                         # Quien revisa ve los resultados aquí mismo, sin entrar al ensayo: aparece cuando el laboratorista ya lo envió.
-                        if mostrar_aprobacion and st.session_state.role in ("jefe", "ingeniero"):
+                        if mostrar_aprobacion and (st.session_state.role == "ingeniero" or (st.session_state.role == "jefe" and not jefe_en_modo_laboratorista())):
                             with st.expander("Resultados", icon=":material/calculate:"):
                                 try:
                                     render_resultados_ensayo(tipo_interno, existing.get("data") or {}, muestra)
@@ -7639,6 +7639,9 @@ def render_muestra_detail():
                     # texto de "Devolver" se partía en dos líneas en pantallas angostas.
                     if not mostrar_aprobacion:
                         pass
+                    elif jefe_en_modo_laboratorista():
+                        # En modo Laboratorista el Jefe trabaja como un laboratorista: confirmar y devolver son de la revisión.
+                        st.caption("Modo laboratorista: para confirmar o devolver este ensayo, desmarca «Modo laboratorista» en la barra de arriba.")
                     elif etapa == "aprobado":
                         if st.session_state.role == "ingeniero":
                             with st.popover("Desconfirmar", use_container_width=True):
