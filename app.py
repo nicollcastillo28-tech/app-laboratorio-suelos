@@ -7682,6 +7682,15 @@ def render_muestra_detail():
                     if ens_historial:
                         with st.expander(f"Historial de Cambios ({len(ens_historial)})", icon=":material/history:"):
                             st.markdown(historial_timeline_html(ens_historial), unsafe_allow_html=True)
+                    # Quien revisa ve los resultados aquí mismo, sin entrar al ensayo: aparece cuando el laboratorista ya lo envió.
+                    if mostrar_aprobacion and st.session_state.role in ("jefe", "ingeniero"):
+                        with st.expander("Resultados", icon=":material/calculate:"):
+                            try:
+                                render_resultados_ensayo(tipo_interno, existing.get("data") or {}, muestra)
+                            except Exception as _e:
+                                if "RerunData" in type(_e).__name__ or "Stop" in type(_e).__name__:
+                                    raise
+                                st.caption("No se pudieron mostrar los resultados aquí; ábrelo con «Revisar».")
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -13403,6 +13412,54 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
         with st.container(border=True):
             st.markdown(card_header_html("construction", "Equipos Utilizados"), unsafe_allow_html=True)
             st.markdown(equipos_readonly_html(equipos), unsafe_allow_html=True)
+
+
+def render_resultados_ensayo(tipo, data, muestra):
+    """SOLO los resultados de un ensayo ya digitado (sin lo digitado): para que quien revisa decida de un vistazo, sin entrar al ensayo. Usa los mismos
+    cálculos y tablas que la vista de solo lectura. Si el ensayo no tiene una vista propia de resultados, muestra la vista completa de solo lectura."""
+    muestra_id = muestra["id_unico"]
+    if data.get("_no_realizado"):
+        st.info("No se pudo realizar este ensayo." + (f" Motivo: {data.get('_motivo_no_realizado')}" if data.get("_motivo_no_realizado") else ""))
+        return
+    filas = lambda f: st.markdown(param_table_html(f or [("Resultado", "—")], header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+    if tipo == "granulometria":
+        lim = get_assay(muestra_id, "limites")
+        resultados_granulometria(data, lim.get("data") if lim else None)
+    elif tipo == "pasa200":
+        filas(resultados_pasa200(data))
+    elif tipo == "humedad":
+        filas(resultados_humedad(data))
+    elif tipo == "limites":
+        resultados_limites(data)
+    elif tipo == "masa-unitaria":
+        if data.get("mu_metodo") == "Método B":
+            filas(resultados_masa_unitaria_b(data))
+        else:
+            filas(resultados_masa_unitaria_parafinado(data, muestra_id)[0])
+    elif tipo == "cbr":
+        resultados_cbr(data, datos_humedad_antes_cbr(data, muestra_id))
+    elif tipo == "proctor":
+        resultados_proctor(data)
+        st.markdown("**CBR compactado**")
+        resultados_cbr_compactado(data)
+    elif tipo == "corte-directo":
+        resultados_corte_directo(data)
+    elif tipo == "materia-organica":
+        filas(resultados_materia_organica(data))
+    elif tipo in _RESULTADOS_SIMPLES:
+        filas(globals()[_RESULTADOS_SIMPLES[tipo]](data))
+    else:
+        render_read_only_summary(tipo, data, "—", muestra_id=muestra_id)
+        return
+    render_alertas_resultados(*alertas_de_ensayo(tipo, data, muestra))
+
+
+_RESULTADOS_SIMPLES = {
+    "compresion-inconfinada": "resultados_compresion_inconfinada", "compresion-roca": "resultados_compresion_roca",
+    "carga-puntual": "resultados_carga_puntual", "solidez-sulfatos": "resultados_solidez_sulfatos",
+    "terrones-arcilla": "resultados_terrones_arcilla", "alargamiento-aplanamiento": "resultados_alargamiento_aplanamiento",
+    "consolidacion": "resultados_consolidacion", "limite-contraccion": "resultados_limite_contraccion",
+}
 
 
 # ════════════════════════════════════════════════════════════════════
