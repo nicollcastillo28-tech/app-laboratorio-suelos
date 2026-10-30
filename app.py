@@ -298,7 +298,7 @@ st.markdown(f"""
     estuviera bien. Se excluyen los mismos contenedores de "no son una tarjeta" que ya excluía la
     regla del acento izquierdo, más "logout-btn" (el ícono de cerrar sesión, invisible cuando su
     contenedor quedaba con este fondo blanco por detrás). */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-back-sticky):not(.st-key-proj-sticky):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-modo-jefe"]):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-back-sticky):not(.st-key-proj-sticky):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-modo-jefe"]):not(:has(> [data-testid="stLayoutWrapper"] > .st-key-desc-visual-card)):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
         border-radius: 12px !important; border: 1px solid {BORDER} !important;
         box-shadow: 0 1px 4px rgba(11,28,48,0.08) !important; background: {SURFACE} !important;
     }}
@@ -379,7 +379,7 @@ st.markdown(f"""
        borde tapando el grupo entero en vez de resaltar una sola tarjeta. bell-alert/bell-quiet
        (el botón-contenedor de la campana en el topbar) tampoco: es un ícono, no una tarjeta —
        se veía como una rayita verde suelta pegada a la campana. */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-back-sticky):not(.st-key-proj-sticky):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-modo-jefe"]):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-back-sticky):not(.st-key-proj-sticky):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-modo-jefe"]):not(:has(> [data-testid="stLayoutWrapper"] > .st-key-desc-visual-card)):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
         border-left: 4px solid {PRIMARY} !important;
     }}
     /* Tarjetas de "Ensayos asignados" (una por ensayo): más separación entre sí y sombra
@@ -2209,6 +2209,9 @@ def _sync_query_params():
             "muestra": st.session_state.selected_muestra_id or "",
             "assay": st.session_state.selected_assay_id or "",
             "atipo": st.session_state.selected_assay_type or "",
+            # Las pantallas por las que se pasó (la pila de «← Atrás»): si la página se recarga o la sesión se reinicia, «Atrás» vuelve a donde se
+            # estaba (p. ej. la lista de proyectos) y no al destino de emergencia de cada pantalla.
+            "ruta": ",".join(st.session_state.nav_stack[-8:]),
         })
     else:
         st.query_params.clear()
@@ -2248,6 +2251,7 @@ def init_state():
     st.session_state.selected_muestra_id = st.query_params.get("muestra") or ""
     st.session_state.selected_assay_id = st.query_params.get("assay") or None
     st.session_state.selected_assay_type = st.query_params.get("atipo") or None
+    st.session_state.nav_stack = [x for x in (st.query_params.get("ruta") or "").split(",") if re.fullmatch(r"[a-z0-9-]{2,30}", x)]
 
 
 def _try_restore_session_from_cookie():
@@ -7216,7 +7220,7 @@ def _render_seleccion_cbr_proctor(muestra, muestra_id, puede_editar):
 def _render_descripcion_visual(muestra, muestra_id, puede_editar_muestra):
     """Tarjeta de la descripción visual de la muestra. Es un fragmento: elegir una opción de los menús vuelve a dibujar SOLO esta tarjeta, no toda la
     pantalla (antes cada elección recargaba la página completa y la mandaba hacia abajo). Guardar o editar sí refresca toda la pantalla (st.rerun)."""
-    with st.container(border=True):
+    with st.container(border=True, key="desc-visual-card"):
         st.markdown('<div class="section-title">Descripción visual de la muestra</div>', unsafe_allow_html=True)
         # La nota de "comparar con la clasificación USCS de abajo" solo tiene sentido si abajo salen las clasificaciones, es decir, si la muestra tiene
         # una Granulometría realizada; en las demás la descripción visual es lo único que hay (y lo que va al Excel).
@@ -7379,8 +7383,8 @@ def _render_descripcion_visual(muestra, muestra_id, puede_editar_muestra):
                              f'border-radius:10px;padding:8px 12px;margin-top:6px;">'
                              f'<span style="margin-top:1px;">{icon("science", size=18)}</span>'
                              f'<div><div class="cell-muted" style="font-size:11.5px;">Según la clasificación USCS calculada</div>'
-                             f'<div style="font-weight:600;line-height:1.4;font-size:14px;color:{PRIMARY};">{html.escape(descripcion_calc)}</div></div></div>',
-                             unsafe_allow_html=True)
+                             f'<div style="font-weight:600;line-height:1.4;font-size:14px;color:{PRIMARY};">{html.escape(descripcion_calc)}</div></div></div>'
+                             f'<div style="height:10px;"></div>', unsafe_allow_html=True)
 
 
 def render_muestra_detail():
