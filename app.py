@@ -13994,10 +13994,13 @@ def render_assay_form(prueba=False):
             _snap = dict(data)
         _cambios = {k: v for k, v in data.items() if (k not in _snap or _snap[k] != v) or k not in _base}
         _quitados = [k for k in _snap if k not in data and k in _base]
-        data_guardar = dict(_base)
-        data_guardar.update(_cambios)
-        for _k in _quitados:
-            data_guardar.pop(_k, None)
+        def _mezclar(base):
+            mezcla = dict(base)
+            mezcla.update(_cambios)
+            for _k in _quitados:
+                mezcla.pop(_k, None)
+            return mezcla
+        data_guardar = _mezclar(_base)
         # Freno de seguridad: si de un solo cambio desaparecen de golpe muchos datos que ya estaban guardados (5 o más y la mayoría), casi seguro es
         # un fallo de la pantalla (campos que aparecen en blanco al recargarse), no que la persona los haya borrado: no se guarda y se ofrece
         # recuperar lo último guardado. Borrar a mano un dato por vez nunca activa esto.
@@ -14015,11 +14018,22 @@ def render_assay_form(prueba=False):
         _guardado_ok = not autoguardado_bloqueado   # bloqueado: la foto de los campos NO avanza, así el aviso y el botón de recuperar siguen ahí
         if not autoguardado_bloqueado and (data_guardar != assay.get("data", {}) or observations != assay.get("observations", "")
                                            or laboratorist != assay.get("laboratorist", "")):
+            # La copia del ensayo que trae esta pantalla puede estar vieja (el mismo ensayo abierto en otra pestaña, tableta o por otra persona que ya
+            # guardó). Escribir «copia vieja + mis cambios» BORRABA lo que la otra pantalla guardó después. Por eso, justo antes de escribir, se lee lo que
+            # hay AHORA en la base y los cambios de esta pantalla se mezclan sobre eso: solo se tocan los campos que esta persona cambió.
+            _base_viva = _base
+            try:
+                _fila_viva = db.get_assay_fila(assay["id"], "data")
+                if _fila_viva and isinstance(_fila_viva.get("data"), dict):
+                    _base_viva = _fila_viva["data"]
+                    data_guardar = _mezclar(_base_viva)
+            except Exception:
+                pass   # sin poder leer la base se usa la copia en memoria (como antes); el guardado de abajo avisa si tampoco se puede escribir
             nuevo_status = (("en-proceso" if tiene_valores_digitados(data_guardar) else "sin-iniciar")
                             if assay["status"] in ("sin-iniciar", "en-proceso") else assay["status"])
             # Respaldo: si este guardado CAMBIA o QUITA algún valor ya guardado, la versión anterior queda dentro del propio ensayo (clave «_respaldo»)
             # para poder restaurarla desde la pantalla. Agregar valores nuevos no genera respaldo.
-            _prev = assay.get("data") or {}
+            _prev = _base_viva or {}
             if any(_es_valor_digitado(k, v) and data_guardar.get(k) != v for k, v in _prev.items()):
                 data_guardar["_respaldo"] = {k: v for k, v in _prev.items() if not k.startswith("_") and not (isinstance(v, dict) and "b64" in v)}
             # Un ensayo con foto (compresión inconfinada) manda un jsonb varias veces más pesado que uno solo con
@@ -14091,9 +14105,19 @@ def render_assay_form(prueba=False):
 
         _historial_versiones(True)
 
+        def _datos_frescos(extra=None):
+            """Datos para un botón de guardar: lo que hay AHORA en la base + lo que esta persona cambió (+ `extra`), nunca la copia vieja de la pantalla."""
+            try:
+                fila = db.get_assay_fila(assay["id"], "data")
+                base = fila["data"] if fila and isinstance(fila.get("data"), dict) else (assay.get("data") or {})
+            except Exception:
+                base = assay.get("data") or {}
+            return {**_mezclar(base), **(extra or {})}
+
         st.markdown("<br>", unsafe_allow_html=True)
         if supervisor_edita:
             if st.button("Guardar cambios", type="primary", use_container_width=True, icon=":material/save:"):
+                data_guardar = _datos_frescos()
                 try:
                     with st.spinner("Guardando…"):
                         db.update_assay_data(assay["id"], data=data_guardar, observations=observations, laboratorist=laboratorist, status="finalizado")
@@ -14108,6 +14132,7 @@ def render_assay_form(prueba=False):
         col1, col2 = st.columns(2) if not supervisor_edita else (st.container(), st.container())
         with col1:
             if not supervisor_edita and st.button("Guardar borrador", use_container_width=True, icon=":material/save:"):
+                data_guardar = _datos_frescos()
                 try:
                     with st.spinner("Guardando…"):
                         estado_borrador = "en-proceso" if tiene_valores_digitados(data) else "sin-iniciar"
@@ -14129,6 +14154,7 @@ def render_assay_form(prueba=False):
                     st.rerun()
                 else:
                     st.session_state.pop(intento_incompleto_key, None)
+                    data_guardar = _datos_frescos()
                     ya_estaba_finalizado = assay["status"] == "finalizado"
                     db.update_assay_data(assay["id"], data=data_guardar, observations=observations, laboratorist=laboratorist, status="finalizado")
                     assay.update(data=data_guardar, observations=observations, laboratorist=laboratorist, status="finalizado")
@@ -14173,6 +14199,7 @@ def render_assay_form(prueba=False):
                              use_container_width=True, icon=":material/block:", disabled=not motivo_valor.strip()):
                     data["_no_realizado"] = True
                     data["_motivo_no_realizado"] = motivo_valor.strip()
+                    data_guardar = _datos_frescos({"_no_realizado": True, "_motivo_no_realizado": motivo_valor.strip()})
                     try:
                         with st.spinner("Guardando…"):
                             ya_estaba_finalizado = assay["status"] == "finalizado"

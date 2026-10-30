@@ -231,6 +231,33 @@ class GuardadoEnsayoTest(unittest.TestCase):
         self.assertEqual(_valores_bd()[1]["hum_masa_recipiente"], "99.00")         # y lo viejo de los otros campos tampoco se pisa
         self.assertEqual(_valores_bd()[1]["hum_masa_humedo_mas_recipiente"], "200.00")
 
+    def test_dos_sesiones_abiertas_no_se_borran_entre_si(self):
+        """El mismo ensayo abierto en dos pantallas: lo que una guarda después de que la otra lo abrió NO se borra cuando la otra sigue digitando
+        (el guardado se mezcla sobre lo que hay AHORA en la base, no sobre la copia que la pantalla trajo al abrir)."""
+        a = _sesion()
+        a.run()
+        a.text_input(key=MASA).set_value("18.45").run()
+        TABLAS["assays"][0]["data"]["hum_masa_humedo_mas_recipiente"] = "200.00"   # la otra pantalla guardó esto después de que esta abrió
+        TABLAS["assays"][0]["data"]["hum_seco_mas_recipiente"] = "150.00"
+        TABLAS["assays"][0]["updated_at"] = ahora()
+        a.text_input(key=REC).set_value("A-12").run()                              # esta pantalla (con copia vieja) sigue digitando OTRO campo
+        bd = _valores_bd()[1]
+        self.assertEqual(bd["hum_recipiente"], "A-12")
+        self.assertEqual(bd["hum_masa_recipiente"], "18.45")
+        self.assertEqual(bd["hum_masa_humedo_mas_recipiente"], "200.00")           # lo que guardó la otra pantalla sigue ahí
+        self.assertEqual(bd["hum_seco_mas_recipiente"], "150.00")
+
+    def test_guardar_borrador_con_copia_vieja_no_borra_lo_de_la_otra_pantalla(self):
+        a = _sesion()
+        a.run()
+        a.text_input(key=MASA).set_value("18.45").run()
+        TABLAS["assays"][0]["data"]["hum_masa_humedo_mas_recipiente"] = "200.00"   # la otra pantalla guardó después
+        TABLAS["assays"][0]["updated_at"] = ahora()
+        [b for b in a.button if "Guardar borrador" in b.label][0].click().run()
+        bd = _valores_bd()[1]
+        self.assertEqual(bd["hum_masa_recipiente"], "18.45")
+        self.assertEqual(bd["hum_masa_humedo_mas_recipiente"], "200.00")
+
     def test_si_la_base_falla_se_avisa_y_se_reintenta(self):
         at = _sesion()
         at.run()
