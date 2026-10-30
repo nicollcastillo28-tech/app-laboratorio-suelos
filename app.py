@@ -239,17 +239,13 @@ st.markdown(f"""
         background: rgba(255,255,255,0.10) !important; border: none !important; color: #FFFFFF !important;
     }}
     .st-key-bell-quiet button:hover, .st-key-logout-btn button:hover {{ background: rgba(255,255,255,0.20) !important; }}
-    .st-key-modo-jefe button {{
-        white-space: nowrap; font-weight: 700; font-size: 11px; min-height: 28px !important; height: 28px; padding: 0 8px !important; gap: 4px;
-    }}
-    .st-key-modo-jefe button p {{ font-size: 11px !important; line-height: 1 !important; }}
-    .st-key-modo-jefe button span[data-testid="stIconMaterial"] {{ font-size: 16px !important; }}
-    .st-key-modo-jefe button[kind="secondary"] {{
-        background: rgba(255,255,255,0.10) !important; border: 1px solid rgba(255,255,255,0.35) !important; color: #FFFFFF !important;
-    }}
-    .st-key-modo-jefe button[kind="primary"] {{
-        background: {ACCENT_BRIGHT} !important; border: 1px solid {ACCENT_BRIGHT} !important; color: {PRIMARY_CONTAINER} !important;
-    }}
+    /* Botón de modo del Jefe: mismo alto que la campana (sin alturas propias); apagado = translúcido como la campana, marcado = menta */
+    .st-key-modo-jefe-off button, .st-key-modo-jefe-on button {{ white-space: nowrap; border: none !important; }}
+    .st-key-modo-jefe-off button {{ background: rgba(255,255,255,0.10) !important; color: #FFFFFF !important; }}
+    .st-key-modo-jefe-off button:hover {{ background: rgba(255,255,255,0.20) !important; }}
+    .st-key-modo-jefe-off button p, .st-key-modo-jefe-off button span {{ color: #FFFFFF !important; }}
+    .st-key-modo-jefe-on button {{ background: {ACCENT_BRIGHT} !important; color: {PRIMARY_CONTAINER} !important; }}
+    .st-key-modo-jefe-on button p, .st-key-modo-jefe-on button span {{ color: {PRIMARY_CONTAINER} !important; }}
 
     /* ---- BOTTOM NAV (celular y tablet, ambas orientaciones) ----
        900px solo cubría tablet en vertical; en horizontal (~1024-1194px, iPad/Android típico)
@@ -3818,7 +3814,7 @@ def render_topbar():
     with st.container(key="topbar"):
         es_jefe_barra = st.session_state.role == "jefe"
         if es_jefe_barra:
-            c_brand, c_nav, c_modo, c_bell, c_avatar, c_logout = st.columns([2.2, 4.0, 1.3, 0.7, 0.7, 0.7])
+            c_brand, c_nav, c_modo, c_bell, c_avatar, c_logout = st.columns([2.2, 3.7, 1.8, 0.7, 0.7, 0.7])
         else:
             c_brand, c_nav, c_bell, c_avatar, c_logout = st.columns([2.2, 4.2, 0.7, 0.7, 0.7])
         with c_brand:
@@ -3833,7 +3829,7 @@ def render_topbar():
                                      type="primary" if active == key else "secondary"):
                             navigate(key)
         if es_jefe_barra:
-            with c_modo, st.container(key="modo-jefe"):
+            with c_modo, st.container(key="modo-jefe-on" if modo_jefe() == "Laboratorista" else "modo-jefe-off"):
                 # Casilla marcada = trabaja como laboratorista (puede digitar); sin marcar = modo Revisión (casillas bloqueadas). Es un botón con casilla
                 # (como las demás casillas de la app, que en la tableta responden mejor que los widgets nativos) y avisa del cambio con un mensaje.
                 lab_activo = modo_jefe() == "Laboratorista"
