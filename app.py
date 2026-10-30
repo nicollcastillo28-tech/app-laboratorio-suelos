@@ -3769,7 +3769,21 @@ def modo_jefe():
     """Modo de trabajo del Jefe de Laboratorio: «Revisión» (por defecto: solo lee y confirma/devuelve, las casillas de digitar quedan bloqueadas) o
     «Laboratorista» (digita y envía ensayos como cualquier laboratorista). Se cambia desde su perfil (avatar de la barra superior)."""
     modo = st.session_state.get("modo_jefe")
+    if modo not in MODOS_JEFE and st.session_state.get("role") == "jefe":
+        # Al volver atrás o recargar la página la sesión de Streamlit empieza de cero: el modo se recuerda en una cookie del navegador (ver
+        # _guardar_modo_jefe), como el código de usuario. La cookie llega un instante después de abrir la página: mientras tanto se usa «Revisión».
+        recordado = cookie_manager.get("gdl_modo")
+        if recordado in MODOS_JEFE:
+            st.session_state.modo_jefe = recordado
+            return recordado
     return modo if modo in MODOS_JEFE else "Revisión"
+
+
+def _guardar_modo_jefe(modo):
+    """Cambia el modo del Jefe y deja pendiente escribir la cookie (se escribe en la corrida siguiente, igual que las demás cookies: justo antes de
+    un st.rerun() el componente no alcanza a mandar la orden al navegador)."""
+    st.session_state.modo_jefe = modo
+    st.session_state._pending_modo_cookie = modo
 
 
 def jefe_en_modo_laboratorista():
@@ -3836,7 +3850,7 @@ def render_topbar():
                 if st.button("Lab", key="modo_jefe_btn", use_container_width=True, type="primary" if lab_activo else "secondary",
                              icon=":material/check_box:" if lab_activo else ":material/check_box_outline_blank:",
                              help="Modo laboratorista. Marcado: digitas como un laboratorista. Sin marcar: modo Revisión (las casillas de digitar quedan bloqueadas)."):
-                    st.session_state.modo_jefe = "Revisión" if lab_activo else "Laboratorista"
+                    _guardar_modo_jefe("Revisión" if lab_activo else "Laboratorista")
                     st.toast("Modo Revisión: las casillas de digitar quedan bloqueadas." if lab_activo
                              else "Modo Laboratorista: ya puedes digitar y enviar ensayos.", icon=":material/swap_horiz:")
                     st.rerun()
@@ -7206,10 +7220,6 @@ def _render_descripcion_visual(muestra, muestra_id, puede_editar_muestra):
         st.markdown('<div class="section-title">Descripción visual de la muestra</div>', unsafe_allow_html=True)
         # La nota de "comparar con la clasificación USCS de abajo" solo tiene sentido si abajo salen las clasificaciones, es decir, si la muestra tiene
         # una Granulometría realizada; en las demás la descripción visual es lo único que hay (y lo que va al Excel).
-        _gran_nota = get_assay(muestra_id, "granulometria")
-        if muestra["ensayos"].get("Granulometría") and _gran_nota and not (_gran_nota.get("data") or {}).get("_no_realizado"):
-            st.caption("Cómo se ve la muestra a ojo — para comparar con la clasificación USCS calculada de "
-                       "los datos de laboratorio, justo abajo.")
         descripcion_val = descripcion_visual_para_excel(muestra)
         desc_edit_key = f"desc_editando_{muestra_id}"
         # Con la descripción ya guardada se ve como texto (igual que la ven el Jefe y el Director Técnico), no con
@@ -7340,11 +7350,18 @@ def _render_descripcion_visual(muestra, muestra_id, puede_editar_muestra):
                     st.rerun()
         else:
             if descripcion_val:
-                st.markdown(f'<div style="display:flex;gap:10px;align-items:flex-start;background:{BG};'
-                             f'border-radius:10px;padding:12px 14px;margin-bottom:4px;">'
-                             f'<span style="margin-top:2px;">{icon("visibility", size=18)}</span>'
-                             f'<div style="font-weight:600;line-height:1.5;">{html.escape(descripcion_val)}</div></div>',
-                             unsafe_allow_html=True)
+                _c_desc, _c_edit = st.columns([6, 1.3], vertical_alignment="center") if puede_editar_muestra else (st.container(), None)
+                with _c_desc:
+                    st.markdown(f'<div style="display:flex;gap:10px;align-items:flex-start;background:{BG};'
+                                 f'border-radius:10px;padding:8px 12px;">'
+                                 f'<span style="margin-top:1px;">{icon("visibility", size=18)}</span>'
+                                 f'<div style="font-weight:600;line-height:1.4;font-size:14px;">{html.escape(descripcion_val)}</div></div>',
+                                 unsafe_allow_html=True)
+                if _c_edit is not None:
+                    with _c_edit:
+                        if st.button("Editar", icon=":material/edit:", key=f"desc_editar_{muestra_id}", use_container_width=True):
+                            st.session_state[desc_edit_key] = True
+                            st.rerun()
             else:
                 st.markdown(f'<div style="display:flex;align-items:center;gap:6px;color:{NEUTRAL};font-style:italic;">'
                              f'{icon("visibility_off", size=16)} El laboratorista aún no la digita</div>', unsafe_allow_html=True)
@@ -7353,18 +7370,17 @@ def _render_descripcion_visual(muestra, muestra_id, puede_editar_muestra):
             # (ver descripcion_visual_calculada). Nada que mostrar hasta que haya datos de
             # Granulometría/Límites suficientes para calcularla.
             descripcion_calc = descripcion_visual_calculada(muestra)
-            if descripcion_calc:
+            if descripcion_calc and descripcion_calc.strip().upper() == (descripcion_val or "").strip().upper():
+                # Si la calculada es igual a la digitada a ojo no se repite: una línea de confirmación ocupa mucho menos.
+                st.markdown(f'<div class="cell-muted" style="margin-top:4px;font-size:12px;color:{PRIMARY};">'
+                             f'{icon("check_circle", size=14)} Coincide con la descripción según la clasificación USCS calculada</div>', unsafe_allow_html=True)
+            elif descripcion_calc:
                 st.markdown(f'<div style="display:flex;gap:10px;align-items:flex-start;background:{SECONDARY_CONTAINER};'
-                             f'border-radius:10px;padding:12px 14px;margin-top:8px;margin-bottom:16px;">'
-                             f'<span style="margin-top:2px;">{icon("science", size=18)}</span>'
-                             f'<div><div class="cell-muted" style="margin-bottom:2px;">Según la clasificación USCS calculada</div>'
-                             f'<div style="font-weight:600;line-height:1.5;color:{PRIMARY};">{html.escape(descripcion_calc)}</div></div></div>',
+                             f'border-radius:10px;padding:8px 12px;margin-top:6px;">'
+                             f'<span style="margin-top:1px;">{icon("science", size=18)}</span>'
+                             f'<div><div class="cell-muted" style="font-size:11.5px;">Según la clasificación USCS calculada</div>'
+                             f'<div style="font-weight:600;line-height:1.4;font-size:14px;color:{PRIMARY};">{html.escape(descripcion_calc)}</div></div></div>',
                              unsafe_allow_html=True)
-            if puede_editar_muestra and descripcion_val:
-                st.markdown('<div style="height:14px;"></div>', unsafe_allow_html=True)
-                if st.button("Editar descripción", icon=":material/edit:", key=f"desc_editar_{muestra_id}"):
-                    st.session_state[desc_edit_key] = True
-                    st.rerun()
 
 
 def render_muestra_detail():
@@ -7414,82 +7430,48 @@ def render_muestra_detail():
     # "no se pudo realizar") muestran solo la descripción visual, que es la que va al Excel.
     _gran_muestra = get_assay(muestra_id, "granulometria")
     if muestra["ensayos"].get("Granulometría") and _gran_muestra and not (_gran_muestra.get("data") or {}).get("_no_realizado"):
-        with st.container(border=True):
-            st.markdown('<div class="section-title">Clasificación USCS</div>', unsafe_allow_html=True)
-            st.caption("Calculada en la app con los datos ya digitados de Granulometría y Límites de "
-                       "Atterberg — verifícala contra el Excel antes de usarla en un informe.")
-            gran_assay = get_assay(muestra_id, "granulometria")
-            lim_assay = get_assay(muestra_id, "limites")
-            resultado = clasificar_uscs(
-                gran_assay.get("data") if gran_assay else None,
-                lim_assay.get("data") if lim_assay else None,
-            )
-            simbolo = resultado.get("simbolo")
-            if simbolo:
-                nombre = USCS_NOMBRES.get(simbolo, "")
-                st.markdown(f'''
-                    <div style="display:flex;align-items:center;gap:14px;background:{SECONDARY_CONTAINER};
-                                border-radius:10px;padding:14px 16px;">
-                        <div style="font-size:28px;font-weight:800;color:{PRIMARY};">{simbolo}</div>
-                        <div style="font-weight:600;color:{PRIMARY};">{html.escape(nombre)}</div>
-                    </div>
-                ''', unsafe_allow_html=True)
-                detalles = []
-                if resultado.get("pct_grava") is not None:
-                    detalles.append(f'Grava {resultado["pct_grava"]:.0f}% · Arena {resultado["pct_arena"]:.0f}% '
-                                     f'· Finos {resultado["pct_finos"]:.0f}%')
-                if resultado.get("ll") is not None:
-                    detalles.append(f'LL {resultado["ll"]} · LP {resultado["lp"]} · IP {resultado["ip"]}')
-                if resultado.get("cu") is not None and resultado.get("cc") is not None:
-                    detalles.append(f'Cu {resultado["cu"]:.1f} · Cc {resultado["cc"]:.1f}')
-                if detalles:
-                    st.markdown(f'<div class="cell-muted" style="margin-top:10px;">{" · ".join(detalles)}</div>',
-                                unsafe_allow_html=True)
-            else:
-                razones = resultado.get("faltantes") or ["Aún no hay datos suficientes para calcularla."]
-                st.markdown(
-                    f'<div style="display:flex;flex-direction:column;gap:8px;background:{BG};border-radius:10px;'
-                    f'padding:12px 14px;margin-bottom:4px;">' + "".join(
-                        f'<div style="display:flex;align-items:center;gap:8px;color:{NEUTRAL};font-style:italic;">'
-                        f'{icon("hourglass_empty", size=18)} {html.escape(razon)}</div>' for razon in razones
-                    ) + '</div>', unsafe_allow_html=True)
+        gran_assay = get_assay(muestra_id, "granulometria")
+        lim_assay = get_assay(muestra_id, "limites")
+        gran_d, lim_d = (gran_assay.get("data") if gran_assay else None), (lim_assay.get("data") if lim_assay else None)
+        res_uscs, res_aashto = clasificar_uscs(gran_d, lim_d), clasificar_aashto(gran_d, lim_d)
 
-        with st.container(border=True):
-            st.markdown('<div class="section-title">Clasificación AASHTO</div>', unsafe_allow_html=True)
-            st.caption("Calculada igual que la USCS de arriba, con los mismos datos de Granulometría y "
-                       "Límites de Atterberg — verifícala contra el Excel antes de usarla en un informe.")
-            resultado_aashto = clasificar_aashto(
-                gran_assay.get("data") if gran_assay else None,
-                lim_assay.get("data") if lim_assay else None,
-            )
-            simbolo_aashto = resultado_aashto.get("simbolo")
-            if simbolo_aashto:
-                nombre_aashto = AASHTO_NOMBRES.get(simbolo_aashto, "")
-                st.markdown(f'''
-                    <div style="display:flex;align-items:center;gap:14px;background:{SECONDARY_CONTAINER};
-                                border-radius:10px;padding:14px 16px;">
-                        <div style="font-size:28px;font-weight:800;color:{PRIMARY};">{simbolo_aashto}</div>
-                        <div style="font-weight:600;color:{PRIMARY};">{html.escape(nombre_aashto)}</div>
-                    </div>
-                ''', unsafe_allow_html=True)
-                detalles_aashto = []
-                if resultado_aashto.get("pasa200") is not None:
-                    detalles_aashto.append(f'Pasa No. 200 {resultado_aashto["pasa200"]:.0f}% · '
-                                            f'Pasa No. 40 {resultado_aashto["pasa40"]:.0f}% · '
-                                            f'Pasa No. 10 {resultado_aashto["pasa10"]:.0f}%')
-                if resultado_aashto.get("ll") is not None:
-                    detalles_aashto.append(f'LL {resultado_aashto["ll"]} · LP {resultado_aashto["lp"]}')
-                if detalles_aashto:
-                    st.markdown(f'<div class="cell-muted" style="margin-top:10px;">{" · ".join(detalles_aashto)}</div>',
-                                unsafe_allow_html=True)
-            else:
-                razones_aashto = resultado_aashto.get("faltantes") or ["Aún no hay datos suficientes para calcularla."]
+        def _casilla_clasificacion(titulo, simbolo, nombre, detalles, faltantes):
+            """Una clasificación en pequeño: símbolo y nombre en una línea, y los datos de donde sale debajo."""
+            if simbolo:
                 st.markdown(
-                    f'<div style="display:flex;flex-direction:column;gap:8px;background:{BG};border-radius:10px;'
-                    f'padding:12px 14px;margin-bottom:4px;">' + "".join(
-                        f'<div style="display:flex;align-items:center;gap:8px;color:{NEUTRAL};font-style:italic;">'
-                        f'{icon("hourglass_empty", size=18)} {html.escape(razon)}</div>' for razon in razones_aashto
-                    ) + '</div>', unsafe_allow_html=True)
+                    f'<div class="cell-muted" style="font-weight:700;letter-spacing:0.04em;font-size:11px;">{titulo}</div>'
+                    f'<div style="display:flex;align-items:center;gap:10px;background:{SECONDARY_CONTAINER};border-radius:10px;padding:8px 12px;margin:3px 0 4px;">'
+                    f'<span style="font-size:22px;font-weight:800;color:{PRIMARY};">{simbolo}</span>'
+                    f'<span style="font-weight:600;color:{PRIMARY};font-size:14px;line-height:1.25;">{html.escape(nombre)}</span></div>'
+                    f'<div class="cell-muted" style="font-size:11.5px;">{" · ".join(detalles)}</div>', unsafe_allow_html=True)
+            else:
+                razon = (faltantes or ["Aún no hay datos suficientes para calcularla."])[0]
+                st.markdown(
+                    f'<div class="cell-muted" style="font-weight:700;letter-spacing:0.04em;font-size:11px;">{titulo}</div>'
+                    f'<div style="display:flex;align-items:center;gap:8px;background:{BG};border-radius:10px;padding:8px 12px;margin:3px 0 4px;'
+                    f'color:{NEUTRAL};font-style:italic;font-size:13px;">{icon("hourglass_empty", size=16)} {html.escape(razon)}</div>', unsafe_allow_html=True)
+
+        det_uscs = []
+        if res_uscs.get("pct_grava") is not None:
+            det_uscs.append(f'Grava {res_uscs["pct_grava"]:.0f}% · Arena {res_uscs["pct_arena"]:.0f}% · Finos {res_uscs["pct_finos"]:.0f}%')
+        if res_uscs.get("ll") is not None:
+            det_uscs.append(f'LL {res_uscs["ll"]} · LP {res_uscs["lp"]} · IP {res_uscs["ip"]}')
+        if res_uscs.get("cu") is not None and res_uscs.get("cc") is not None:
+            det_uscs.append(f'Cu {res_uscs["cu"]:.1f} · Cc {res_uscs["cc"]:.1f}')
+        det_aashto = []
+        if res_aashto.get("pasa200") is not None:
+            det_aashto.append(f'Pasa 200 {res_aashto["pasa200"]:.0f}% · Pasa 40 {res_aashto["pasa40"]:.0f}% · Pasa 10 {res_aashto["pasa10"]:.0f}%')
+        if res_aashto.get("ll") is not None:
+            det_aashto.append(f'LL {res_aashto["ll"]} · LP {res_aashto["lp"]}')
+        with st.container(border=True):
+            cu, ca = st.columns(2)
+            with cu:
+                _casilla_clasificacion("CLASIFICACIÓN USCS", res_uscs.get("simbolo"), USCS_NOMBRES.get(res_uscs.get("simbolo"), ""), det_uscs,
+                                       res_uscs.get("faltantes"))
+            with ca:
+                _casilla_clasificacion("CLASIFICACIÓN AASHTO", res_aashto.get("simbolo"), AASHTO_NOMBRES.get(res_aashto.get("simbolo"), ""), det_aashto,
+                                       res_aashto.get("faltantes"))
+            st.caption("Calculadas en la app con los datos digitados de Granulometría y Límites — verifícalas contra el Excel antes de usarlas en un informe.")
 
     # Desplegable (cerrado salvo que ya haya una observación escrita): el cuadro ocupaba mucho espacio de la pantalla de la muestra.
     with st.expander("Observaciones", icon=":material/notes:", expanded=bool((muestra.get("observaciones") or "").strip())):
@@ -14931,6 +14913,9 @@ else:
             _set_remember_user_cookie(codigo_a_recordar)
         else:
             _clear_remember_user_cookie()
+    if "_pending_modo_cookie" in st.session_state:
+        cookie_manager.set("gdl_modo", st.session_state.pop("_pending_modo_cookie"), key="set_gdl_modo",
+                           expires_at=datetime.now() + timedelta(days=SESSION_COOKIE_MAX_AGE_DAYS))
     if st.session_state.pop("_pending_history_push", False):
         _push_history_entry()
     _t_inicio = time.perf_counter()
