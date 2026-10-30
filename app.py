@@ -239,6 +239,12 @@ st.markdown(f"""
         background: rgba(255,255,255,0.10) !important; border: none !important; color: #FFFFFF !important;
     }}
     .st-key-bell-quiet button:hover, .st-key-logout-btn button:hover {{ background: rgba(255,255,255,0.20) !important; }}
+    .st-key-avatar-btn {{ margin-left: auto; }}
+    .st-key-avatar-btn button {{
+        width: 36px; min-width: 36px; height: 36px; min-height: 36px; padding: 0 !important; border-radius: 999px !important;
+        background: {ACCENT_BRIGHT} !important; color: {PRIMARY_CONTAINER} !important; border: none !important;
+        font-weight: 800; font-size: 13px;
+    }}
 
     /* ---- BOTTOM NAV (celular y tablet, ambas orientaciones) ----
        900px solo cubría tablet en vertical; en horizontal (~1024-1194px, iPad/Android típico)
@@ -3755,6 +3761,36 @@ def _notificacion_visual(n):
 _dialog = getattr(st, "dialog", None) or getattr(st, "experimental_dialog")
 
 
+MODOS_JEFE = ("Revisión", "Laboratorista")
+
+
+def modo_jefe():
+    """Modo de trabajo del Jefe de Laboratorio: «Revisión» (por defecto: solo lee y confirma/devuelve, las casillas de digitar quedan bloqueadas) o
+    «Laboratorista» (digita y envía ensayos como cualquier laboratorista). Se cambia desde su perfil (avatar de la barra superior)."""
+    modo = st.session_state.get("modo_jefe")
+    return modo if modo in MODOS_JEFE else "Revisión"
+
+
+def jefe_en_modo_laboratorista():
+    return st.session_state.get("role") == "jefe" and modo_jefe() == "Laboratorista"
+
+
+@_dialog("Mi perfil", width="small")
+def dialogo_perfil():
+    perfil = st.session_state.profile or {}
+    st.markdown(f'<div style="font-weight:700;font-size:16px;">{html.escape(perfil.get("full_name") or "—")}</div>'
+                f'<div class="cell-muted">Jefe de Laboratorio</div>', unsafe_allow_html=True)
+    st.markdown('<div class="cell-muted" style="font-weight:700;margin-top:14px;">Modo de trabajo</div>', unsafe_allow_html=True)
+    actual = modo_jefe()
+    elegido = st.segmented_control("Modo de trabajo", list(MODOS_JEFE), default=actual, key="modo_jefe_sel", label_visibility="collapsed")
+    if elegido and elegido != actual:
+        st.session_state.modo_jefe = elegido
+        st.rerun()
+    st.caption("**Revisión:** ves los ensayos y los resultados, y confirmas o devuelves; las casillas de digitar quedan bloqueadas."
+               if actual == "Revisión" else
+               "**Laboratorista:** puedes digitar, guardar y enviar ensayos como un laboratorista (lo que hagas queda a tu nombre en el historial).")
+
+
 @_dialog("Notificaciones", width="small")
 def dialogo_notificaciones(mis_notifs, no_leidas):
     if not mis_notifs:
@@ -3817,7 +3853,12 @@ def render_topbar():
                     dialogo_notificaciones(mis_notifs, no_leidas)
         with c_avatar:
             iniciales = ROLE_INICIALES.get(st.session_state.role, "LB")
-            st.markdown(f'<div class="topbar-avatar">{iniciales}</div>', unsafe_allow_html=True)
+            if st.session_state.role == "jefe":
+                with st.container(key="avatar-btn"):
+                    if st.button(iniciales, key="avatar_perfil", help=f"Mi perfil · modo {modo_jefe()}"):
+                        dialogo_perfil()
+            else:
+                st.markdown(f'<div class="topbar-avatar">{iniciales}</div>', unsafe_allow_html=True)
         with c_logout, st.container(key="logout-btn"):
             if st.button("", key="logout_top", help="Cerrar sesión", use_container_width=True, icon=":material/logout:"):
                 db.sign_out()
@@ -7347,7 +7388,7 @@ def render_muestra_detail():
     _hay_entregado = any(a.get("muestra_id") == muestra_id and a.get("status") == "finalizado" for a in st.session_state.get("assays", []))
     _hay_en_revision_dt = any(a.get("muestra_id") == muestra_id and a.get("status") == "finalizado" and a.get("etapa_revision") == "pendiente_ing"
                               for a in st.session_state.get("assays", []))
-    puede_editar_muestra = (st.session_state.role == "laboratorista" or st.session_state.role == "jefe"
+    puede_editar_muestra = (st.session_state.role == "laboratorista" or jefe_en_modo_laboratorista()
                             or (st.session_state.role == "ingeniero" and _hay_en_revision_dt))
 
     estado = compute_muestra_estado(muestra)
@@ -13805,14 +13846,16 @@ def render_assay_form(prueba=False):
     #    si ve algo raro lo corrige él mismo; queda en el historial.
     #  - El Director Técnico solo consulta (y confirma o devuelve desde la muestra).
     entregado = assay["status"] == "finalizado" and not prueba
-    jefe_edita = es_jefe and entregado and assay.get("etapa_revision") != "aprobado"
+    #    (Con el modo «Revisión» del Jefe las casillas quedan bloqueadas: si ve algo mal, lo devuelve; para corregirlo él mismo cambia a modo
+    #    «Laboratorista» en su perfil y habilita la edición.)
+    jefe_edita = False
     #  - El Director Técnico, cuando el Jefe ya confirmó y le envió el ensayo (etapa pendiente_ing): si ve algo raro lo corrige él mismo antes de
     #    dar la aprobación final; queda en el historial.
     ing_edita = st.session_state.role == "ingeniero" and entregado and assay.get("etapa_revision") == "pendiente_ing"
     supervisor_edita = jefe_edita or ing_edita
     #  - El Jefe de Laboratorio TAMBIÉN puede hacer los ensayos que todavía no se entregan (iniciarlos, digitarlos, guardarlos y enviarlos), igual
     #    que el laboratorista, hasta la aprobación final del Director Técnico. Todo queda a su nombre en el historial.
-    jefe_trabaja = es_jefe and not prueba and not entregado and assay.get("etapa_revision") != "aprobado"
+    jefe_trabaja = es_jefe and modo_jefe() == "Laboratorista" and not prueba and not entregado and assay.get("etapa_revision") != "aprobado"
     supervisor_registra = supervisor_edita or jefe_trabaja   # quien deja el rastro de "último cambio"
     lab_entregado = st.session_state.role == "laboratorista" and entregado
     read_only = ((es_supervisor and not supervisor_edita and not jefe_trabaja) or lab_entregado
@@ -13971,6 +14014,8 @@ def render_assay_form(prueba=False):
         if lab_entregado:
             st.info("Ya entregaste este ensayo: queda en revisión del Jefe de Laboratorio y no lo puedes editar. Si hay que corregir algo, "
                     "el Jefe te lo devuelve.")
+        elif es_jefe and not prueba and modo_jefe() == "Revisión":
+            st.info("Estás en modo Revisión: las casillas están bloqueadas. Para digitar, cambia a modo Laboratorista en tu perfil (el círculo «JL» de arriba).")
         elif es_supervisor:
             st.info("Estás viendo el ensayo en modo consulta — solo el laboratorista puede digitar estos datos.")
         else:
