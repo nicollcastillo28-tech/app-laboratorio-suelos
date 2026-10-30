@@ -7562,6 +7562,29 @@ def render_muestra_detail():
                             st.session_state.selected_assay_type = tipo_interno
                             navigate("assay-form")
 
+                    # Primero se leen los resultados y el historial (desplegables) y los botones de Confirmar/Devolver quedan ABAJO de todo:
+                    # el flujo de quien revisa es abrir, leer, bajar y decidir, sin volver a subir.
+                    if existing:
+                        motivo = existing.get("motivo_rechazo")
+                        if motivo:
+                            quien = "el Jefe de Laboratorio" if existing.get("rechazado_por") == "jefe" else "el Director Técnico"
+                            st.warning(f"Devuelto por {quien}: {motivo}")
+                        # El historial se muestra siempre que exista (no solo cuando el ensayo está
+                        # "Finalizado") — un desconfirmar/devolver reabre el ensayo pero no borra su
+                        # registro de auditoría, y debe seguir siendo visible.
+                        ens_historial = existing.get("historial", [])
+                        if ens_historial:
+                            with st.expander(f"Historial de Cambios ({len(ens_historial)})", icon=":material/history:"):
+                                st.markdown(historial_timeline_html(ens_historial), unsafe_allow_html=True)
+                        # Quien revisa ve los resultados aquí mismo, sin entrar al ensayo: aparece cuando el laboratorista ya lo envió.
+                        if mostrar_aprobacion and st.session_state.role in ("jefe", "ingeniero"):
+                            with st.expander("Resultados", icon=":material/calculate:"):
+                                try:
+                                    render_resultados_ensayo(tipo_interno, existing.get("data") or {}, muestra)
+                                except Exception as _e:
+                                    if "RerunData" in type(_e).__name__ or "Stop" in type(_e).__name__:
+                                        raise
+                                    st.caption("No se pudieron mostrar los resultados aquí; ábrelo con «Revisar».")
                     # Fila de acciones (Confirmar/Devolver/Desconfirmar) en su propia línea a todo
                     # el ancho de la tarjeta, separada del título/badge/Abrir — antes compartían la
                     # misma fila angosta y "Confirmar"+"Devolver" quedaban tan apretados que el
@@ -7669,28 +7692,6 @@ def render_muestra_detail():
                                             st.error("Escribe el motivo antes de devolver.")
                         else:
                             st.caption("Pendiente del Jefe")
-
-                if existing:
-                    motivo = existing.get("motivo_rechazo")
-                    if motivo:
-                        quien = "el Jefe de Laboratorio" if existing.get("rechazado_por") == "jefe" else "el Director Técnico"
-                        st.warning(f"Devuelto por {quien}: {motivo}")
-                    # El historial se muestra siempre que exista (no solo cuando el ensayo está
-                    # "Finalizado") — un desconfirmar/devolver reabre el ensayo pero no borra su
-                    # registro de auditoría, y debe seguir siendo visible.
-                    ens_historial = existing.get("historial", [])
-                    if ens_historial:
-                        with st.expander(f"Historial de Cambios ({len(ens_historial)})", icon=":material/history:"):
-                            st.markdown(historial_timeline_html(ens_historial), unsafe_allow_html=True)
-                    # Quien revisa ve los resultados aquí mismo, sin entrar al ensayo: aparece cuando el laboratorista ya lo envió.
-                    if mostrar_aprobacion and st.session_state.role in ("jefe", "ingeniero"):
-                        with st.expander("Resultados", icon=":material/calculate:"):
-                            try:
-                                render_resultados_ensayo(tipo_interno, existing.get("data") or {}, muestra)
-                            except Exception as _e:
-                                if "RerunData" in type(_e).__name__ or "Stop" in type(_e).__name__:
-                                    raise
-                                st.caption("No se pudieron mostrar los resultados aquí; ábrelo con «Revisar».")
 
 
 # ════════════════════════════════════════════════════════════════════
