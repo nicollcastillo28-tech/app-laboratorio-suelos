@@ -198,7 +198,9 @@ def _num(v):
 
 
 def _f(v, d=1):
-    s = f"{v:.{d}f}".rstrip("0").rstrip(".")
+    s = f"{v:.{d}f}"
+    if "." in s:   # solo se quitan ceros de los decimales: sin esto 20 se escribía «2» y 100 «1»
+        s = s.rstrip("0").rstrip(".")
     return s if s not in ("", "-") else "0"
 
 
