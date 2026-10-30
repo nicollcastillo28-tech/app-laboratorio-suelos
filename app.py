@@ -239,7 +239,11 @@ st.markdown(f"""
         background: rgba(255,255,255,0.10) !important; border: none !important; color: #FFFFFF !important;
     }}
     .st-key-bell-quiet button:hover, .st-key-logout-btn button:hover {{ background: rgba(255,255,255,0.20) !important; }}
-    .st-key-modo-jefe button {{ white-space: nowrap; font-weight: 700; font-size: 13px; }}
+    .st-key-modo-jefe button {{
+        white-space: nowrap; font-weight: 700; font-size: 11px; min-height: 28px !important; height: 28px; padding: 0 8px !important; gap: 4px;
+    }}
+    .st-key-modo-jefe button p {{ font-size: 11px !important; line-height: 1 !important; }}
+    .st-key-modo-jefe button span[data-testid="stIconMaterial"] {{ font-size: 16px !important; }}
     .st-key-modo-jefe button[kind="secondary"] {{
         background: rgba(255,255,255,0.10) !important; border: 1px solid rgba(255,255,255,0.35) !important; color: #FFFFFF !important;
     }}
@@ -3814,7 +3818,7 @@ def render_topbar():
     with st.container(key="topbar"):
         es_jefe_barra = st.session_state.role == "jefe"
         if es_jefe_barra:
-            c_brand, c_nav, c_modo, c_bell, c_avatar, c_logout = st.columns([2.2, 3.6, 1.7, 0.7, 0.7, 0.7])
+            c_brand, c_nav, c_modo, c_bell, c_avatar, c_logout = st.columns([2.2, 4.0, 1.3, 0.7, 0.7, 0.7])
         else:
             c_brand, c_nav, c_bell, c_avatar, c_logout = st.columns([2.2, 4.2, 0.7, 0.7, 0.7])
         with c_brand:
