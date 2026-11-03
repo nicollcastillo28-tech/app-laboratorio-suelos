@@ -28,6 +28,7 @@ from openpyxl import load_workbook
 import alertas_resultados as alertas_res
 import db
 import pruebas_datos
+from firmas_excel import agregar_firmas
 from exportacion_formatos import LibroFormatoOriginal, escribir_entradas, FormatoIncompatibleError
 from presentacion_excel import ajustar_presentacion, reparar_formulas_clasificacion
 
@@ -7795,7 +7796,9 @@ def _apique_y_muestra(perf_codigo, numero):
     muestra '3' del apique 'AP-S-01'. Si el número no es de esa forma devuelve (None, numero)."""
     numero = str(numero).strip()
     m = re.match(r"^(.+)-(\d+[A-Za-z]?)$", numero)
-    if m and perf_codigo and m.group(1).upper().startswith(str(perf_codigo).upper()) and m.group(1).upper() != str(perf_codigo).upper():
+    if m and perf_codigo and m.group(1).upper() != str(perf_codigo).upper() and (
+            m.group(1).upper().startswith(str(perf_codigo).upper()) or re.match(r"^[A-Za-z]+(-[A-Za-z0-9]+)+$", m.group(1))):
+        # (también cuando la perforación se renombró —por ejemplo «T2»— y sus muestras siguen llamándose AP-S-01-3)
         return m.group(1), m.group(2)
     return None, numero
 
@@ -7845,13 +7848,35 @@ def _conservar_hojas_del_informe(contenido, conservar):
     return _quitar_hojas_ajenas(contenido, quitar)
 
 
+def _con_firmas(generador):
+    """Solo agrega las firmas al Excel generado (para los generadores que no pasan por _exportacion_controlada)."""
+    from functools import wraps
+    @wraps(generador)
+    def generar(*args, **kwargs):
+        resultado = generador(*args, **kwargs)
+        if isinstance(resultado, (bytes, bytearray)) and bytes(resultado[:2]) == b"PK":
+            try:
+                resultado = agregar_firmas(bytes(resultado))
+            except Exception:
+                pass
+        return resultado
+    return generar
+
+
 def _exportacion_controlada(generador):
     """Un caso de formato incompatible avisa sin mostrar un error técnico en la interfaz."""
     from functools import wraps
     @wraps(generador)
     def generar(*args, **kwargs):
         try:
-            return generador(*args, **kwargs)
+            resultado = generador(*args, **kwargs)
+            # Los Excel de resultados salen con las firmas del Director Técnico y del Jefe de Laboratorio (ver firmas_excel); una firma nunca impide la descarga.
+            if isinstance(resultado, (bytes, bytearray)) and bytes(resultado[:2]) == b"PK":
+                try:
+                    resultado = agregar_firmas(bytes(resultado))
+                except Exception:
+                    pass
+            return resultado
         except FormatoIncompatibleError:
             from streamlit.runtime.scriptrunner import get_script_run_ctx
             if get_script_run_ctx(suppress_warning=True) is None:
@@ -8930,11 +8955,11 @@ def _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observacio
     ws["L9"] = project.get("anio", "") if project else ""  # Código interno — año
 
     perf = get_perforacion(codigo, perf_codigo)
-    ws["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""  # Tipo de perforación (lista desplegable)
-    ws["F12"] = perf_para_encabezado(perf_codigo, muestra, perf["consecutivo"] if perf else "")  # Número de perforación
-    ws["H12"] = muestra_para_encabezado(perf_codigo, muestra)  # Muestra No.
-    prof_de, prof_hasta = to_float(muestra.get("profundidad_de")), to_float(muestra.get("profundidad_hasta"))
-    ws["K12"] = f"{prof_de}-{prof_hasta}" if prof_de is not None and prof_hasta is not None else ""
+    ws["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""  # Tipo de perforación (lista desplegable)
+    ws["D12"] = perf_para_encabezado(perf_codigo, muestra, perf["consecutivo"] if perf else "")  # Número de perforación
+    ws["F12"] = muestra_para_encabezado(perf_codigo, muestra)  # Muestra No. (F12:G12)
+    ws["J12"] = to_float(muestra.get("profundidad_de"))   # Profundidad: de … (K12 trae el guion) … hasta
+    ws["L12"] = to_float(muestra.get("profundidad_hasta"))
     ws["C13"] = descripcion_para_informe(muestra)
 
 
@@ -8951,13 +8976,15 @@ def _celda_libre(ws, ref):
     return True
 
 
+@_con_firmas
 def generar_excel_cbr(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Diligencia el formato 013 original. Las entradas que colisionan con celdas combinadas se dejan pendientes; no se divide ni se rediseña el formato."""
     wb = _cargar_plantilla_informe(TEMPLATE_CBR)
+    hoja_cbr = "HOJA" if "HOJA" in wb.sheetnames else "FORMATO"
     for nombre in list(wb.sheetnames):
-        if nombre not in ("FORMATO", "CONTROL DE CAMBIOS"):
+        if nombre not in (hoja_cbr, "CONTROL DE CAMBIOS"):
             del wb[nombre]
-    ws = wb["FORMATO"]
+    ws = wb[hoja_cbr]
     _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo, datas=[data])
 
     ws["D20"] = data.get("cbr_molde", "")
@@ -9018,7 +9045,14 @@ def generar_excel_cbr(codigo, perf_codigo, muestra, project, data, observaciones
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    return bio.getvalue()
+    salida = bio.getvalue()
+    try:   # la descripción visual viene subrayada en el formato; en el informe va sin subrayar
+        from exportacion_formatos import partes_hojas
+        from firmas_excel import quitar_subrayado
+        salida = quitar_subrayado(salida, partes_hojas(salida)[hoja_cbr], "C13")
+    except Exception:
+        pass
+    return salida
 
 
 def _generar_excel_gravedad(template, hoja, celdas, codigo, perf_codigo, muestra, project, data, observaciones_ensayo="",
@@ -9140,6 +9174,7 @@ def generar_excel_materia_organica(codigo, perf_codigo, muestra, project, data, 
 
 
 @_exportacion_controlada
+@_con_firmas
 def generar_excel_proctor(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Diligencia Proctor y CBR compactado en el mismo libro 002. Se conservan todas las hojas, objetos y fórmulas originales; el volumen lo calcula la fórmula del formato."""
     wb = _cargar_plantilla_informe(TEMPLATE_PROCTOR, keep_vba=True)
@@ -9229,7 +9264,7 @@ EXCEL_LOTE_CONFIG = {
     "humedad": {"hoja": "Hoja1", "generar": generar_excel_humedad, "ext": "xlsx",
                 "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 "prefijo": "Humedad", "etiqueta": "Humedad", "bitacora": "Humedad"},
-    "cbr": {"hoja": "FORMATO", "generar": generar_excel_cbr, "ext": "xlsx",
+    "cbr": {"hoja": "HOJA", "generar": generar_excel_cbr, "ext": "xlsx",
             "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "prefijo": "CBR", "etiqueta": "CBR", "bitacora": "CBR"},
     "limite-contraccion": {"hoja": "FORMATO", "generar": generar_excel_limite_contraccion, "ext": "xlsx",
@@ -10474,8 +10509,9 @@ def render_cbr_form(data, assay_id, muestra_id):
 
     with st.container(border=True):
         st.markdown(card_header_html("straighten", "Datos de Expansión"), unsafe_allow_html=True)
-        _campo("cbr_exp_lectura_inicial", "Lectura inicial (in)")
-        _campo("cbr_exp_lectura_final", "Lectura final (in)")
+        st.caption("Lecturas del dial de expansión durante la inmersión: la inicial al sumergir la muestra y la final después de la inmersión.")
+        _campo("cbr_exp_lectura_inicial", "Lectura inicial (in) — al iniciar la inmersión")
+        _campo("cbr_exp_lectura_final", "Lectura final (in) — después de la inmersión")
 
     with st.container(border=True):
         st.markdown(card_header_html("tune", "Condiciones del Ensayo"), unsafe_allow_html=True)

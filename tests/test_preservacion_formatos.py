@@ -63,7 +63,7 @@ class FormatosOficialesTest(unittest.TestCase):
     def test_no_descombinar_casillas_cbr(self):
         original = (ROOT / 'templates/GDA-FLC-013_cbr.xlsx').read_bytes()
         with self.assertRaises(FormatoIncompatibleError):
-            escribir_entradas(original, partes_hojas(original)['FORMATO'], {'I39': 4540})
+            escribir_entradas(original, partes_hojas(original)['HOJA'], {'E37': 0.1})   # D37:E37 es una sola casilla combinada
 
     def test_no_admitir_formulas_como_datos(self):
         original = (ROOT / 'templates/GDA-FLC-014_humedad_natural.xlsx').read_bytes()
