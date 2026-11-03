@@ -5997,14 +5997,9 @@ def render_project_detail():
         muestras_con_ensayo = sum(1 for m in muestras if any(v for e, v in m["ensayos"].items() if v and e in BITACORA_ENSAYOS))
 
         with st.container(border=True):
-            _codigo_largo = len(str(perf["codigo"])) > 4   # un nombre largo no cabe en la cajita cuadrada: va en su propia línea, a lo ancho
-            if _codigo_largo:
-                st.markdown(f'<div class="perf-code-box perf-code-largo">{html.escape(perf["codigo"])}</div>', unsafe_allow_html=True)
-                top = [None] + list(st.columns([3, 1.3]))
-            else:
-                top = st.columns([1, 3, 1.3])
-                with top[0]:
-                    st.markdown(f'<div class="perf-code-box">{html.escape(perf["codigo"])}</div>', unsafe_allow_html=True)
+            # El nombre de la perforación va siempre en una franja a lo ancho, sea corto o largo (así todas las tarjetas se ven iguales).
+            st.markdown(f'<div class="perf-code-box perf-code-largo">{html.escape(perf["codigo"])}</div>', unsafe_allow_html=True)
+            top = [None] + list(st.columns([3, 1.3]))
             with top[1]:
                 st.markdown(f'<span style="font-weight:700;">{perf_pct}%</span>&nbsp;&nbsp;'
                             f'<span class="badge {estado_badge}">{estado_label}</span>', unsafe_allow_html=True)
@@ -6026,28 +6021,31 @@ def render_project_detail():
             def _si_no(v):
                 return f'<span style="color:{SUCCESS if v else NEUTRAL};">{"SÍ" if v else "NO"}</span>'
 
-            def _celda_perf(ico, lbl, val, pista=""):
-                pista_html = f'<div class="cell-muted" style="font-size:11px;">{pista}</div>' if pista else ""
+            def _celda_perf(ico, lbl, val, pista="", tamano=15):
+                pista_html = f'<div class="cell-muted" style="font-size:10px;">{pista}</div>' if pista else ""
                 return (f'<div style="flex:1 1 90px;min-width:90px;">'
-                        f'<div class="cell-muted" style="text-transform:uppercase;letter-spacing:0.04em;font-size:11px;">'
-                        f'{icon(ico, size=13)} {lbl}</div>'
-                        f'<div style="font-weight:700;font-size:15px;">{val}</div>{pista_html}</div>')
+                        f'<div class="cell-muted" style="text-transform:uppercase;letter-spacing:0.04em;font-size:10.5px;">'
+                        f'{icon(ico, size=12)} {lbl}</div>'
+                        f'<div style="font-weight:700;font-size:{tamano}px;">{val}</div>{pista_html}</div>')
 
             fila_estado = "".join([
                 _celda_perf("assignment", "Orden de ensayo", _si_no(hay_orden)),
                 _celda_perf("biotech", "Muestras en laboratorio", _si_no(en_laboratorio)),
             ])
             fila_fechas = "".join([
-                _celda_perf("move_to_inbox", "Recepción", fecha_ingreso_perf_txt(perf, project), "= fecha orden de ensayo"),
-                _celda_perf("science", "Ejecución", _fecha_txt(fecha_ejecucion_perf(codigo, perf["codigo"], muestras)), "= inicio de ensayos"),
-                _celda_perf("outbox", "Emisión", _fecha_txt(perf.get("fecha_emision"))),
+                _celda_perf("move_to_inbox", "Recepción", fecha_ingreso_perf_txt(perf, project), "= fecha orden de ensayo", tamano=13),
+                _celda_perf("science", "Ejecución", _fecha_txt(fecha_ejecucion_perf(codigo, perf["codigo"], muestras)), "= inicio de ensayos", tamano=13),
+                _celda_perf("outbox", "Emisión", _fecha_txt(perf.get("fecha_emision")), tamano=13),
             ])
+            # Al laboratorista no le sirven «Orden de ensayo / Muestras en laboratorio» (son del seguimiento del Jefe): su tarjeta solo lleva las fechas.
+            bloque_estado = "" if st.session_state.role == "laboratorista" else (
+                f'<div style="display:flex;flex-wrap:wrap;gap:8px 16px;margin-bottom:10px;padding-bottom:10px;'
+                f'border-bottom:1px solid rgba(74,120,98,0.16);">{fila_estado}</div>')
             st.markdown(
-                f'<div style="margin:8px 0 6px;padding:10px 12px;border-radius:10px;background:rgba(74,120,98,0.06);'
+                f'<div style="margin:8px 0 6px;padding:8px 12px;border-radius:10px;background:rgba(74,120,98,0.06);'
                 f'border:1px solid rgba(74,120,98,0.16);">'
-                f'<div style="display:flex;flex-wrap:wrap;gap:8px 16px;">{fila_estado}</div>'
-                f'<div style="display:flex;flex-wrap:wrap;gap:8px 16px;margin-top:10px;padding-top:10px;'
-                f'border-top:1px solid rgba(74,120,98,0.16);">{fila_fechas}</div></div>',
+                f'{bloque_estado}'
+                f'<div style="display:flex;flex-wrap:wrap;gap:8px 16px;">{fila_fechas}</div></div>',
                 unsafe_allow_html=True)
             # Avance por ENSAYO (no por muestra completa) — antes solo se veía entrando a la
             # perforación ("Avance del sondeo"); se trae acá para no tener que entrar solo para
