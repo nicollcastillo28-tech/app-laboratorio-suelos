@@ -6526,7 +6526,7 @@ def _bitacora_draft_df(key, muestras):
     return st.session_state.bitacora_draft[key]
 
 
-def _sync_muestras_perforacion(perforacion_id, codigo, perf_codigo, nuevas_rows):
+def _sync_muestras_perforacion(perforacion_id, codigo, perf_codigo, nuevas_rows, quitar_con_datos=False):
     """Reconcilia la tabla editada de muestras de una perforación existente contra lo que ya
     hay en Supabase: filas con id_unico ya conocido se actualizan, las nuevas se crean, y las
     que ya no aparecen (se borraron en el editor) se archivan."""
@@ -6546,10 +6546,17 @@ def _sync_muestras_perforacion(perforacion_id, codigo, perf_codigo, nuevas_rows)
             vistos.add(existente["id_unico"])
             if existente["id_unico"] != id_unico:
                 campos["id_unico"] = id_unico
-            # Los ensayos que ya se empezaron NUNCA se desmarcan al guardar la bitácora (una tabla vieja o una orden que ya no los trae no pueden
-            # esconder datos digitados).
+            # Los ensayos que ya se empezaron NO se desmarcan al guardar la bitácora salvo que el Jefe lo pida de forma explícita (una tabla vieja o
+            # una orden que ya no los trae no pueden esconder datos digitados por descuido). Si lo pide, el ensayo se ARCHIVA: no se borra de la base.
             ensayos = dict(campos.get("ensayos") or {})
             for etiqueta in _etiquetas_ensayos_con_datos(existente):
+                tipo = SUPPORTED_ASSAY_MAP.get(etiqueta)
+                etiquetas_tipo = [e for e, t in SUPPORTED_ASSAY_MAP.items() if t == tipo and e in BITACORA_ENSAYOS]
+                if quitar_con_datos and not any(ensayos.get(e) for e in etiquetas_tipo):
+                    db.archive_assay_tipo(existente["id"], tipo)
+                    if tipo == "granulometria":
+                        db.archive_assay_tipo(existente["id"], "pasa200")
+                    continue
                 ensayos[etiqueta] = True
             campos["ensayos"] = ensayos
             db.update_muestra(existente["id"], **campos)
@@ -6557,14 +6564,14 @@ def _sync_muestras_perforacion(perforacion_id, codigo, perf_codigo, nuevas_rows)
             db.upsert_muestra(perforacion_id, id_unico, **campos)
     for id_unico, m in actuales_by_id_unico.items():
         if id_unico not in vistos:
-            if _etiquetas_ensayos_con_datos(m):   # una muestra con ensayos ya empezados no se archiva por quedar fuera de la tabla
+            if _etiquetas_ensayos_con_datos(m) and not quitar_con_datos:   # una muestra con ensayos ya empezados no se archiva por quedar fuera de la tabla
                 conservadas.append(str(m["numero"]))
                 continue
             db.archive_muestra(m["id"])
     if conservadas:
         st.session_state.setdefault(f"_resumen_orden_{codigo}", []).append((
             "aviso", f"No se quitó la(s) muestra(s) {', '.join(conservadas)} de {perf_codigo} porque ya tienen ensayos con datos. "
-                     "Si de verdad hay que quitarlas, usa «Eliminar» en la perforación."))
+                     "Si de verdad hay que quitarlas, marca «Quitar también lo que ya tiene datos» antes de guardar la bitácora."))
 
 
 def _render_actualizar_perforacion(codigo, project, perf, perforaciones):
@@ -6895,6 +6902,41 @@ def render_bitacora():
 
 
 
+    def _quitados_con_datos():
+        """Muestras y ensayos que la tabla editada quita y que ya tienen datos digitados (para avisar y pedir confirmación)."""
+        salida = []
+        for perf in perforaciones:
+            df = edited_frames.get(f"{codigo}::{perf['codigo']}")
+            if df is None:
+                continue
+            filas = {}
+            for r in df.to_dict("records"):
+                numero = str(r.get("Número", "")).strip()
+                if numero and numero.lower() not in ("none", "nan"):
+                    filas[numero] = r
+            for m in st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", []):
+                con_datos = _etiquetas_ensayos_con_datos(m)
+                if not con_datos:
+                    continue
+                fila = filas.get(str(m["numero"]).strip())
+                if fila is None:
+                    salida.append(f"{perf['codigo']} · muestra {m['numero']} completa ({', '.join(con_datos)})")
+                    continue
+                for e in con_datos:
+                    tipo = SUPPORTED_ASSAY_MAP.get(e)
+                    if not any(bool(fila.get(l)) for l, t in SUPPORTED_ASSAY_MAP.items() if t == tipo and l in BITACORA_ENSAYOS):
+                        salida.append(f"{perf['codigo']} · muestra {m['numero']} · {e}")
+        return salida
+
+    _con_datos_a_quitar = _quitados_con_datos() if es_jefe else []
+    _permitir_quitar = False
+    if _con_datos_a_quitar:
+        st.warning("La tabla quita ensayos o muestras que YA TIENEN DATOS digitados:\n\n" + "\n".join(f"- {t}" for t in _con_datos_a_quitar[:40])
+                   + (f"\n- … y {len(_con_datos_a_quitar) - 40} más" if len(_con_datos_a_quitar) > 40 else ""))
+        _permitir_quitar = st.checkbox("Quitar también lo que ya tiene datos (no se borran de la base: quedan archivados)",
+                                       key=f"quitar_con_datos_{codigo}",
+                                       help="Sin marcar, al guardar esos ensayos y muestras se conservan con sus datos.")
+
     def _guardar_bitacora():
         for perf in perforaciones:
             key = f"{codigo}::{perf['codigo']}"
@@ -6915,7 +6957,9 @@ def render_bitacora():
                     "ensayos": {e: bool(row.get(e, False)) for e in BITACORA_ENSAYOS},
                     "observaciones": row.get("Observaciones") or "",
                 })
-            _sync_muestras_perforacion(perf["id"], codigo, perf["codigo"], nuevas)
+            _sync_muestras_perforacion(perf["id"], codigo, perf["codigo"], nuevas, quitar_con_datos=_permitir_quitar)
+            if _permitir_quitar:
+                st.session_state["_datos_sucios"] = True   # los ensayos archivados salen de las listas
             # Se descarta el draft cacheado para que, si se vuelve a abrir esta perforación,
             # se reconstruya desde las muestras recién guardadas (evita mostrar/pisar con una
             # tabla vieja lo que ya se guardó).
@@ -9257,34 +9301,30 @@ def _paquete_excel_diferido(codigo, perf_codigo, project, tipo, pares):
 
 
 def render_descarga_excel_perforacion(codigo, perf, project, muestras):
-    """«Descargar Excel» de una perforación: un paquete por tipo de ensayo (todas las muestras en un solo libro, una hoja por muestra). Un tipo solo
-    aparece cuando TODAS las muestras que lo piden ya lo terminaron (ensayo en «finalizado»); si falta alguna, no se ofrece la descarga y se dice
-    cuántas faltan. Las muestras marcadas «no se pudo realizar» cuentan como terminadas pero no llevan hoja."""
+    """«Descargar Excel» de una perforación: un paquete por tipo de ensayo (todas las muestras que ya tienen datos en un solo libro, una hoja por
+    muestra). Se puede descargar aunque falten muestras por terminar: el paquete lleva las que ya tienen datos y se avisa cuántas faltan. Las muestras
+    marcadas «no se pudo realizar» no llevan hoja."""
     perf_codigo = perf["codigo"]
-    listos, pendientes = [], []
+    paquetes = []
     for tipo, cfg in EXCEL_LOTE_CONFIG.items():
         pedidas = [m for m in muestras if m["ensayos"].get(cfg["bitacora"])]
         if not pedidas:
             continue
-        terminadas = [m for m in pedidas if (get_assay(m["id_unico"], tipo) or {}).get("status") == "finalizado"]
-        if len(terminadas) < len(pedidas):
-            pendientes.append((cfg["etiqueta"], len(pedidas) - len(terminadas), len(pedidas)))
-            continue
         pares = _muestras_para_lote(pedidas, tipo)
-        if pares:
-            listos.append((tipo, cfg, pares))
+        if not pares:
+            continue
+        terminadas = sum(1 for m in pedidas if (get_assay(m["id_unico"], tipo) or {}).get("status") == "finalizado")
+        paquetes.append((tipo, cfg, pares, len(pedidas) - terminadas))
     with st.expander("Descargar Excel", icon=":material/download:"):
-        if not listos:
-            st.caption("Todavía no hay ningún tipo de ensayo terminado en todas sus muestras.")
-        for tipo, cfg, pares in listos:
+        if not paquetes:
+            st.caption("Todavía no hay ningún ensayo con datos para descargar.")
+        for tipo, cfg, pares, sin_terminar in paquetes:
+            etiqueta = f"{cfg['etiqueta']} — {len(pares)} muestra(s)" + (f" · {sin_terminar} sin terminar" if sin_terminar else "")
             st.download_button(
-                f"{cfg['etiqueta']} — {len(pares)} muestra(s)", data=_paquete_excel_diferido(codigo, perf_codigo, project, tipo, pares),
+                etiqueta, data=_paquete_excel_diferido(codigo, perf_codigo, project, tipo, pares),
                 on_click=_marcar_emision, args=(codigo, perf_codigo),
                 file_name=f"{cfg['prefijo']}_{codigo}_{perf_codigo}.{cfg['ext']}", mime=cfg["mime"], use_container_width=True,
                 key=f"dlx_{tipo}_{perf_codigo}", icon=":material/download:")
-        if pendientes:
-            st.caption("Aún sin terminar (no se pueden descargar todavía): "
-                       + " · ".join(f"{etq} ({falta} de {total} por terminar)" for etq, falta, total in pendientes))
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -13798,6 +13838,95 @@ def _salir_del_ensayo(prueba):
     navigate("muestra-detail")
 
 
+def _render_trasladar_datos(assay, muestra, assay_id, actor):
+    """«Trasladar estos datos a otro ensayo»: pasa lo digitado a un ensayo del MISMO tipo de otra muestra (Proyecto → Perforación → Muestra → Ensayo), copiando
+    o moviendo. El destino no se pisa a ciegas: si ya tiene datos se avisa, su versión anterior queda en el respaldo y en el historial de versiones, y un destino
+    ya enviado a revisión no se toca."""
+    tipo = assay["tipo"]
+    datos = assay.get("data") or {}
+    with st.expander("Trasladar estos datos a otro ensayo", icon=":material/move_up:"):
+        if not tiene_valores_digitados(datos):
+            st.caption("Este ensayo todavía no tiene datos que trasladar.")
+            return
+        st.caption("Pasa lo digitado aquí a un ensayo del mismo tipo de otra muestra (por ejemplo, si se digitó en la muestra equivocada). "
+                   "Elige el destino: Proyecto → Perforación → Muestra → Ensayo.")
+        proyectos = st.session_state.projects
+        etiquetas_proy = {f"{p_['codigo_interno']} · {p_.get('nombre', '')}": p_["codigo_interno"] for p_ in proyectos}
+        if not etiquetas_proy:
+            return
+        actual_proy = st.session_state.get("selected_codigo")
+        lista_proy = list(etiquetas_proy)
+        idx_proy = next((i for i, et in enumerate(lista_proy) if etiquetas_proy[et] == actual_proy), 0)
+        cod_dest = etiquetas_proy[st.selectbox("Proyecto", lista_proy, index=idx_proy, key=f"tr_proy_{assay_id}")]
+        perfs = [pf["codigo"] for pf in st.session_state.perforaciones.get(cod_dest, [])]
+        if not perfs:
+            st.caption("Ese proyecto no tiene perforaciones.")
+            return
+        idx_perf = perfs.index(st.session_state.get("selected_perforacion")) if (cod_dest == actual_proy and st.session_state.get("selected_perforacion") in perfs) else 0
+        perf_dest = st.selectbox("Perforación", perfs, index=idx_perf, key=f"tr_perf_{assay_id}_{cod_dest}")
+        muestras_dest = sorted(st.session_state.muestras.get(f"{cod_dest}::{perf_dest}", []), key=lambda m_: clave_numero_muestra(m_["numero"]))
+        if not muestras_dest:
+            st.caption("Esa perforación no tiene muestras.")
+            return
+        numeros = [str(m_["numero"]) for m_ in muestras_dest]
+        num_sel = st.selectbox("Muestra", numeros, key=f"tr_muestra_{assay_id}_{cod_dest}_{perf_dest}")
+        m_dest = muestras_dest[numeros.index(num_sel)]
+        etiquetas = [e for e in unificar_ensayos([e for e, v in m_dest["ensayos"].items() if v and e in BITACORA_ENSAYOS])
+                     if SUPPORTED_ASSAY_MAP.get(e) == tipo]
+        if not etiquetas:
+            st.warning(f"La muestra {num_sel} no tiene solicitado este ensayo ({ASSAY_LABELS.get(tipo, tipo)}). Agrégalo antes en la orden.")
+            return
+        ens_sel = st.selectbox("Ensayo", etiquetas, key=f"tr_ensayo_{assay_id}_{m_dest['id_unico']}")
+        if m_dest["id_unico"] == muestra["id_unico"]:
+            st.info("Ese es este mismo ensayo: elige otra muestra.")
+            return
+        destino = get_assay(m_dest["id_unico"], tipo)
+        if destino and destino.get("status") == "finalizado":
+            st.error("El ensayo de destino ya fue enviado a revisión: pide que lo devuelvan antes de trasladarle datos.")
+            return
+        if destino and tiene_valores_digitados(destino.get("data")):
+            st.warning("El ensayo de destino YA TIENE DATOS: se reemplazan. Su versión anterior queda en el respaldo y en el historial de versiones.")
+        modo = st.radio("¿Qué pasa con lo de este ensayo?", ["Copiar (queda también aquí)", "Mover (este ensayo queda vacío)"], key=f"tr_modo_{assay_id}")
+        mover = modo.startswith("Mover")
+        confirmado = st.checkbox(f"Confirmo: {'mover' if mover else 'copiar'} estos datos a la muestra {num_sel} de {perf_dest}", key=f"tr_ok_{assay_id}")
+        if not st.button("Trasladar", disabled=not confirmado, icon=":material/move_up:", key=f"tr_btn_{assay_id}", type="primary"):
+            return
+        limpio = lambda d: {k: v for k, v in d.items() if not k.startswith("_") and not (isinstance(v, dict) and "b64" in v)}
+        copia = {k: v for k, v in datos.items() if not k.startswith("_")}
+        try:
+            if destino is None:
+                destino = db.create_assay(m_dest["id"], tipo)
+            datos_dest = destino.get("data") or {}
+            nuevo_dest = {k: v for k, v in datos_dest.items() if k.startswith("_") and k != "_respaldo"}
+            nuevo_dest.update(copia)
+            nuevo_dest.setdefault("_fecha_primer_dato", hoy_colombia().isoformat())
+            if tiene_valores_digitados(datos_dest):
+                nuevo_dest["_respaldo"] = limpio(datos_dest)
+            db.update_assay_data(destino["id"], data=nuevo_dest, status="en-proceso", editado_por=actor)
+            if tipo in ("granulometria", "pasa200"):
+                db.update_assay_shared_data(m_dest["id"], ["granulometria", "pasa200"], nuevo_dest)
+            origen = f"{st.session_state.get('selected_codigo')}-{st.session_state.get('selected_perforacion')}-M{muestra['numero']}"
+            destino_txt = f"{cod_dest}-{perf_dest}-M{num_sel}"
+            db.add_historial(destino["id"], f"Datos {'movidos' if mover else 'copiados'} desde {origen}", actor, icono="move_up", tono="warning")
+            if mover:
+                nuevo_origen = {k: v for k, v in datos.items() if k.startswith("_") and k != "_respaldo"}
+                nuevo_origen["_respaldo"] = limpio(datos)
+                db.update_assay_data(assay["id"], data=nuevo_origen, status="sin-iniciar", editado_por=actor)
+                if tipo in ("granulometria", "pasa200"):
+                    db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], nuevo_origen)
+                db.add_historial(assay["id"], f"Datos movidos a {destino_txt}", actor, icono="move_up", tono="warning")
+                for _k in list(st.session_state.keys()):   # los campos de este ensayo se vuelven a leer (ahora vacíos)
+                    if isinstance(_k, str) and (_k.endswith(f"_{assay_id}") or _k == f"_snap_{assay_id}") and not _k.startswith("tr_"):
+                        del st.session_state[_k]
+            st.session_state["_datos_sucios"] = True
+            st.toast(f"Datos {'movidos' if mover else 'copiados'} a {destino_txt}.", icon=":material/check_circle:")
+            st.rerun()
+        except Exception as e:
+            if "RerunData" in type(e).__name__ or "Stop" in type(e).__name__:
+                raise
+            st.error(f"No se pudo trasladar (revisa tu conexión): {e}")
+
+
 def render_assay_form(prueba=False):
     assay_id = st.session_state.selected_assay_id
     assay = next((a for a in st.session_state.assays if a["id"] == assay_id), None)
@@ -14248,6 +14377,8 @@ def render_assay_form(prueba=False):
                         st.error("No se pudo restaurar (revisa tu conexión) — vuelve a intentarlo.")
 
         _historial_versiones(True)
+        if not supervisor_edita:
+            _render_trasladar_datos(assay, muestra, assay_id, actor_edicion)
 
         def _datos_frescos(extra=None):
             """Datos para un botón de guardar: lo que hay AHORA en la base + lo que esta persona cambió (+ `extra`), nunca la copia vieja de la pantalla."""

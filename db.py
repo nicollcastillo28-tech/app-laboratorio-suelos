@@ -298,6 +298,11 @@ def asignar_ensayo(muestra_id: str, ensayo_label: str, laboratorista: str | None
     return update_muestra(muestra_id, ensayo_asignado_a=asignaciones)
 
 
+def archive_assay_tipo(muestra_id: str, tipo: str):
+    """Archiva (no borra) el ensayo de un tipo de una muestra: sale de las listas pero sus datos siguen en la base."""
+    get_client().table("assays").update({"archived": True}).eq("muestra_id", muestra_id).eq("tipo", tipo).execute()
+
+
 def archive_muestra(muestra_id: str):
     client = get_client()
     client.table("muestras").update({"archived": True}).eq("id", muestra_id).execute()
