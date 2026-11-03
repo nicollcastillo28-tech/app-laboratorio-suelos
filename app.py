@@ -6075,7 +6075,8 @@ def render_project_detail():
 
             # (Antes había aquí un botón "Ver detalle del sondeo": las muestras y sus ensayos ya se abren directo desde
             # "Ver muestras", así que esa pantalla intermedia no hacía falta.)
-            render_descarga_excel_perforacion(codigo, perf, project, muestras)
+            if st.session_state.role == "jefe":   # los Excel de resultados los descarga solo el Jefe de Laboratorio
+                render_descarga_excel_perforacion(codigo, perf, project, muestras)
 
 
 # ════════════════════════════════════════════════════════════════════
