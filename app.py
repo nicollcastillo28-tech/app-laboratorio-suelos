@@ -29,6 +29,40 @@ import alertas_resultados as alertas_res
 import db
 import pruebas_datos
 from firmas_excel import agregar_firmas
+
+
+def _con_contexto(funcion):
+    """La descarga diferida (st.download_button con una función en `data`) se ejecuta FUERA de la corrida de la página, sin la sesión: los generadores de
+    Excel que leen st.session_state (perforación, fechas, otros ensayos de la muestra) fallaban y salía «Failed to generate file for download». Se guarda la
+    sesión al dibujar el botón y se presta mientras se arma el archivo."""
+    from streamlit.runtime.scriptrunner import get_script_run_ctx, add_script_run_ctx
+    import threading
+    ctx = get_script_run_ctx(suppress_warning=True)
+
+    def _armar():
+        hilo = threading.current_thread()
+        previo = get_script_run_ctx(suppress_warning=True)
+        if ctx is not None and previo is None:
+            add_script_run_ctx(hilo, ctx)
+        try:
+            return funcion()
+        finally:
+            if ctx is not None and previo is None:
+                add_script_run_ctx(hilo, None)
+    return _armar
+
+
+if not getattr(st.download_button, "_gd_con_contexto", False):
+    _download_button_original = st.download_button
+
+    def _download_button_con_contexto(*args, **kwargs):
+        if callable(kwargs.get("data")):
+            kwargs["data"] = _con_contexto(kwargs["data"])
+        elif len(args) >= 2 and callable(args[1]):
+            args = (args[0], _con_contexto(args[1])) + tuple(args[2:])
+        return _download_button_original(*args, **kwargs)
+    _download_button_con_contexto._gd_con_contexto = True
+    st.download_button = _download_button_con_contexto
 from exportacion_formatos import LibroFormatoOriginal, escribir_entradas, FormatoIncompatibleError
 from presentacion_excel import ajustar_presentacion, reparar_formulas_clasificacion
 
@@ -8963,7 +8997,10 @@ def _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observacio
     ws["C13"] = descripcion_para_informe(muestra)
 
 
-@_exportacion_controlada
+CBR_PESAS_ESTANDAR = 4554          # g — pesas de sobrecarga que usa el laboratorio (antes y después de inmersión)
+CBR_DIAS_INMERSION_ESTANDAR = 4    # días
+
+
 def _celda_libre(ws, ref):
     """False si `ref` cae dentro de una celda combinada pero NO es su esquina de arriba a la izquierda: ahí el formato oficial no admite un valor propio, y
     escribirlo hacía fallar toda la descarga («la casilla está combinada con otra»)."""
@@ -9013,18 +9050,19 @@ def generar_excel_cbr(codigo, perf_codigo, muestra, project, data, observaciones
     # (4554 g / 4 días) — solo se pisa si el laboratorista digitó algo distinto.
     # (El formato oficial no tiene casilla propia para las pesas de sobrecarga: I39 e I40 son parte de las celdas combinadas H39:I39 y H40:I40, que ya
     # traen el rótulo. Lo que no cabe se omite en vez de hacer fallar toda la descarga.)
-    pesas_antes = to_float(data.get("cbr_pesas_antes"))
+    # La plantilla versión 04 ya no trae los valores estándar: se escriben 4554 g y 4 días salvo que el laboratorista haya digitado otro valor.
+    pesas_antes = to_float(data.get("cbr_pesas_antes"), CBR_PESAS_ESTANDAR)
     if pesas_antes is not None and _celda_libre(ws, "I39"):
         ws["I39"] = pesas_antes
     if data.get("cbr_rango") and _celda_libre(ws, "I37"):
         ws["I37"] = data["cbr_rango"]
-    pesas_despues = to_float(data.get("cbr_pesas_despues"))
+    pesas_despues = to_float(data.get("cbr_pesas_despues"), CBR_PESAS_ESTANDAR)
     if pesas_despues is not None and _celda_libre(ws, "I40"):
         ws["I40"] = pesas_despues
-    tiempo_antes = to_float(data.get("cbr_tiempo_inmersion_antes"))
+    tiempo_antes = to_float(data.get("cbr_tiempo_inmersion_antes"), CBR_DIAS_INMERSION_ESTANDAR)
     if tiempo_antes is not None and _celda_libre(ws, "J39"):
         ws["J39"] = tiempo_antes
-    tiempo_despues = to_float(data.get("cbr_tiempo_inmersion_despues"))
+    tiempo_despues = to_float(data.get("cbr_tiempo_inmersion_despues"), CBR_DIAS_INMERSION_ESTANDAR)
     if tiempo_despues is not None and _celda_libre(ws, "J40"):
         ws["J40"] = tiempo_despues
 
