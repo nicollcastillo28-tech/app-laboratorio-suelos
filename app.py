@@ -779,6 +779,8 @@ st.markdown(f"""
         border-left: 4px solid {PRIMARY} !important;
         background: {SURFACE} !important;
         box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important;
+        /* contorno más oscuro (fino): con «outline» porque el borde de todas las tarjetas lo fija una regla general más fuerte */
+        outline: 1px solid rgba(11,61,34,0.55) !important; outline-offset: -1px;
     }}
 
     .perf-code-box {{
