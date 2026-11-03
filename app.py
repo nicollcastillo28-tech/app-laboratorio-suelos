@@ -5169,17 +5169,7 @@ def render_projects_active():
             top[0].markdown(f"**{p['nombre']}**")
             top[1].markdown(f'<div style="text-align:right;"><span class="badge {estado_badge}">{estado_label}</span></div>',
                              unsafe_allow_html=True)
-            # Ubicación, norma y fechas del proyecto no son para el laboratorista (solo Jefe y Director Técnico).
-            if st.session_state.role != "laboratorista":
-                st.markdown(f'<span class="cell-muted">{icon("location_on", size=14)} {html.escape(p.get("localizacion") or "—")}</span>',
-                            unsafe_allow_html=True)
-                st.markdown(f'<div class="section-title" style="margin-bottom:4px;">Norma</div>'
-                            f'<div style="margin-bottom:10px;">{html.escape(p.get("norma") or "—")}</div>', unsafe_allow_html=True)
-                m1, m2 = st.columns(2)
-                m1.markdown(f'<span class="cell-muted">Fecha bitácora:</span><br><span style="font-weight:600;">'
-                            f'{html.escape(p.get("fecha_bitacora") or "—")}</span>', unsafe_allow_html=True)
-                m2.markdown(f'<span class="cell-muted">Fecha ingreso:</span><br><span style="font-weight:600;">'
-                            f'{html.escape(p.get("fecha_ingreso_muestra") or "—")}</span>', unsafe_allow_html=True)
+            # (Ubicación, norma y fechas ya no van en la tarjeta para nadie: se ven dentro del proyecto. La tarjeta queda igual para todos los roles.)
             resumen = _resumen_tecnico_perforaciones(codigo)
             if resumen:
                 with st.expander(f"Resumen técnico de perforaciones ({len(resumen)})", icon=":material/list_alt:"):
