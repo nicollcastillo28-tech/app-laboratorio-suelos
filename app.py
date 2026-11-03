@@ -7826,7 +7826,7 @@ def _bitacora_filas_perforacion(codigo, perf_codigo):
 
 
 EXPORTACIONES_EN_REVISION = frozenset({"cbr", "corte-directo", "consolidacion"})
-LOTES_EN_REVISION = frozenset({"cbr", "proctor"})
+LOTES_EN_REVISION = frozenset({"proctor"})   # el CBR ya se descarga por paquete (probado); el paquete de Proctor sigue sin verificarse
 
 
 def _conservar_hojas_del_informe(contenido, conservar):
