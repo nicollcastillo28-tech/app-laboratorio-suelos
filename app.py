@@ -9316,7 +9316,7 @@ def render_descarga_por_lote(codigo, perf_codigo, project, muestras):
 _ERRORES_PAQUETE: dict = {}   # (proyecto, perforación, tipo) -> hojas que no se pudieron generar en la última descarga (la descarga diferida no puede escribir en la sesión)
 
 
-def _paquete_excel_diferido(codigo, perf_codigo, project, tipo, pares):
+def _paquete_excel_diferido(codigo, perf_codigo, project, tipo, pares, progreso=None):
     """Función que arma el paquete de Excel de un ensayo solo cuando se pulsa «descargar» (descarga diferida): una muestra = su Excel normal; varias =
     un solo libro con una hoja por muestra (ver empaquetar_hojas). Si a UNA muestra no se le puede generar su hoja (datos que el formato no admite), se
     omite y se avisa cuál fue, en vez de que toda la descarga falle."""
@@ -9324,7 +9324,9 @@ def _paquete_excel_diferido(codigo, perf_codigo, project, tipo, pares):
         cfg = EXCEL_LOTE_CONFIG[tipo]
         ordenados = sorted(pares, key=lambda par: clave_numero_muestra(par[0]["numero"]))
         archivos, fallos = [], []
-        for m, data in ordenados:
+        for i, (m, data) in enumerate(ordenados, start=1):
+            if progreso:
+                progreso(i - 1, len(ordenados))
             try:
                 archivos.append((f"M{m['numero']}", cfg["generar"](codigo, perf_codigo, m, project, data, "")))
             except Exception as e:
@@ -9369,8 +9371,11 @@ def render_descarga_excel_perforacion(codigo, perf, project, muestras):
             if listo is None or listo.get("n") != len(pares):
                 if st.button(f"Preparar: {etiqueta}", key=f"dlx_prep_{tipo}_{perf_codigo}", use_container_width=True, icon=":material/folder_zip:"):
                     try:
-                        with st.spinner(f"Armando el Excel de {cfg['etiqueta']}…"):
-                            contenido = _paquete_excel_diferido(codigo, perf_codigo, project, tipo, pares)()
+                        barra = st.progress(0.0, text=f"Armando el Excel de {cfg['etiqueta']}…")
+                        contenido = _paquete_excel_diferido(
+                            codigo, perf_codigo, project, tipo, pares,
+                            progreso=lambda hechas, total: barra.progress(hechas / total, text=f"Armando el Excel de {cfg['etiqueta']}… {hechas} de {total}"))()
+                        barra.empty()
                         st.session_state[clave] = {"bytes": contenido, "n": len(pares), "fallos": _ERRORES_PAQUETE.get((codigo, perf_codigo, tipo)) or []}
                         st.rerun()
                     except Exception as e:

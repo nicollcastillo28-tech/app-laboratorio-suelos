@@ -156,11 +156,24 @@ class _HojaEntradas:
         self.entradas[ref] = valor
 
 
+# Leer una plantilla con openpyxl cuesta cerca de un segundo; un paquete de 30 muestras la leía 30 veces. El libro de openpyxl SOLO se consulta (hojas,
+# celdas combinadas): lo que se llena queda en `_HojaEntradas.entradas` y se escribe sobre los bytes originales, así que se comparte entre usos.
+_CACHE_LIBROS = {}
+
+
 class LibroFormatoOriginal:
     def __init__(self, path, *, celdas_formula_editables=None, **kwargs):
-        with open(path, 'rb') as f:
-            self._original = f.read()
-        self._libro = load_workbook(BytesIO(self._original), **kwargs)
+        import os
+        clave = (str(path), os.path.getmtime(path), tuple(sorted((k, repr(v)) for k, v in kwargs.items())))
+        en_cache = _CACHE_LIBROS.get(clave)
+        if en_cache is None:
+            with open(path, 'rb') as f:
+                original = f.read()
+            en_cache = (original, load_workbook(BytesIO(original), **kwargs))
+            if len(_CACHE_LIBROS) > 24:
+                _CACHE_LIBROS.clear()
+            _CACHE_LIBROS[clave] = en_cache
+        self._original, self._libro = en_cache
         self._formulas_editables = celdas_formula_editables or {}
         self._hojas = {h.title: _HojaEntradas(h) for h in self._libro.worksheets}
 
