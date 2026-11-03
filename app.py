@@ -4449,16 +4449,15 @@ def _render_project_list(codes, empty_msg, allow_delete, mark_read_only=False, a
 
 
 def _resumen_tecnico_perforaciones(codigo):
-    """Una línea por perforación: sus muestras y los ensayos solicitados en ellas."""
+    """Una línea por perforación: su nombre, cuántas muestras tiene y los ensayos solicitados (sin la lista de códigos de muestra, que alargaba mucho la tarjeta)."""
     lineas = []
     for perf in st.session_state.perforaciones.get(codigo, []):
         muestras = st.session_state.muestras.get(f"{codigo}::{perf['codigo']}", [])
         if not muestras:
             lineas.append(f"<strong>{perf['codigo']}</strong>: sin muestras")
             continue
-        ids = ", ".join(f"M-{m['numero']}" for m in muestras)
         ensayos = sorted({e for m in muestras for e, activo in m["ensayos"].items() if activo and e in BITACORA_ENSAYOS})
-        linea = f"<strong>{perf['codigo']}</strong>: {ids}"
+        linea = f"<strong>{html.escape(perf['codigo'])}</strong> · {len(muestras)} muestra(s)"
         if ensayos:
             linea += f" · {', '.join(ensayos)}"
         lineas.append(linea)
@@ -5181,10 +5180,8 @@ def render_projects_active():
                             f'{html.escape(p.get("fecha_ingreso_muestra") or "—")}</span>', unsafe_allow_html=True)
             resumen = _resumen_tecnico_perforaciones(codigo)
             if resumen:
-                st.markdown(f'<div class="section-title" style="margin-bottom:6px;">'
-                            f'Resumen técnico de perforaciones ({len(resumen)})</div>', unsafe_allow_html=True)
-                for linea in resumen:
-                    st.markdown(f'<div class="cell-sub" style="margin-bottom:4px;">{linea}</div>', unsafe_allow_html=True)
+                with st.expander(f"Resumen técnico de perforaciones ({len(resumen)})", icon=":material/list_alt:"):
+                    st.markdown("".join(f'<div class="cell-sub" style="margin-bottom:6px;">{linea}</div>' for linea in resumen), unsafe_allow_html=True)
             with st.container(key=f"vercard_{codigo}"):
                 if st.button("Ver proyecto", key=f"veractivo_{codigo}", use_container_width=True, icon=":material/folder_open:"):
                     st.session_state.selected_codigo = codigo
