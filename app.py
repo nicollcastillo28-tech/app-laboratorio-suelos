@@ -7657,7 +7657,16 @@ def render_muestra_detail():
                         if ens_historial:
                             with st.expander(f"Historial de Cambios ({len(ens_historial)})", icon=":material/history:"):
                                 st.markdown(historial_timeline_html(ens_historial), unsafe_allow_html=True)
-                        # Quien revisa ve los resultados aquí mismo, sin entrar al ensayo: aparece cuando el laboratorista ya lo envió.
+                        # En cuanto el laboratorista entrega el ensayo, el Jefe y el Director Técnico pueden descargar su Excel desde aquí, sin entrar al ensayo.
+                    if mostrar_aprobacion and st.session_state.role in ("jefe", "ingeniero") and not (existing.get("data") or {}).get("_no_realizado"):
+                        _cfg_dl = EXCEL_INDIVIDUAL_CONFIG.get(tipo_interno) or (EXCEL_LOTE_CONFIG.get(tipo_interno) if tipo_interno else None)
+                        if _cfg_dl and (tipo_interno != "masa-unitaria" or not _cfg_dl.get("filtro") or _cfg_dl["filtro"](existing.get("data") or {})):
+                            st.download_button(
+                                "Descargar Excel", icon=":material/download:", key=f"dl_ens_{slug}", use_container_width=True,
+                                data=(lambda _c=_cfg_dl, _e=existing: _c["generar"](codigo, perf_codigo, muestra, project, _e.get("data") or {}, _e.get("observations", ""))),
+                                file_name=f"{_cfg_dl['prefijo']}_{muestra['id_unico']}.{_cfg_dl['ext']}", mime=_cfg_dl["mime"],
+                                on_click=_marcar_emision, args=(codigo, perf_codigo))
+                    # Quien revisa ve los resultados aquí mismo, sin entrar al ensayo: aparece cuando el laboratorista ya lo envió.
                         if mostrar_aprobacion and (st.session_state.role == "ingeniero" or (st.session_state.role == "jefe" and not jefe_en_modo_laboratorista())):
                             with st.expander("Resultados", icon=":material/calculate:"):
                                 try:
@@ -8930,6 +8939,18 @@ def _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observacio
 
 
 @_exportacion_controlada
+def _celda_libre(ws, ref):
+    """False si `ref` cae dentro de una celda combinada pero NO es su esquina de arriba a la izquierda: ahí el formato oficial no admite un valor propio, y
+    escribirlo hacía fallar toda la descarga («la casilla está combinada con otra»)."""
+    from openpyxl.utils import range_boundaries, coordinate_to_tuple
+    fila, col = coordinate_to_tuple(ref)
+    for rango in ws.merged_cells.ranges:
+        c1, f1, c2, f2 = range_boundaries(str(rango))
+        if c1 <= col <= c2 and f1 <= fila <= f2 and (col, fila) != (c1, f1):
+            return False
+    return True
+
+
 def generar_excel_cbr(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Diligencia el formato 013 original. Las entradas que colisionan con celdas combinadas se dejan pendientes; no se divide ni se rediseña el formato."""
     wb = _cargar_plantilla_informe(TEMPLATE_CBR)
@@ -8963,19 +8984,21 @@ def generar_excel_cbr(codigo, perf_codigo, muestra, project, data, observaciones
 
     # Pesas de sobrecarga y tiempo de inmersión: la plantilla ya trae un valor por defecto
     # (4554 g / 4 días) — solo se pisa si el laboratorista digitó algo distinto.
+    # (El formato oficial no tiene casilla propia para las pesas de sobrecarga: I39 e I40 son parte de las celdas combinadas H39:I39 y H40:I40, que ya
+    # traen el rótulo. Lo que no cabe se omite en vez de hacer fallar toda la descarga.)
     pesas_antes = to_float(data.get("cbr_pesas_antes"))
-    if pesas_antes is not None:
+    if pesas_antes is not None and _celda_libre(ws, "I39"):
         ws["I39"] = pesas_antes
-    if data.get("cbr_rango"):
+    if data.get("cbr_rango") and _celda_libre(ws, "I37"):
         ws["I37"] = data["cbr_rango"]
     pesas_despues = to_float(data.get("cbr_pesas_despues"))
-    if pesas_despues is not None:
+    if pesas_despues is not None and _celda_libre(ws, "I40"):
         ws["I40"] = pesas_despues
     tiempo_antes = to_float(data.get("cbr_tiempo_inmersion_antes"))
-    if tiempo_antes is not None:
+    if tiempo_antes is not None and _celda_libre(ws, "J39"):
         ws["J39"] = tiempo_antes
     tiempo_despues = to_float(data.get("cbr_tiempo_inmersion_despues"))
-    if tiempo_despues is not None:
+    if tiempo_despues is not None and _celda_libre(ws, "J40"):
         ws["J40"] = tiempo_despues
 
     # Tabla de penetración: fila 22 es la profundidad "0" — la plantilla trae sus celdas de
@@ -9229,6 +9252,7 @@ EXCEL_LOTE_CONFIG = {
 }
 
 
+EXCEL_INDIVIDUAL_CONFIG = dict(EXCEL_LOTE_CONFIG)   # incluye lo que aún no tiene paquete (Proctor): la descarga de UN ensayo no depende de eso
 EXCEL_LOTE_CONFIG = {tipo: cfg for tipo, cfg in EXCEL_LOTE_CONFIG.items() if tipo not in LOTES_EN_REVISION}
 
 def _muestras_para_lote(muestras, tipo_lote):
@@ -9289,14 +9313,32 @@ def render_descarga_por_lote(codigo, perf_codigo, project, muestras):
                         icon=":material/download:")
 
 
+_ERRORES_PAQUETE: dict = {}   # (proyecto, perforación, tipo) -> hojas que no se pudieron generar en la última descarga (la descarga diferida no puede escribir en la sesión)
+
+
 def _paquete_excel_diferido(codigo, perf_codigo, project, tipo, pares):
     """Función que arma el paquete de Excel de un ensayo solo cuando se pulsa «descargar» (descarga diferida): una muestra = su Excel normal; varias =
-    un solo libro con una hoja por muestra (ver empaquetar_hojas)."""
+    un solo libro con una hoja por muestra (ver empaquetar_hojas). Si a UNA muestra no se le puede generar su hoja (datos que el formato no admite), se
+    omite y se avisa cuál fue, en vez de que toda la descarga falle."""
     def _armar():
         cfg = EXCEL_LOTE_CONFIG[tipo]
         ordenados = sorted(pares, key=lambda par: clave_numero_muestra(par[0]["numero"]))
-        archivos = [(f"M{m['numero']}", cfg["generar"](codigo, perf_codigo, m, project, data, "")) for m, data in ordenados]
-        return archivos[0][1] if len(archivos) == 1 else empaquetar_hojas(cfg["hoja"], archivos)
+        archivos, fallos = [], []
+        for m, data in ordenados:
+            try:
+                archivos.append((f"M{m['numero']}", cfg["generar"](codigo, perf_codigo, m, project, data, "")))
+            except Exception as e:
+                fallos.append(f"M{m['numero']}: {type(e).__name__}: {str(e)[:100]}")
+        _ERRORES_PAQUETE[(codigo, perf_codigo, tipo)] = fallos
+        if not archivos:
+            raise RuntimeError("Ninguna muestra se pudo generar. " + " | ".join(fallos[:3]))
+        if len(archivos) == 1:
+            return archivos[0][1]
+        try:
+            return empaquetar_hojas(cfg["hoja"], archivos)
+        except Exception as e:
+            _ERRORES_PAQUETE[(codigo, perf_codigo, tipo)] = fallos + [f"Al juntar las hojas: {type(e).__name__}: {str(e)[:120]}"]
+            raise
     return _armar
 
 
@@ -9325,6 +9367,10 @@ def render_descarga_excel_perforacion(codigo, perf, project, muestras):
                 on_click=_marcar_emision, args=(codigo, perf_codigo),
                 file_name=f"{cfg['prefijo']}_{codigo}_{perf_codigo}.{cfg['ext']}", mime=cfg["mime"], use_container_width=True,
                 key=f"dlx_{tipo}_{perf_codigo}", icon=":material/download:")
+            fallos = _ERRORES_PAQUETE.get((codigo, perf_codigo, tipo))
+            if fallos:
+                st.warning(f"En la última descarga de {cfg['etiqueta']} no se pudo generar: " + " · ".join(fallos[:6])
+                           + (f" · y {len(fallos) - 6} más" if len(fallos) > 6 else "") + ". Esas hojas no quedaron en el archivo; revísalas o avísame con este texto.")
 
 
 # ════════════════════════════════════════════════════════════════════
