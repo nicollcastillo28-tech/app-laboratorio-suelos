@@ -14149,6 +14149,10 @@ def render_assay_form(prueba=False):
             with st.container(border=True):
                 st.markdown(card_header_html("person", "Laboratorista"), unsafe_allow_html=True)
                 st.markdown(f'<div style="font-weight:600;">{html.escape(assay.get("laboratorist") or "—")}</div>', unsafe_allow_html=True)
+        if es_jefe and not prueba and assay.get("etapa_revision") != "aprobado":
+            # El Jefe puede trasladar datos de un ensayo a otro desde cualquiera de sus dos modos (el traslado no es digitar: no pasa por las casillas).
+            _render_trasladar_datos(assay, muestra, assay_id,
+                                    f"{(st.session_state.profile or {}).get('full_name') or 'Jefe de Laboratorio'} (Jefe de Laboratorio)")
         if es_jefe and assay["status"] == "finalizado" and not prueba:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("Habilitar edición para el laboratorista", icon=":material/lock_open:", use_container_width=True):
