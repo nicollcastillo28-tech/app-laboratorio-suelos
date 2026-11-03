@@ -333,7 +333,7 @@ st.markdown(f"""
     estuviera bien. Se excluyen los mismos contenedores de "no son una tarjeta" que ya excluía la
     regla del acento izquierdo, más "logout-btn" (el ícono de cerrar sesión, invisible cuando su
     contenedor quedaba con este fondo blanco por detrás). */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-back-sticky):not(.st-key-proj-sticky):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-modo-jefe"]):not(:has(> [data-testid="stLayoutWrapper"] > .st-key-desc-visual-card)):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-back-sticky):not(.st-key-proj-sticky):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-modo-jefe"]):not([class*="st-key-vercard_"]):not(:has(> [data-testid="stLayoutWrapper"] > .st-key-desc-visual-card)):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
         border-radius: 12px !important; border: 1px solid {BORDER} !important;
         box-shadow: 0 1px 4px rgba(11,28,48,0.08) !important; background: {SURFACE} !important;
     }}
@@ -414,7 +414,7 @@ st.markdown(f"""
        borde tapando el grupo entero en vez de resaltar una sola tarjeta. bell-alert/bell-quiet
        (el botón-contenedor de la campana en el topbar) tampoco: es un ícono, no una tarjeta —
        se veía como una rayita verde suelta pegada a la campana. */
-    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-back-sticky):not(.st-key-proj-sticky):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-modo-jefe"]):not(:has(> [data-testid="stLayoutWrapper"] > .st-key-desc-visual-card)):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
+    div[data-testid="stVerticalBlock"][data-test-scroll-behavior="normal"]:not(.st-key-topbar):not(.st-key-topbar-nav):not(.st-key-bottomnav):not(.st-key-notif-popover-body):not(.st-key-fab-new-project):not(.st-key-back-sticky):not(.st-key-proj-sticky):not(.st-key-muestra-obs-box):not(.st-key-home-actions):not([class*="st-key-home-tiles"]):not([class*="st-key-tile-"]):not(.st-key-bell-alert):not(.st-key-bell-quiet):not(.st-key-logout-btn):not([class*="st-key-modo-jefe"]):not([class*="st-key-vercard_"]):not(:has(> [data-testid="stLayoutWrapper"] > .st-key-desc-visual-card)):not([class*="st-key-notif-card-"]):not([class*="st-key-chip"]):not([role="dialog"] *) {{
         border-left: 4px solid {PRIMARY} !important;
     }}
     /* Tarjetas de "Ensayos asignados" (una por ensayo): más separación entre sí y sombra
@@ -768,6 +768,13 @@ st.markdown(f"""
         font-family: 'JetBrains Mono', monospace; font-weight: 800; font-size: 16px;
         letter-spacing: 0.02em; padding: 4px 14px; border-radius: 6px;
     }}
+    /* «Ver proyecto»: barra clara como la de «Ver muestras» de las perforaciones (no el verde oscuro de antes, que resaltaba más que el propio proyecto) */
+    [class*="st-key-vercard_"] button {{
+        background: {SECONDARY_CONTAINER} !important; border: 1px solid {BORDER} !important; border-radius: 11px !important;
+        justify-content: flex-start !important; padding-left: 16px !important;
+    }}
+    [class*="st-key-vercard_"] button, [class*="st-key-vercard_"] button * {{ color: {PRIMARY} !important; font-weight: 600; }}
+    [class*="st-key-vercard_"] button:hover {{ filter: brightness(0.97); }}
     [class*="st-key-projcard_"] {{
         border-left: 4px solid {PRIMARY} !important;
         background: {SURFACE} !important;
@@ -5156,11 +5163,11 @@ def render_projects_active():
             estado_badge, estado_label = "badge-muted", "Por iniciar"
 
         with st.container(border=True, key=f"projcard_{codigo}"):
-            top = st.columns([3, 1])
-            top[0].markdown(f'<span class="code-badge">{html.escape(codigo)}</span>', unsafe_allow_html=True)
+            st.markdown(f'<div class="perf-code-box perf-code-largo">{html.escape(codigo)}</div>', unsafe_allow_html=True)
+            top = st.columns([3, 1], vertical_alignment="center")
+            top[0].markdown(f"**{p['nombre']}**")
             top[1].markdown(f'<div style="text-align:right;"><span class="badge {estado_badge}">{estado_label}</span></div>',
                              unsafe_allow_html=True)
-            st.markdown(f"**{p['nombre']}**")
             # Ubicación, norma y fechas del proyecto no son para el laboratorista (solo Jefe y Director Técnico).
             if st.session_state.role != "laboratorista":
                 st.markdown(f'<span class="cell-muted">{icon("location_on", size=14)} {html.escape(p.get("localizacion") or "—")}</span>',
@@ -5178,9 +5185,10 @@ def render_projects_active():
                             f'Resumen técnico de perforaciones ({len(resumen)})</div>', unsafe_allow_html=True)
                 for linea in resumen:
                     st.markdown(f'<div class="cell-sub" style="margin-bottom:4px;">{linea}</div>', unsafe_allow_html=True)
-            if st.button("Ver proyecto →", key=f"veractivo_{codigo}", type="primary", use_container_width=True):
-                st.session_state.selected_codigo = codigo
-                navigate("project-detail")
+            with st.container(key=f"vercard_{codigo}"):
+                if st.button("Ver proyecto", key=f"veractivo_{codigo}", use_container_width=True, icon=":material/folder_open:"):
+                    st.session_state.selected_codigo = codigo
+                    navigate("project-detail")
 
 
 def render_projects_done():
