@@ -9362,15 +9362,35 @@ def render_descarga_excel_perforacion(codigo, perf, project, muestras):
             st.caption("Todavía no hay ningún ensayo con datos para descargar.")
         for tipo, cfg, pares, sin_terminar in paquetes:
             etiqueta = f"{cfg['etiqueta']} — {len(pares)} muestra(s)" + (f" · {sin_terminar} sin terminar" if sin_terminar else "")
-            st.download_button(
-                etiqueta, data=_paquete_excel_diferido(codigo, perf_codigo, project, tipo, pares),
-                on_click=_marcar_emision, args=(codigo, perf_codigo),
-                file_name=f"{cfg['prefijo']}_{codigo}_{perf_codigo}.{cfg['ext']}", mime=cfg["mime"], use_container_width=True,
-                key=f"dlx_{tipo}_{perf_codigo}", icon=":material/download:")
-            fallos = _ERRORES_PAQUETE.get((codigo, perf_codigo, tipo))
-            if fallos:
-                st.warning(f"En la última descarga de {cfg['etiqueta']} no se pudo generar: " + " · ".join(fallos[:6])
-                           + (f" · y {len(fallos) - 6} más" if len(fallos) > 6 else "") + ". Esas hojas no quedaron en el archivo; revísalas o avísame con este texto.")
+            clave = f"_paq_{perf_codigo}_{tipo}"
+            listo = st.session_state.get(clave)
+            # Dos pasos: «Preparar» arma el archivo aquí mismo (si algo falla se ve el motivo en pantalla; con la descarga diferida solo salía «Failed to
+            # generate file for download») y luego aparece el botón de descarga con el archivo ya armado.
+            if listo is None or listo.get("n") != len(pares):
+                if st.button(f"Preparar: {etiqueta}", key=f"dlx_prep_{tipo}_{perf_codigo}", use_container_width=True, icon=":material/folder_zip:"):
+                    try:
+                        with st.spinner(f"Armando el Excel de {cfg['etiqueta']}…"):
+                            contenido = _paquete_excel_diferido(codigo, perf_codigo, project, tipo, pares)()
+                        st.session_state[clave] = {"bytes": contenido, "n": len(pares), "fallos": _ERRORES_PAQUETE.get((codigo, perf_codigo, tipo)) or []}
+                        st.rerun()
+                    except Exception as e:
+                        if "RerunData" in type(e).__name__ or "Stop" in type(e).__name__:
+                            raise
+                        import traceback
+                        st.session_state.pop(clave, None)
+                        st.error(f"No se pudo armar el Excel de {cfg['etiqueta']}: {type(e).__name__}: {str(e)[:300]}")
+                        st.code(traceback.format_exc()[-900:], language="text")
+            else:
+                st.download_button(
+                    f"Descargar: {etiqueta}", data=listo["bytes"], on_click=_marcar_emision, args=(codigo, perf_codigo),
+                    file_name=f"{cfg['prefijo']}_{codigo}_{perf_codigo}.{cfg['ext']}", mime=cfg["mime"], use_container_width=True,
+                    key=f"dlx_{tipo}_{perf_codigo}", icon=":material/download:")
+                if listo["fallos"]:
+                    st.warning("No se pudo generar la hoja de: " + " · ".join(listo["fallos"][:6]) + (f" · y {len(listo['fallos']) - 6} más" if len(listo["fallos"]) > 6 else "")
+                               + ". Esas hojas no quedaron en el archivo.")
+                if st.button("Volver a armar con los datos de ahora", key=f"dlx_rearmar_{tipo}_{perf_codigo}", icon=":material/refresh:"):
+                    st.session_state.pop(clave, None)
+                    st.rerun()
 
 
 # ════════════════════════════════════════════════════════════════════
