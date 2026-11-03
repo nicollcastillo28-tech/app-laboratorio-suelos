@@ -21,9 +21,32 @@ NS_XDR = 'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing'
 NS_A = 'http://schemas.openxmlformats.org/drawingml/2006/main'
 NS_R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 
+# Las imágenes de las firmas NO viven en el repositorio (es público): se leen de los secretos de la app (FIRMA_DIRECTOR_B64 / FIRMA_JEFE_B64, el PNG en
+# base64) o, en el equipo de desarrollo, de la carpeta local templates/firmas (ignorada por git). Sin ninguna de las dos, el Excel sale sin firmas.
 CARPETA = Path(__file__).parent / 'templates' / 'firmas'
-FIRMA_DIRECTOR = ('xl/media/gd_firma_director.png', CARPETA / 'firma_director_tecnico.png', 'Firma Director Técnico')
-FIRMA_JEFE = ('xl/media/gd_firma_jefe.png', CARPETA / 'firma_jefe_laboratorio.png', 'Firma Jefe de Laboratorio')
+FIRMA_DIRECTOR = ('xl/media/gd_firma_director.png', CARPETA / 'firma_director_tecnico.png', 'Firma Director Técnico', 'FIRMA_DIRECTOR_B64')
+FIRMA_JEFE = ('xl/media/gd_firma_jefe.png', CARPETA / 'firma_jefe_laboratorio.png', 'Firma Jefe de Laboratorio', 'FIRMA_JEFE_B64')
+_CACHE_FIRMAS = {}
+
+
+def _bytes_firma(firma):
+    """Bytes del PNG de la firma, o None si no está disponible."""
+    if firma[0] in _CACHE_FIRMAS:
+        return _CACHE_FIRMAS[firma[0]]
+    contenido = None
+    try:
+        import base64
+        import streamlit as st
+        valor = st.secrets.get(firma[3])
+        if valor:
+            contenido = base64.b64decode(str(valor))
+    except Exception:
+        contenido = None
+    if contenido is None and firma[1].exists():
+        contenido = firma[1].read_bytes()
+    if contenido is not None:
+        _CACHE_FIRMAS[firma[0]] = contenido
+    return contenido
 NOMBRE_JEFE = 'MIGUEL BARÓN'
 
 RE_DIRECTOR = re.compile(r'^\s*director\s+t', re.I)
@@ -33,9 +56,9 @@ EMU_PX = 9525
 EMU_PT = 12700
 
 
-def _tamano_png(ruta):
+def _tamano_png(contenido):
     from PIL import Image
-    with Image.open(ruta) as im:
+    with Image.open(BytesIO(contenido)) as im:
         return im.size
 
 
@@ -154,6 +177,15 @@ def _disenar(raiz, compartidos):
         # fila del «APROBÓ / REVISÓ» de este bloque: la más cercana hacia arriba (hasta 9 filas)
         fila_aprobo = next((f for f in range(fila_rotulo - 1, fila_rotulo - 10, -1)
                             if f > 0 and any(RE_APROBO.search(textos.get((f, c), '')) for c in range(c1, c2 + 1))), fila_rotulo - 5)
+        if firma is FIRMA_JEFE:
+            # nombre del Jefe: casilla vacía justo encima del rótulo (no se pisa lo que ya haya)
+            fila_nombre = fila - 1
+            origen = _rango_de(c1, fila_nombre, combinadas)
+            if fila_nombre > 0 and not textos.get((fila_nombre, origen[0])) and origen[1] == fila_nombre:
+                escribir.append((f'{get_column_letter(origen[0])}{fila_nombre}', NOMBRE_JEFE))
+        png = _bytes_firma(firma)
+        if png is None:
+            continue
         f_ini, f_fin = fila_aprobo + 1, fila_rotulo - 2   # entre «APROBÓ / REVISÓ» y la fila del nombre
         if f_fin < f_ini:
             continue
@@ -164,7 +196,7 @@ def _disenar(raiz, compartidos):
         bloque_y = sum(alto(f) * 96 / 72 for f in range(1, f_ini))
         W = sum(ancho(i) for i in range(c1, c2 + 1))
         H = sum(alto(f) * 96 / 72 for f in range(f_ini, f_fin + 1))
-        iw0, ih0 = _tamano_png(firma[1])
+        iw0, ih0 = _tamano_png(png)
         escala = min(W * 0.92 / iw0, H * 0.92 / ih0)
         iw, ih = max(1, int(iw0 * escala)), max(1, int(ih0 * escala))
         x = bloque_x + (W - iw) / 2
@@ -172,12 +204,6 @@ def _disenar(raiz, compartidos):
         col_i, off_x = _posicion(x, ancho)
         fila_i, off_y = _posicion(y, lambda f: alto(f) * 96 / 72)
         imagenes.append((firma, (col_i - 1, int(off_x * EMU_PX), fila_i - 1, int(off_y * EMU_PX), iw, ih)))
-        if firma is FIRMA_JEFE:
-            # nombre del Jefe: casilla vacía justo encima del rótulo (no se pisa lo que ya haya)
-            fila_nombre = fila - 1
-            origen = _rango_de(c1, fila_nombre, combinadas)
-            if fila_nombre > 0 and not textos.get((fila_nombre, origen[0])) and origen[1] == fila_nombre:
-                escribir.append((f'{get_column_letter(origen[0])}{fila_nombre}', NOMBRE_JEFE))
     return imagenes, escribir
 
 
@@ -197,7 +223,7 @@ def agregar_firmas(contenido):
     """Devuelve el libro con las firmas y el nombre del Jefe de Laboratorio puestos. Idempotente: si ya las tiene, lo devuelve igual."""
     with zipfile.ZipFile(BytesIO(contenido)) as z:
         nombres = z.namelist()
-        if FIRMA_JEFE[0] in nombres:
+        if FIRMA_JEFE[0] in nombres or FIRMA_DIRECTOR[0] in nombres:
             return contenido
         compartidos = _textos_compartidos(z)
         cambios = {}   # ruta -> bytes nuevos
@@ -266,9 +292,9 @@ def agregar_firmas(contenido):
             for nuevo, bytes_ in cambios.items():
                 if nuevo not in nombres:
                     out.writestr(nuevo, bytes_)
-            for ruta_media, origen, _n in (FIRMA_DIRECTOR, FIRMA_JEFE):
-                if ruta_media in usadas:
-                    out.writestr(ruta_media, origen.read_bytes())
+            for firma in (FIRMA_DIRECTOR, FIRMA_JEFE):
+                if firma[0] in usadas:
+                    out.writestr(firma[0], _bytes_firma(firma))
         return salida.getvalue()
 
 

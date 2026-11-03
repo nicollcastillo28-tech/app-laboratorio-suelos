@@ -7,3 +7,6 @@ venv/
 .claude/
 supabase/cleanup_test_projects.sql
 supabase/set_passwords_elara_aherrera.sql
+# Firmas manuscritas: se guardan en los secretos de la app, nunca en el repositorio
+templates/firmas/
+firmas_para_secretos.toml
