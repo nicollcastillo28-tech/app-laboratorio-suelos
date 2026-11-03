@@ -1293,6 +1293,7 @@ GESP_ARCILLA_CAMPOS = [
 ]
 # En el mismo orden que la bitácora GDA-FL-019.
 GESP_FINOS_CAMPOS = [
+    ("gesp_f_picnometro", "Picnómetro No."),
     ("gesp_f_masa_sss", "Masa del material saturado superficialmente seco (g)"),
     ("gesp_f_masa_pic_agua_suelo", "Masa del picnómetro + agua + suelo a la temperatura del ensayo (g)"),
     ("gesp_f_masa_pic_agua", "Masa del picnómetro + agua a la temperatura del ensayo (g)"),
@@ -2421,7 +2422,7 @@ def _es_valor_digitado(k, v):
         return bool(v)
     if isinstance(v, dict):
         return "b64" in v
-    return isinstance(v, str) and (to_float(v) is not None or ("recipiente" in k and bool(v.strip())))
+    return isinstance(v, str) and (to_float(v) is not None or (("recipiente" in k or "picnometro" in k) and bool(v.strip())))
 
 
 def tiene_valores_digitados(data):
@@ -6208,7 +6209,7 @@ def _recipientes_txt(assay, tipo=None, maximo=8):
         texto = (("Molde " if len(proctor) == 1 else "Moldes ") + " - ".join(proctor)) if proctor else ""
         return texto + (("  /  " if texto else "") + "CBR " + " - ".join(cbr) if cbr else "")
     # Solo el NÚMERO del recipiente: se descartan las masas («masa…», «seco_mas_recipiente…») y las claves de control de la app («…_lastsync»).
-    claves = sorted((k for k, v in d.items() if "recipiente" in k and "masa" not in k and "mas_recipiente" not in k and "lastsync" not in k
+    claves = sorted((k for k, v in d.items() if ("recipiente" in k or k.endswith("picnometro")) and "masa" not in k and "mas_recipiente" not in k and "lastsync" not in k
                      and not k.startswith("_") and str(v or "").strip() and not isinstance(v, (list, dict))), key=lambda k: (k.startswith("cbrc"), k))   # Proctor primero, luego su CBR compactado
     if not claves:
         return ""
@@ -12843,7 +12844,7 @@ def render_gravedad_especifica_form(data, assay_id):
                 row = st.columns([2.2, 1])
                 row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
                 data[key] = row[1].text_input(label, value=data.get(key, ""), key=f"{key}_{assay_id}",
-                                               label_visibility="collapsed", placeholder="0.00")
+                                               label_visibility="collapsed", placeholder="No." if "picnometro" in key else "0.00")
 
     with st.container(border=True):
         st.markdown(card_header_html("science", "¿Cuál ensayo se va a hacer?"), unsafe_allow_html=True)
