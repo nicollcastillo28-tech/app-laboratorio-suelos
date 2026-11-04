@@ -383,7 +383,7 @@ def _ahora_colombia() -> str:
 
 
 def add_historial(assay_id: str, titulo: str, subtitulo: str = "", icono: str = "history", tono: str = "neutral",
-                  cambios: list | None = None, snapshot: dict | None = None, nota: str | None = None):
+                  cambios: list | None = None, snapshot: dict | None = None, nota: str | None = None, observacion: str | None = None):
     """Agrega una entrada al historial del ensayo (jsonb, sin migración: las claves nuevas son opcionales).
       cambios:  [{campo, etiqueta, antes, despues}] -- qué valores cambiaron respecto al envío anterior.
       snapshot: copia de los datos en este envío; sirve de base para el próximo diff. Solo se conserva la del ÚLTIMO envío
@@ -404,6 +404,8 @@ def add_historial(assay_id: str, titulo: str, subtitulo: str = "", icono: str = 
         entry["snapshot"] = snapshot
     if nota:
         entry["nota"] = nota
+    if observacion:
+        entry["observacion"] = observacion   # la observación que el laboratorista dejó en el ensayo al enviarlo
     client.table("assays").update({"historial": previo + [entry]}).eq("id", assay_id).execute()
 
 

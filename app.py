@@ -3485,7 +3485,8 @@ def registrar_envio_ensayo(assay, data, observaciones, titulo, actor, icono="sci
         nota = "No hay una versión anterior guardada para comparar (envío previo a este registro de cambios)."
     if titulo == "Enviado a Revisión" and (previo is not None or ya_enviado):
         titulo = "Reenviado a revisión"
-    db.add_historial(assay["id"], titulo, actor, icono, tono, cambios=cambios, snapshot=snap, nota=nota)
+    db.add_historial(assay["id"], titulo, actor, icono, tono, cambios=cambios, snapshot=snap, nota=nota,
+                     observacion=(observaciones or "").strip() or None)
 
 
 def registrar_edicion_en_curso(assay, data, observaciones, actor):
@@ -3539,6 +3540,11 @@ def historial_timeline_html(historial):
         else:
             detalle_html = ""
         en_curso = '<div class="timeline-nota">En curso: se actualiza mientras se corrige y se cierra al reenviar, confirmar o devolver el ensayo.</div>' if h.get("en_curso") else ""
+        # La observación que se dejó dentro del ensayo al enviarlo (para leerla sin abrir el ensayo). Envíos de antes: se toma de la copia guardada.
+        obs_envio = h.get("observacion") or ((h.get("snapshot") or {}).get("obs") or "").strip()
+        if obs_envio:
+            en_curso += (f'<div class="timeline-nota" style="font-style:normal;"><b>{icon("notes", size=13)} Observación:</b> '
+                         f'{html.escape(obs_envio)}</div>')
         filas.append(
             f'<div class="timeline-item">{marcador}'
             f'<div class="timeline-content"><div class="timeline-titulo">{html.escape(titulo)}</div>'
