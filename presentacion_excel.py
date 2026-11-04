@@ -141,8 +141,8 @@ def ajustar_presentacion(contenido, parte, referencias):
 
 def reparar_formulas_clasificacion(contenido, parte):
     """Corrige errores de texto en límites y CONCAT sin cambiar el diseño ni el método."""
+    # (El código del «INFORME ID» —K10 y Y10— NO se toca: va tal cual lo trae la plantilla oficial, que es el código estandarizado del laboratorio.)
     formulas = {
-        'K10': 'CONCATENATE(L9,"-",M9,"-",IF(D12="SONDEO","S",IF(D12="APIQUE","AP",IF(D12="CANTERA","F",""))),F12,"-M",H12)',
         'R40': 'IF(COUNT(S19:U19)=0,"",IF(T19=25,IF(ISNUMBER(T25),ROUNDDOWN(T25,0),""),IF(COUNT(S25:U25)=0,"",ROUNDDOWN(Q52,0))))',
         'R41': 'IF(COUNT(Y25:Z25)=0,"",ROUNDDOWN(AVERAGE(Y25:Z25),0))',
         'R42': 'IF(R40="NO LÍQUIDO","N.L. - N.P.",IF(R41="NO PLÁSTICO","N.P.",IF(AND(ISNUMBER(R40),ISNUMBER(R41)),R40-R41,"")))',
