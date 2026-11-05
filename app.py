@@ -10524,10 +10524,6 @@ def render_cbr_form(data, assay_id, muestra_id):
         fila_res[1].markdown(f'<div style="padding:8px 12px;border:1px solid {BORDER};border-radius:8px;background:{BG};min-height:38px;'
                              f'text-align:center;font-weight:700;">{fmt_num(alt_muestra, 3) + " cm" if alt_muestra is not None else "—"}</div>',
                              unsafe_allow_html=True)
-        if alt_muestra is not None and not str(data.get("cbr_altura_molde") or "").strip():
-            st.caption("Este CBR se digitó antes con la altura de la muestra medida directo; al digitar la altura del molde se recalcula.")
-        st.caption("Ejemplo: molde de 15 cm (promedio de las 3 lecturas) y diferencia de 5 cm → altura de la muestra 15 − 5 = 10 cm. Con este "
-                   "resultado se calculan volumen, densidades y expansión, y va al Excel (casilla D22).")
         _campo_antes_despues("cbr_masa_muestra_molde", "Masa de la muestra + molde (g)")
         _campo_replicado("cbr_masa_molde", "Masa molde (g)")
 
