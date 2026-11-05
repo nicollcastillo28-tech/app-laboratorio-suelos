@@ -10033,15 +10033,22 @@ def render_pasa200_section(data, assay_id, requerido=True):
             for suffix, col in (("antes", row[1]), ("despues", row[2])):
                 field_key = f"{key}_{suffix}"
                 widget_key = f"{field_key}_{assay_id}"
-                if key == "p200_seco_mas_recipiente" and suffix == "despues" and suma_tamices is not None:
+                if key == "p200_seco_mas_recipiente" and suffix == "despues":
+                    # Se recalcula SIEMPRE que cambie la suma (un tamiz, el fondo o la masa del recipiente), aunque el valor se haya corregido a mano
+                    # antes o se haya guardado / enviado / devuelto: antes, un valor escrito a mano (o guardado antes de la suma automática) dejaba la
+                    # casilla congelada para siempre. Una corrección a mano se respeta solo mientras los tamices no cambien.
+                    lastsync_key = f"{field_key}_gran_lastsync"
+                    actual = st.session_state.get(widget_key, data.get(field_key, ""))
                     masa_recip_despues = to_float(_valor_vivo(f"p200_masa_recipiente_despues_{assay_id}", "p200_masa_recipiente_despues"))
-                    if masa_recip_despues is not None:
+                    if suma_tamices is not None and masa_recip_despues is not None:
                         candidato = fmt_num(suma_tamices + masa_recip_despues, 2)
-                        lastsync_key = f"{field_key}_gran_lastsync"
-                        actual = st.session_state.get(widget_key, data.get(field_key, ""))
-                        if data.get(lastsync_key) != candidato and (not actual or actual == data.get(lastsync_key)):
+                        if data.get(lastsync_key) != candidato and to_float(actual) != to_float(candidato):
                             st.session_state[widget_key] = candidato
                         data[lastsync_key] = candidato
+                    elif suma_tamices is None and data.get(lastsync_key) and to_float(actual) == to_float(data.get(lastsync_key)):
+                        # se borraron todos los tamices: la suma automática que había ya no vale
+                        st.session_state[widget_key] = ""
+                        data.pop(lastsync_key, None)
                 # No se pasa `value=` junto con un key que también se controla por session_state
                 # (el autocompletado de abajo lo hace) — Streamlit no permite mezclar ambos.
                 if widget_key not in st.session_state:
@@ -10054,7 +10061,7 @@ def render_pasa200_section(data, assay_id, requerido=True):
                                "se complete sola, digita la «Masa del recipiente» (columna Después del lavado) al final de esta tarjeta.")
                 else:
                     st.caption("La masa después del lavado se suma sola (tamices + recipiente) a partir de lo digitado en la tabla de "
-                               "Granulometría — puedes corregirla a mano si hace falta.")
+                               "Granulometría y se vuelve a sumar cada vez que cambias un tamiz o el recipiente.")
             if key == "p200_seco_mas_recipiente":
                 # Autocompleta las 3 lecturas de horas con esta masa apenas se digita, pero si el
                 # laboratorista ya las cambió a mano, no se vuelven a pisar en el siguiente rerun —
