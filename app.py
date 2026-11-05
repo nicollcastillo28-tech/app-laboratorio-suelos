@@ -9881,7 +9881,7 @@ CAMPOS_REQUERIDOS_MASA_UNITARIA = [
 CAMPOS_REQUERIDOS_CBR = [
     ("cbr_molde", "Molde No."),
     ("cbr_diametro", "Diámetro de la muestra (cm) — promedio"),
-    ("cbr_altura", "Altura de la muestra (cm) — altura del molde − promedio de lecturas"),
+    ("cbr_altura", "Altura de la muestra (cm) — altura del molde − diferencia con la muestra"),
     ("cbr_masa_molde", "Masa molde (g)"),
     ("cbr_masa_muestra_molde_antes", "Masa de la muestra + molde (g) — antes de inmersión"),
     ("cbr_masa_muestra_molde_despues", "Masa de la muestra + molde (g) — después de inmersión"),
@@ -10510,12 +10510,13 @@ def render_cbr_form(data, assay_id, muestra_id):
         # directo en las lecturas: si no tienen altura del molde se siguen leyendo así.
         if "cbr_altura_medida" not in data and data.get("cbr_altura") not in (None, ""):
             data["cbr_altura_medida"] = data["cbr_altura"]
-        _campo_lecturas("cbr_altura", "Lecturas de altura (cm) — 3 lecturas y promedio", destino="cbr_altura_medida")
+        # Orden de la medición: 1) altura del molde; 2) diferencia entre el borde del molde y la muestra (3 lecturas); 3) altura de la muestra = 1 − 2.
         fila_alt = st.columns([2, 1, 1])
-        fila_alt[0].markdown('<div style="padding-top:8px;">Altura del molde (cm)</div>', unsafe_allow_html=True)
+        fila_alt[0].markdown('<div style="padding-top:8px;font-weight:600;">1. Altura del molde (cm)</div>', unsafe_allow_html=True)
         data["cbr_altura_molde"] = fila_alt[1].text_input("Altura del molde (cm)", value=data.get("cbr_altura_molde", ""),
                                                           key=f"cbr_altura_molde_{assay_id}", label_visibility="collapsed",
                                                           placeholder="Altura molde")
+        _campo_lecturas("cbr_altura", "2. Diferencia entre el molde y la muestra (cm) — 3 lecturas y promedio", destino="cbr_altura_medida")
         if str(data.get("cbr_altura_molde") or "").strip():
             alt_muestra = _diferencia_alturas_cbr(data)
             data["cbr_altura"] = fmt_num(alt_muestra, 3) if alt_muestra is not None else ""
@@ -10523,11 +10524,12 @@ def render_cbr_form(data, assay_id, muestra_id):
             data["cbr_altura"] = str(data.get("cbr_altura_medida") or "").strip()
             alt_muestra = to_float(data["cbr_altura"])
         fila_res = st.columns([2, 2])
-        fila_res[0].markdown('<div style="padding-top:8px;font-weight:600;">Altura de la muestra (cm) = molde − promedio</div>', unsafe_allow_html=True)
+        fila_res[0].markdown('<div style="padding-top:8px;font-weight:600;">3. Altura de la muestra (cm) = molde − diferencia</div>', unsafe_allow_html=True)
         fila_res[1].markdown(f'<div style="padding:8px 12px;border:1px solid {BORDER};border-radius:8px;background:{BG};min-height:38px;'
                              f'text-align:center;font-weight:700;">{fmt_num(alt_muestra, 3) + " cm" if alt_muestra is not None else "—"}</div>',
                              unsafe_allow_html=True)
-        st.caption("Este resultado es la altura de la muestra: con él se calculan volumen, densidades y expansión, y va al Excel (casilla D22).")
+        st.caption("Ejemplo: molde de 15 cm y diferencia de 5 cm → altura de la muestra 15 − 5 = 10 cm. Con este resultado se calculan volumen, "
+                   "densidades y expansión, y va al Excel (casilla D22).")
         _campo_antes_despues("cbr_masa_muestra_molde", "Masa de la muestra + molde (g)")
         _campo_replicado("cbr_masa_molde", "Masa molde (g)")
 
@@ -13327,10 +13329,10 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                 ("Molde No.", data.get("cbr_molde")),
                 ("Diámetro de la muestra (cm) — lecturas", " · ".join(str(data.get(f"cbr_diametro_{i}") or "—") for i in (1, 2, 3))),
                 ("Diámetro de la muestra (cm) — promedio", data.get("cbr_diametro")),
-                ("Lecturas de altura (cm)", " · ".join(str(data.get(f"cbr_altura_{i}") or "—") for i in (1, 2, 3))),
-                ("Lecturas de altura (cm) — promedio", data.get("cbr_altura_medida", data.get("cbr_altura"))),
                 ("Altura del molde (cm)", data.get("cbr_altura_molde")),
-                ("Altura de la muestra (cm) = molde − promedio", data.get("cbr_altura")),
+                ("Diferencia molde − muestra (cm) — lecturas", " · ".join(str(data.get(f"cbr_altura_{i}") or "—") for i in (1, 2, 3))),
+                ("Diferencia molde − muestra (cm) — promedio", data.get("cbr_altura_medida", data.get("cbr_altura"))),
+                ("Altura de la muestra (cm) = molde − diferencia", data.get("cbr_altura")),
                 ("Masa molde (g)", data.get("cbr_masa_molde")),
                 ("Masa de la muestra + molde (g) — antes", data.get("cbr_masa_muestra_molde_antes")),
                 ("Masa de la muestra + molde (g) — después", data.get("cbr_masa_muestra_molde_despues")),
