@@ -10436,7 +10436,7 @@ def render_masa_unitaria_form(data, assay_id, muestra_id=None):
 
 
 def _diferencia_alturas_cbr(data):
-    """Altura de la muestra del CBR = altura del molde (promedio de 3 lecturas) − diferencia entre el molde y la muestra, en cm; None si falta alguna."""
+    """Altura de la muestra del CBR = altura del molde − diferencia entre el molde y la muestra (cada una promedio de 3 lecturas), en cm; None si falta alguna."""
     molde, dif = to_float(data.get("cbr_altura_molde")), to_float(data.get("cbr_altura_dif"))
     return None if molde is None or dif is None else molde - dif
 
@@ -10505,15 +10505,12 @@ def render_cbr_form(data, assay_id, muestra_id):
 
         _campo_replicado("cbr_molde", "Molde No.", placeholder="1")
         _campo_lecturas("cbr_diametro", "Diámetro de la muestra (cm) — 3 lecturas y promedio")
-        # Altura de la muestra = altura del molde (promedio de 3 lecturas) − diferencia entre el borde del molde y la muestra (una lectura).
+        # Altura de la muestra = altura del molde (promedio de 3 lecturas) − diferencia entre el borde del molde y la muestra (promedio de 3 lecturas).
         # Ese resultado es data["cbr_altura"]: el que usan los cálculos (volumen, densidades, expansión) y el que va al Excel (D22).
         # Los CBR digitados antes de esto tenían la altura de la muestra medida directo (cbr_altura_1..3 / cbr_altura): mientras no se digite la
         # altura del molde, se respeta esa altura.
         _campo_lecturas("cbr_altura_molde", "1. Altura del molde (cm) — 3 lecturas y promedio")
-        fila_dif = st.columns([2, 1, 1])
-        fila_dif[0].markdown('<div style="padding-top:8px;font-weight:600;">2. Diferencia entre el molde y la muestra (cm)</div>', unsafe_allow_html=True)
-        data["cbr_altura_dif"] = fila_dif[1].text_input("Diferencia entre el molde y la muestra (cm)", value=data.get("cbr_altura_dif", ""),
-                                                        key=f"cbr_altura_dif_{assay_id}", label_visibility="collapsed", placeholder="Diferencia")
+        _campo_lecturas("cbr_altura_dif", "2. Diferencia entre el molde y la muestra (cm) — 3 lecturas y promedio")
         if str(data.get("cbr_altura_molde") or "").strip():
             alt_muestra = _diferencia_alturas_cbr(data)
             data["cbr_altura"] = fmt_num(alt_muestra, 3) if alt_muestra is not None else ""
@@ -13325,7 +13322,8 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
                 ("Diámetro de la muestra (cm) — promedio", data.get("cbr_diametro")),
                 ("Altura del molde (cm) — lecturas", " · ".join(str(data.get(f"cbr_altura_molde_{i}") or "—") for i in (1, 2, 3))),
                 ("Altura del molde (cm) — promedio", data.get("cbr_altura_molde")),
-                ("Diferencia entre el molde y la muestra (cm)", data.get("cbr_altura_dif")),
+                ("Diferencia molde − muestra (cm) — lecturas", " · ".join(str(data.get(f"cbr_altura_dif_{i}") or "—") for i in (1, 2, 3))),
+                ("Diferencia molde − muestra (cm) — promedio", data.get("cbr_altura_dif")),
                 ("Altura de la muestra (cm) = molde − diferencia", data.get("cbr_altura")),
                 ("Masa molde (g)", data.get("cbr_masa_molde")),
                 ("Masa de la muestra + molde (g) — antes", data.get("cbr_masa_muestra_molde_antes")),
