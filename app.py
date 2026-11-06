@@ -1421,24 +1421,37 @@ def _partes_color(muestra):
     return color, subton, intensidad
 
 
-def _secundarios_por_nivel(muestra, principal=None):
-    """(con, adjetivo): los componentes secundarios de la muestra separados según la norma -- "con" (15 a 25 %: "arcilla CON arena y grava") y
-    "adjetivo" (30 % o más: "arcilla ARENOSA"). Se guardan separados por coma en la columna de siempre (desc_tipo_secundario) y el de 30 %
-    o más lleva un "*"; los datos de antes (sin "*") se leen como "con"."""
+# Cantidad del SEGUNDO grano (uno solo: el que le sigue al principal en cantidad), en tres niveles, y cómo se guarda en desc_tipo_secundario:
+#   "adj"  -> 30 % o más:  "ARCILLA ARENOSA"            (se guarda "ARENA*")
+#   "con"  -> 15 a 29 %:   "ARCILLA CON ARENA"          (se guarda "ARENA")
+#   "algo" -> 5 a 14 %:    "ARCILLA CON ALGO DE ARENA"  (se guarda "ARENA~")
+# Antes se podían marcar varios granos a la vez y salían frases como «… CON ARENA CON ARCILLA»: ahora se nombra solo uno.
+DESC_NIVELES_SECUNDARIO = ("adj", "con", "algo")
+_MARCA_NIVEL = {"adj": "*", "con": "", "algo": "~"}
+
+
+def _secundario(muestra, principal=None):
+    """(nombre, nivel) del segundo grano de la muestra, o (None, None). Datos de antes podían traer varios separados por coma: se toma el de
+    más cantidad (el adjetivo antes que el «con»)."""
     crudo = (muestra.get("desc_tipo_secundario") or "").upper()
-    con, adj = [], []
+    items = []
     for p in dict.fromkeys(x.strip() for x in crudo.split(",") if x.strip()):
-        nombre, es_adj = p.rstrip("*").strip(), p.endswith("*")
-        if nombre == principal:
+        nivel = "adj" if p.endswith("*") else "algo" if p.endswith("~") else "con"
+        nombre = p.rstrip("*~").strip()
+        if not nombre or nombre == principal:
             continue
-        (adj if (es_adj and nombre in _ADJETIVO_SUELO) else con).append(nombre)
-    return con, adj
+        if nivel == "adj" and nombre not in _ADJETIVO_SUELO:
+            nivel = "con"
+        items.append((nombre, nivel))
+    if not items:
+        return None, None
+    return min(items, key=lambda t: DESC_NIVELES_SECUNDARIO.index(t[1]))
 
 
 def _tipos_secundarios(muestra, principal=None):
-    """Todos los componentes secundarios (con + adjetivo), sin importar el nivel."""
-    con, adj = _secundarios_por_nivel(muestra, principal)
-    return adj + con
+    """El segundo grano de la muestra como lista ([] si no tiene)."""
+    nombre, _nivel = _secundario(muestra, principal)
+    return [nombre] if nombre else []
 
 
 def _angulosidades(muestra):
@@ -1452,39 +1465,30 @@ def _lista_y(items):
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " Y " + items[-1]
 
 
-def descripcion_visual_estructurada(muestra, tipo_override=None):
-    """Arma la frase legible en mayúscula (ej. 'LIMO DE COLOR MARRÓN ROJIZO DE CONSISTENCIA DURA
-    EN CONDICIÓN SECA') a partir de los menús desplegables de la muestra — se usa tanto en la
-    vista de solo lectura como en el Excel oficial. None si todavía no se ha elegido ninguna
-    opción.
+# La angulosidad y la forma son de la grava (y de bolos / núcleos de roca): en la arena no se describen.
+DESC_TIPOS_CON_ANGULOSIDAD = ("GRAVA", "BOLO", "NÚCLEO DE ROCA")
 
-    `tipo_override`: reemplaza SOLO la palabra inicial (ej. "GRAVA ARCILLOSA" en vez de "GRAVA")
-    sin tocar el resto de la frase — para armar la versión "según la clasificación calculada" (ver
-    descripcion_visual_calculada) sin duplicar toda esta lógica. El resto de la frase (forma,
-    angulosidad, cementación o consistencia) se sigue decidiendo con el tipo de grano que
-    realmente eligió el laboratorista a ojo, no con el override: son justo los campos que él
-    mismo llenó bajo ese tipo, y cambiar de escala a mitad de la frase dejaría campos vacíos."""
-    # .upper(): datos de antes de este cambio (migración 0015) se guardaron en minúscula/mixta
-    # (ej. "Limo", "Café oscuro") — se normalizan al leer para que la frase salga toda en
-    # mayúscula igual que los datos nuevos, sin tener que migrar filas viejas en la base de datos.
-    tipo = (muestra.get("desc_tipo_suelo") or "").upper() or None
-    base = tipo_override or tipo
+
+def _texto_segundo_grano(principal, nombre, nivel, adjetivo=None):
+    """(adjetivo, complemento) del segundo grano: ("ARENOSA", None) | (None, "CON ARENA") | (None, "CON ALGO DE ARENA")."""
+    if not nombre or not nivel:
+        return None, None
+    if nivel == "adj":
+        if adjetivo:
+            return adjetivo, None
+        if nombre in _ADJETIVO_SUELO:
+            masculino = (principal or "").split()[0] in ("LIMO", "ORGÁNICO", "NÚCLEO", "BOLO") if principal else False
+            return _ADJETIVO_SUELO[nombre][1 if masculino else 0], None
+        nivel = "con"
+    return None, (f"CON {nombre}" if nivel == "con" else f"CON ALGO DE {nombre}")
+
+
+def _propiedades_descripcion(muestra, tipo, incluir_plasticidad=True):
+    """Todo lo que va después del nombre del suelo (angulosidad, forma, color, cementación o consistencia, estructura, humedad, HCl, olor), solo con
+    lo que le corresponde al grano `tipo`: si la clasificación cambió el grano (grava -> arena), la angulosidad o la cementación que se anotaron
+    para la grava ya no salen en la arena; tampoco la consistencia de un fino en un grueso."""
     partes = []
-
-    # Componentes secundarios, como los nombra el INV E-102: 30 % o más -> adjetivo pegado al nombre ("ARCILLA ARENOSA"); 15 a 25 % ->
-    # "CON ARENA". Si la clasificación ya nombra ese grano ("GRAVA ARCILLOSA") no se repite.
-    con, adj = _secundarios_por_nivel(muestra, tipo)
-    if tipo_override:
-        con = [x for x in con if x[:4] not in tipo_override]
-        adj = [x for x in adj if x[:4] not in tipo_override]
-    if base:
-        masculino = base.split()[0] in ("LIMO", "ORGÁNICO", "NÚCLEO", "BOLO")
-        adjetivos = [_ADJETIVO_SUELO[x][1 if masculino else 0] for x in adj]
-        partes.append(base + (f" {_lista_y(adjetivos)}" if adjetivos else ""))
-    if con:
-        partes.append(f"CON {_lista_y(con)}")
-
-    angulosidades = _angulosidades(muestra) if _es_grueso(tipo) else []
+    angulosidades = _angulosidades(muestra) if tipo in DESC_TIPOS_CON_ANGULOSIDAD else []
     if tipo in ("BOLO", "NÚCLEO DE ROCA"):   # nombres masculinos: "BOLO ANGULOSO", no "BOLO ANGULOSA"
         angulosidades = [a[:-1] + "O" if a.endswith("A") else a for a in angulosidades]
     if angulosidades:
@@ -1501,8 +1505,8 @@ def descripcion_visual_estructurada(muestra, tipo_override=None):
         cementacion = (muestra.get("desc_cementacion") or "").upper() or None
         if cementacion:
             partes.append(f"CON CEMENTACIÓN {cementacion}")
-    else:
-        plasticidad = (muestra.get("desc_plasticidad") or "").upper() if tipo in DESC_TIPOS_CON_PLASTICIDAD else None
+    elif tipo:
+        plasticidad = (muestra.get("desc_plasticidad") or "").upper() if (incluir_plasticidad and tipo in DESC_TIPOS_CON_PLASTICIDAD) else None
         if plasticidad == "NO PLÁSTICA":
             partes.append("NO PLÁSTICO" if tipo == "LIMO" else "NO PLÁSTICA")
         elif plasticidad:
@@ -1514,30 +1518,39 @@ def descripcion_visual_estructurada(muestra, tipo_override=None):
     estructura = (muestra.get("desc_estructura") or "").upper() or None
     if estructura:
         partes.append(f"DE ESTRUCTURA {estructura}")
-
-    # "CONDICIÓN {ESTADO}", no "CONDICIÓN DE HUMEDAD {ESTADO}" — el estado (SECA/HÚMEDA/
-    # SATURADA) ya funciona como adjetivo de "condición", "condición de humedad húmeda" suena
-    # redundante.
+    # "CONDICIÓN {ESTADO}", no "CONDICIÓN DE HUMEDAD {ESTADO}" — el estado (SECA/HÚMEDA/SATURADA) ya funciona como adjetivo de "condición".
     humedad = (muestra.get("desc_humedad") or "").upper() or None
     if humedad:
         partes.append(f"EN CONDICIÓN {humedad}")
-
     hcl = (muestra.get("desc_hcl") or "").upper() or None
     if hcl:
         partes.append(f"CON REACCIÓN {hcl} AL HCL")
     olor = (muestra.get("desc_olor") or "").upper() or None
     if olor:
         partes.append(f"CON OLOR {olor}")
+    return partes
 
+
+def descripcion_visual_estructurada(muestra):
+    """Arma la frase en mayúscula (ej. 'ARCILLA CON ALGO DE ARENA DE COLOR MARRÓN ROJIZO DE CONSISTENCIA DURA EN CONDICIÓN SECA') con lo que
+    eligió el laboratorista en los recuadros: un grano principal, a lo sumo UN segundo grano (-OSA / CON / CON ALGO DE) y las propiedades que le
+    corresponden a ese grano. None si todavía no se ha elegido nada."""
+    # .upper(): datos de antes (migración 0015) se guardaron en minúscula/mixta ("Limo", "Café oscuro").
+    tipo = (muestra.get("desc_tipo_suelo") or "").upper() or None
+    partes = []
+    if tipo:
+        nombre, nivel = _secundario(muestra, tipo)
+        adjetivo, complemento = _texto_segundo_grano(tipo, nombre, nivel)
+        partes.append(tipo + (f" {adjetivo}" if adjetivo else ""))
+        if complemento:
+            partes.append(complemento)
+    partes += _propiedades_descripcion(muestra, tipo)
     return " ".join(partes) if partes else None
 
 
 def descripcion_visual_para_excel(muestra):
-    """Texto que va al campo "DESCRIPCIÓN VISUAL" del Excel oficial: la frase armada de los
-    menús desplegables — None si todavía no hay ninguna opción elegida, para que el llamador
-    pueda caer al respaldo de siempre (observaciones del ensayo, o el tipo de muestra). Si la
-    muestra viene de antes de quitar el campo de notas libres (ver migración 0016), esas notas
-    viejas se siguen mostrando como respaldo en vez de perderse."""
+    """La descripción que digitó el laboratorista: la frase de los recuadros, o el texto escrito a mano de muestras de antes (ya no se puede
+    escribir a mano, pero lo viejo se sigue mostrando en vez de perderse). None si no hay ninguna."""
     return descripcion_visual_estructurada(muestra) or (muestra.get("descripcion_visual") or "").strip() or None
 
 
@@ -1547,29 +1560,83 @@ def descripcion_completa(muestra):
     return bool(descripcion_visual_para_excel(muestra))
 
 
-def descripcion_visual_calculada(muestra):
-    """Segunda versión de la descripción visual, con el tipo de suelo que de verdad salió en la
-    clasificación USCS (calculada con los datos ya digitados de Granulometría/Límites, ver
-    clasificar_uscs) en vez del tipo que el laboratorista eligió a ojo antes de tener esos datos
-    — combinado con el resto de características, que sí siguen siendo juicio visual del
-    laboratorista (color, cementación o consistencia, humedad...). Se muestra AL LADO de
-    descripcion_visual_estructurada, no en su lugar — la inicial a ojo se conserva tal cual.
-    None mientras no haya datos suficientes para calcular la USCS."""
+def _nivel_por_porcentaje(pct):
+    """Cantidad del segundo grano según su % de la muestra: 30 % o más -> adjetivo; 15 a 29 % -> «con»; 5 a 14 % -> «con algo de»; menos de
+    5 % no se nombra."""
+    if pct is None or pct < 5:
+        return None
+    return "adj" if pct >= 30 else "con" if pct >= 15 else "algo"
+
+
+def grano_segun_clasificacion(res):
+    """Lo que dice la clasificación USCS sobre los granos, para armar la descripción y para el botón «Usar la clasificación»:
+    dict(principal, principal_simple, gradacion, plasticidad, segundo, segundo_simple, nivel, adjetivo). El principal y su gradación salen del
+    símbolo USCS; el segundo grano es la fracción (grava / arena / finos) que le sigue en porcentaje, y su cantidad sale de ese porcentaje.
+    None sin símbolo."""
+    simbolo = (res or {}).get("simbolo")
+    if not simbolo:
+        return None
+    base = simbolo.split("-")[0]
+    letra = base[0]
+    principal_simple = {"G": "GRAVA", "S": "ARENA", "C": "ARCILLA", "M": "LIMO"}[letra]
+    principal = "ARCILLA LIMOSA" if simbolo == "CL-ML" else principal_simple
+    fino = letra in "CM"
+    gradacion = {"W": "BIEN GRADADA", "P": "MAL GRADADA"}.get(base[1]) if not fino else None
+    plasticidad = ("DE ALTA PLASTICIDAD" if base[1] == "H" else "DE BAJA PLASTICIDAD") if fino else None
+    # Nombre de los finos cuando son el segundo grano: lo dice la letra del símbolo (GC, GW-GC -> arcilla; GM, SP-SM -> limo; GC-GM -> los dos).
+    if simbolo in ("GC-GM", "SC-SM"):
+        finos, finos_simple, finos_adj = "ARCILLA LIMOSA", "ARCILLA", "ARCILLO-LIMOSA"
+    else:
+        l2 = (simbolo.split("-")[1] if "-" in simbolo else base)[1:2]
+        finos_simple = {"C": "ARCILLA", "M": "LIMO"}.get(l2)
+        finos, finos_adj = finos_simple, None
+    fracciones = {"GRAVA": res.get("pct_grava"), "ARENA": res.get("pct_arena"), "FINOS": res.get("pct_finos")}
+    clave_principal = "FINOS" if fino else principal_simple
+    otras = [(k, v) for k, v in fracciones.items() if k != clave_principal and v is not None]
+    segundo = segundo_simple = nivel = adjetivo = None
+    if otras:
+        clave, pct = max(otras, key=lambda kv: kv[1])
+        nivel = _nivel_por_porcentaje(pct)
+        if nivel:
+            if clave == "FINOS":
+                segundo, segundo_simple, adjetivo = finos, finos_simple, (finos_adj if nivel == "adj" else None)
+            else:
+                segundo = segundo_simple = clave
+            if not segundo:
+                nivel = None
+    return dict(principal=principal, principal_simple=principal_simple, gradacion=gradacion, plasticidad=plasticidad,
+                segundo=segundo, segundo_simple=segundo_simple, nivel=nivel, adjetivo=adjetivo)
+
+
+def nombre_segun_clasificacion(g):
+    """'ARENA MAL GRADADA CON ALGO DE LIMO', 'GRAVA ARCILLOSA', 'ARCILLA ARENOSA DE BAJA PLASTICIDAD'... a partir de grano_segun_clasificacion."""
+    adjetivo, complemento = _texto_segundo_grano(g["principal"], g["segundo"], g["nivel"], g["adjetivo"])
+    return " ".join(x for x in (g["principal"], adjetivo, g["gradacion"], complemento, g["plasticidad"]) if x)
+
+
+def clasificacion_de_muestra(muestra):
+    """grano_segun_clasificacion de la muestra (con su Granulometría y Límites ya digitados), o None si todavía no hay clasificación."""
     gran_assay = get_assay(muestra["id_unico"], "granulometria")
     if not gran_assay or (gran_assay.get("data") or {}).get("_no_realizado"):
         return None   # sin Granulometría no hay clasificación: queda solo la descripción visual del laboratorista
     lim_assay = get_assay(muestra["id_unico"], "limites")
-    resultado = clasificar_uscs(gran_assay.get("data"), lim_assay.get("data") if lim_assay else None)
-    simbolo = resultado.get("simbolo")
-    if not simbolo:
+    return grano_segun_clasificacion(clasificar_uscs(gran_assay.get("data"), lim_assay.get("data") if lim_assay else None))
+
+
+def descripcion_visual_calculada(muestra):
+    """La descripción SEGÚN LA CLASIFICACIÓN (Granulometría + Límites ya digitados): el grano principal y su gradación salen de la USCS, el segundo
+    grano es el que le sigue en porcentaje (uno solo), y del resto de lo que anotó el laboratorista (color, humedad, consistencia o cementación…)
+    se conserva lo que le corresponde al grano que salió. Se muestra AL LADO de la descripción a ojo, no en su lugar. None sin clasificación."""
+    g = clasificacion_de_muestra(muestra)
+    if not g:
         return None
-    nombre = USCS_NOMBRES.get(simbolo, simbolo).upper()
+    nombre = nombre_segun_clasificacion(g)
     libre = (muestra.get("descripcion_visual") or "").strip().upper()
     if libre and not muestra.get("desc_tipo_suelo"):
-        # La descripción se escribió como texto libre (no con menús): no se puede "cambiar solo el tipo de suelo" campo por campo, así
-        # que se conserva todo lo que escribió el laboratorista salvo el tipo de grano del comienzo, que lo pone la clasificación.
+        # Muestras de antes con la descripción escrita a mano: se conserva lo que escribió salvo el tipo de grano del comienzo.
         return _fusionar_clasificacion_y_texto(nombre, libre)
-    return descripcion_visual_estructurada(muestra, tipo_override=nombre)
+    # La plasticidad la da la clasificación (baja / alta): la que se anotó a ojo no se repite.
+    return " ".join([nombre] + _propiedades_descripcion(muestra, g["principal_simple"], incluir_plasticidad=False))
 
 
 _MARCAS_DESCRIPCION = re.compile(r"\b(DE COLOR|COLOR|CON CEMENTACI[ÓO]N|CEMENTAD[AO]|D[ÉE]BILMENTE|DE CONSISTENCIA|CONSISTENCIA|EN CONDICI[ÓO]N)\b")
@@ -7329,125 +7396,124 @@ def _render_descripcion_visual(muestra, muestra_id, puede_editar_muestra):
             if descripcion_val and st.button("Cancelar edición", icon=":material/close:", key=f"desc_cancelar_{muestra_id}"):
                 st.session_state[desc_edit_key] = False
                 st.rerun()
-            # Modo de digitación: con menús (estructurado, permite armar la comparación contra
-            # la clasificación calculada — ver descripcion_visual_calculada) o texto libre, para
-            # cuando la muestra no encaja bien en las opciones de los menús. No hace falta una
-            # columna nueva para recordar el modo: se infiere de qué datos ya tiene la muestra —
-            # si hay tipo de grano elegido, está en modo menús; si no hay tipo pero sí texto
-            # libre guardado, está en modo texto; si no hay nada de nada, se parte de menús (el
-            # modo recomendado por defecto, para poder comparar contra la USCS calculada).
-            modos = ["Con menús (recomendado)", "Escribirla directamente"]
-            modo_actual = modos[1] if (not muestra.get("desc_tipo_suelo") and muestra.get("descripcion_visual")) else modos[0]
-            modo = st.radio("¿Cómo la vas a digitar?", modos, index=modos.index(modo_actual),
-                             key=f"desc_modo_{muestra_id}", horizontal=True)
-
-            if modo == modos[1]:
-                st.caption("Al guardar en texto libre se borran los menús que hayas elegido antes — no se pueden "
-                           "combinar los dos modos en la misma muestra.")
-                texto_actual = muestra.get("descripcion_visual", "")
-                texto = st.text_area(
-                    "Descripción visual", value=texto_actual, key=f"desc_texto_libre_{muestra_id}",
-                    label_visibility="collapsed", height=100,
-                    placeholder="Ej: Grava arcillosa de color gris oscuro, débilmente cementada, en condición húmeda...",
-                )
-                if st.button("Guardar descripción visual", icon=":material/save:", key=f"desc_visual_save_texto_{muestra_id}"):
-                    _guardar_descripcion_visual(
-                        muestra["id"], dict(
-                            descripcion_visual=texto.strip().upper(),
-                            desc_tipo_suelo=None, desc_tipo_secundario=None, desc_color=None, desc_subtonalidad=None, desc_intensidad=None,
-                            desc_forma=None, desc_angulosidad=None, desc_cementacion=None, desc_consistencia=None,
-                            desc_humedad=None, desc_estructura=None, desc_hcl=None, desc_olor=None, desc_plasticidad=None))
-                    st.session_state[desc_edit_key] = False
-                    st.toast("Descripción visual guardada.", icon=":material/check_circle:")
+            # Solo con recuadros (ya no se escribe a mano): así la frase sale siempre con el mismo orden y es fácil corregirla si la
+            # clasificación dice otro grano. Las muestras de antes escritas a mano siguen mostrando su texto hasta que se describan aquí.
+            libre_viejo = (muestra.get("descripcion_visual") or "").strip()
+            if libre_viejo and not muestra.get("desc_tipo_suelo"):
+                st.caption(f"Esta muestra tenía la descripción escrita a mano: «{libre_viejo}». Ahora se describe con los recuadros; al guardar "
+                           "reemplaza ese texto.")
+            # «Usar la clasificación»: llena el grano principal y el segundo grano (con su cantidad) con lo que dice la Granulometría; lo demás
+            # (color, humedad, consistencia…) se revisa y se completa a mano.
+            g_clas = clasificacion_de_muestra(muestra)
+            if g_clas:
+                st.markdown(f'<div class="cell-muted" style="font-size:12.5px;">Según la clasificación: <b style="color:{PRIMARY};">'
+                            f'{html.escape(nombre_segun_clasificacion(g_clas))}</b></div>', unsafe_allow_html=True)
+                if st.button("Usar la clasificación", icon=":material/science:", key=f"desc_usar_clas_{muestra_id}",
+                             help="Pone el grano principal y el segundo grano que dice la clasificación. Revisa después el resto de la descripción."):
+                    st.session_state[f"desc_tipo_{muestra_id}"] = g_clas["principal_simple"]
+                    st.session_state[f"desc_sec_{muestra_id}_{g_clas['principal_simple']}"] = g_clas["segundo_simple"] or ""
+                    if g_clas["nivel"]:
+                        st.session_state[f"desc_sec_nivel_{muestra_id}_{g_clas['principal_simple']}"] = g_clas["nivel"]
                     st.rerun()
-            else:
-                # .upper() al comparar: datos de antes de este cambio (migración 0015) se
-                # guardaron en minúscula/mixta (ej. "Limo") — así se siguen preseleccionando en
-                # el menú en vez de aparecer en blanco solo porque el case no coincide con las
-                # opciones nuevas.
-                tipo_actual = (muestra.get("desc_tipo_suelo") or "").upper()
-                tipo_idx = DESC_TIPO_SUELO_OPTIONS.index(tipo_actual) if tipo_actual in DESC_TIPO_SUELO_OPTIONS else 0
-                desc_tipo = st.selectbox("Tipo de grano principal", DESC_TIPO_SUELO_OPTIONS, index=tipo_idx,
-                                          key=f"desc_tipo_{muestra_id}", format_func=lambda v: v or "— Seleccionar —")
-                grueso = _es_grueso(desc_tipo)
 
-                # Componentes secundarios, con las reglas del INV E-102-13 (13.8): 15 a 25 % del otro material -> "CON ARENA"; 30 % o más -> el
-                # adjetivo, "ARCILLA ARENOSA". Una muestra puede traer más de uno a la vez, por eso son etiquetas (varias a la vez). El tipo
-                # principal no se ofrece. Se guardan separados por coma en desc_tipo_secundario (con "*" los de 30 % o más).
-                opciones_sec = [o for o in DESC_TIPO_SECUNDARIO_OPTIONS if o != desc_tipo]
-                con_act, adj_act = _secundarios_por_nivel(muestra, desc_tipo)
-                sel_con = _seleccion_multiple(
-                    "Con un poco de… (se dice «con arena», «con grava»)", opciones_sec,
-                    [x for x in con_act if x in opciones_sec], key=f"desc_sec_con_{muestra_id}_{desc_tipo}")
-                opciones_adj = [o for o in opciones_sec if o in _ADJETIVO_SUELO]
-                sel_adj = _seleccion_multiple(
-                    "Con bastante… (se dice «arenoso», «gravoso»)", opciones_adj,
-                    [x for x in adj_act if x in opciones_adj], key=f"desc_sec_adj_{muestra_id}_{desc_tipo}")
-                desc_secundarios = [x for x in sel_con if x not in sel_adj] + [f"{x}*" for x in sel_adj]
+            # .upper() al comparar: datos de antes (migración 0015) se guardaron en minúscula/mixta (ej. "Limo").
+            tipo_actual = (muestra.get("desc_tipo_suelo") or "").upper()
+            tipo_idx = DESC_TIPO_SUELO_OPTIONS.index(tipo_actual) if tipo_actual in DESC_TIPO_SUELO_OPTIONS else 0
+            desc_tipo = st.selectbox("Tipo de grano principal", DESC_TIPO_SUELO_OPTIONS,
+                                      index=tipo_idx if f"desc_tipo_{muestra_id}" not in st.session_state else 0,
+                                      key=f"desc_tipo_{muestra_id}", format_func=lambda v: v or "— Seleccionar —")
+            grueso = _es_grueso(desc_tipo)
 
-                # Color en tres pasos que se combinan: color base + matiz + intensidad ("MARRÓN ROJIZO CLARO").
-                color_act, subton_act, intens_act = _partes_color(muestra)
-                st.markdown('<div class="cell-muted" style="margin:6px 0 -6px;font-weight:700;">Color <span style="font-weight:400;">'
-                            '(descríbelo con la muestra húmeda; si es de la muestra seca, anótalo en las observaciones — INV E-102, 9.3)</span></div>',
-                            unsafe_allow_html=True)
-                valores = {}
-                for col, (label, opciones, campo_db, campo_key, actual) in zip(st.columns(3), [
-                        ("Color base", DESC_COLOR_OPTIONS, "desc_color", "color", color_act),
-                        ("Matiz (rojizo, verdoso…)", DESC_SUBTONALIDAD_OPTIONS, "desc_subtonalidad", "subton", subton_act),
-                        ("Intensidad (claro / oscuro)", DESC_INTENSIDAD_OPTIONS, "desc_intensidad", "intens", intens_act)]):
+            # Segundo grano: UNO solo (el que le sigue al principal en cantidad) y cuánto hay -- bastante (ARENOSA), con (CON ARENA) o poco
+            # (CON ALGO DE ARENA). Se guarda en desc_tipo_secundario con la marca del nivel (ver _MARCA_NIVEL).
+            opciones_sec = [""] + [o for o in DESC_TIPO_SECUNDARIO_OPTIONS if o != desc_tipo]
+            sec_act, nivel_act = _secundario(muestra, desc_tipo)
+            c_sec, c_niv = st.columns([1, 1.6])
+            with c_sec:
+                sec_key = f"desc_sec_{muestra_id}_{desc_tipo}"
+                desc_sec = st.selectbox("Segundo grano (el que le sigue)", opciones_sec,
+                                        index=opciones_sec.index(sec_act) if (sec_key not in st.session_state and sec_act in opciones_sec) else 0,
+                                        key=sec_key, format_func=lambda v: v or "— Ninguno —")
+            desc_nivel = None
+            if desc_sec:
+                niveles = [n for n in DESC_NIVELES_SECUNDARIO if n != "adj" or desc_sec in _ADJETIVO_SUELO]
+                def _etiqueta_nivel(n, _t=desc_tipo, _s=desc_sec):
+                    adjetivo, complemento = _texto_segundo_grano(_t, _s, n)
+                    cuanto = {"adj": "Bastante", "con": "Con", "algo": "Poco"}[n]
+                    return f"{cuanto}: {adjetivo or complemento}"
+                with c_niv:
+                    niv_key = f"desc_sec_nivel_{muestra_id}_{desc_tipo}"
+                    if niv_key in st.session_state and st.session_state[niv_key] not in niveles:
+                        del st.session_state[niv_key]
+                    desc_nivel = st.radio("¿Cuánto?", niveles,
+                                          index=0 if niv_key in st.session_state else (niveles.index(nivel_act) if nivel_act in niveles
+                                                                                         else 1 if "adj" in niveles else 0),
+                                          key=niv_key, format_func=_etiqueta_nivel, horizontal=True)
+            desc_secundarios = [f"{desc_sec}{_MARCA_NIVEL[desc_nivel]}"] if desc_sec and desc_nivel else []
+
+            # Color en tres pasos que se combinan: color base + matiz + intensidad ("MARRÓN ROJIZO CLARO").
+            color_act, subton_act, intens_act = _partes_color(muestra)
+            st.markdown('<div class="cell-muted" style="margin:6px 0 -6px;font-weight:700;">Color <span style="font-weight:400;">'
+                        '(descríbelo con la muestra húmeda; si es de la muestra seca, anótalo en las observaciones — INV E-102, 9.3)</span></div>',
+                        unsafe_allow_html=True)
+            valores = {}
+            for col, (label, opciones, campo_db, campo_key, actual) in zip(st.columns(3), [
+                    ("Color base", DESC_COLOR_OPTIONS, "desc_color", "color", color_act),
+                    ("Matiz (rojizo, verdoso…)", DESC_SUBTONALIDAD_OPTIONS, "desc_subtonalidad", "subton", subton_act),
+                    ("Intensidad (claro / oscuro)", DESC_INTENSIDAD_OPTIONS, "desc_intensidad", "intens", intens_act)]):
+                with col:
+                    # La key incluye si el grano es grueso/fino, para forzar un widget nuevo si la persona cambia de escala.
+                    valores[campo_db] = st.selectbox(
+                        label, opciones, index=opciones.index(actual) if actual in opciones else 0,
+                        key=f"{campo_key}_{muestra_id}_{grueso}", format_func=lambda v: v or "— Seleccionar —")
+
+            # Angulosidad (solo grava, bolo o núcleo de roca; en la arena no se describe): etiquetas, se pueden marcar varias.
+            if desc_tipo in DESC_TIPOS_CON_ANGULOSIDAD:
+                sel_ang = _seleccion_multiple("Angulosidad (puedes marcar varias)", [o for o in DESC_ANGULOSIDAD_OPTIONS if o],
+                                              _angulosidades(muestra), key=f"angulosidad_{muestra_id}_{desc_tipo}")
+                valores["desc_angulosidad"] = ",".join(o for o in DESC_ANGULOSIDAD_OPTIONS if o in sel_ang) or None
+
+            # El resto depende del tipo de grano — grueso (grava/arena): cementación; fino
+            # (limo/arcilla/orgánico): consistencia; forma solo en grava. Van en parejas de 2 columnas.
+            campos = []
+            if desc_tipo == "GRAVA":
+                campos.append(("Forma", DESC_FORMA_OPTIONS, "desc_forma", "forma"))
+            if desc_tipo in DESC_TIPOS_CON_PLASTICIDAD:
+                campos.append(("Plasticidad", DESC_PLASTICIDAD_OPTIONS, "desc_plasticidad", "plast"))
+            campos.append(("Cementación", DESC_CEMENTACION_OPTIONS, "desc_cementacion", "cem") if grueso
+                           else ("Consistencia", DESC_CONSISTENCIA_OPTIONS, "desc_consistencia", "cons"))
+            campos.append(("Condición de humedad", DESC_HUMEDAD_OPTIONS, "desc_humedad", "hum"))
+            campos.append(("Estructura", DESC_ESTRUCTURA_OPTIONS, "desc_estructura", "estr"))
+            campos.append(("Reacción con HCl", DESC_HCL_OPTIONS, "desc_hcl", "hcl"))
+            campos.append(("Olor (solo si es orgánico o inusual)", DESC_OLOR_OPTIONS, "desc_olor", "olor"))
+            for i in range(0, len(campos), 2):
+                for col, (label, opciones, campo_db, campo_key) in zip(st.columns(2), campos[i:i + 2]):
                     with col:
-                        # La key incluye si el grano es grueso/fino, para forzar un widget nuevo si la persona cambia de escala.
+                        actual = (muestra.get(campo_db) or "").upper()
                         valores[campo_db] = st.selectbox(
                             label, opciones, index=opciones.index(actual) if actual in opciones else 0,
                             key=f"{campo_key}_{muestra_id}_{grueso}", format_func=lambda v: v or "— Seleccionar —")
 
-                # Angulosidad (solo grano grueso): etiquetas, se pueden marcar varias ("sub angulosa y redondeada").
-                if grueso:
-                    sel_ang = _seleccion_multiple("Angulosidad (puedes marcar varias)", [o for o in DESC_ANGULOSIDAD_OPTIONS if o],
-                                                  _angulosidades(muestra), key=f"angulosidad_{muestra_id}_{grueso}")
-                    valores["desc_angulosidad"] = ",".join(o for o in DESC_ANGULOSIDAD_OPTIONS if o in sel_ang) or None
+            # Vista previa: la frase tal como saldrá en la pantalla y en el Excel, para entender de una vez qué se está armando.
+            previa = descripcion_visual_estructurada({"desc_tipo_suelo": desc_tipo, "desc_tipo_secundario": ",".join(desc_secundarios), **valores})
+            st.markdown(
+                f'<div style="background:{SECONDARY_CONTAINER};border-radius:10px;padding:12px 14px;margin:6px 0 10px;">'
+                f'<div class="cell-muted" style="margin-bottom:2px;">Así quedará la descripción</div>'
+                f'<div style="font-weight:700;color:{PRIMARY};line-height:1.45;">{html.escape(previa) if previa else "— elige el tipo de grano —"}</div></div>',
+                unsafe_allow_html=True)
 
-                # El resto depende del tipo de grano — grueso (grava/arena): cementación; fino
-                # (limo/arcilla/orgánico): consistencia; forma solo en grava. Van en parejas de 2 columnas.
-                campos = []
-                if desc_tipo == "GRAVA":
-                    campos.append(("Forma", DESC_FORMA_OPTIONS, "desc_forma", "forma"))
-                if desc_tipo in DESC_TIPOS_CON_PLASTICIDAD:
-                    campos.append(("Plasticidad", DESC_PLASTICIDAD_OPTIONS, "desc_plasticidad", "plast"))
-                campos.append(("Cementación", DESC_CEMENTACION_OPTIONS, "desc_cementacion", "cem") if grueso
-                               else ("Consistencia", DESC_CONSISTENCIA_OPTIONS, "desc_consistencia", "cons"))
-                campos.append(("Condición de humedad", DESC_HUMEDAD_OPTIONS, "desc_humedad", "hum"))
-                campos.append(("Estructura", DESC_ESTRUCTURA_OPTIONS, "desc_estructura", "estr"))
-                campos.append(("Reacción con HCl", DESC_HCL_OPTIONS, "desc_hcl", "hcl"))
-                campos.append(("Olor (solo si es orgánico o inusual)", DESC_OLOR_OPTIONS, "desc_olor", "olor"))
-                for i in range(0, len(campos), 2):
-                    for col, (label, opciones, campo_db, campo_key) in zip(st.columns(2), campos[i:i + 2]):
-                        with col:
-                            actual = (muestra.get(campo_db) or "").upper()
-                            valores[campo_db] = st.selectbox(
-                                label, opciones, index=opciones.index(actual) if actual in opciones else 0,
-                                key=f"{campo_key}_{muestra_id}_{grueso}", format_func=lambda v: v or "— Seleccionar —")
-
-                # Vista previa: la frase tal como saldrá en la pantalla y en el Excel, para entender de una vez qué se está armando.
-                previa = descripcion_visual_estructurada({"desc_tipo_suelo": desc_tipo, "desc_tipo_secundario": ",".join(desc_secundarios), **valores})
-                st.markdown(
-                    f'<div style="background:{SECONDARY_CONTAINER};border-radius:10px;padding:12px 14px;margin:6px 0 10px;">'
-                    f'<div class="cell-muted" style="margin-bottom:2px;">Así quedará la descripción</div>'
-                    f'<div style="font-weight:700;color:{PRIMARY};line-height:1.45;">{html.escape(previa) if previa else "— elige el tipo de grano —"}</div></div>',
-                    unsafe_allow_html=True)
-
-                if st.button("Guardar descripción visual", icon=":material/save:", key=f"desc_visual_save_{muestra_id}"):
-                    guardar = {"desc_tipo_suelo": desc_tipo, "desc_tipo_secundario": ",".join(desc_secundarios) or None,
-                               "descripcion_visual": None, **valores}
-                    # Los campos que no aparecieron arriba para este tipo de grano (ej. forma si
-                    # no es grava) se limpian en vez de dejar guardado un valor viejo que ya no
-                    # se ve.
-                    for campo_db in ("desc_forma", "desc_angulosidad", "desc_cementacion", "desc_consistencia", "desc_plasticidad"):
-                        guardar.setdefault(campo_db, None)
-                    _guardar_descripcion_visual(muestra["id"], guardar)
-                    st.session_state[desc_edit_key] = False
-                    st.toast("Descripción visual guardada.", icon=":material/check_circle:")
-                    st.rerun()
+            if st.button("Guardar descripción visual", icon=":material/save:", key=f"desc_visual_save_{muestra_id}"):
+                guardar = {"desc_tipo_suelo": desc_tipo, "desc_tipo_secundario": ",".join(desc_secundarios) or None,
+                           "descripcion_visual": None, **valores}
+                # Los campos que no aparecieron arriba para este tipo de grano (ej. forma si
+                # no es grava) se limpian en vez de dejar guardado un valor viejo que ya no
+                # se ve.
+                for campo_db in ("desc_forma", "desc_angulosidad", "desc_cementacion", "desc_consistencia", "desc_plasticidad"):
+                    guardar.setdefault(campo_db, None)
+                _guardar_descripcion_visual(muestra["id"], guardar)
+                st.session_state[desc_edit_key] = False
+                st.toast("Descripción visual guardada.", icon=":material/check_circle:")
+                st.rerun()
         else:
             if descripcion_val:
                 _c_desc, _c_edit = st.columns([6, 1.3], vertical_alignment="center") if puede_editar_muestra else (st.container(), None)
