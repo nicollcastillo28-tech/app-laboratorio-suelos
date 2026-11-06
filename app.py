@@ -4066,13 +4066,27 @@ def _boton_ir_proyecto(codigo, clave):
         navigate("project-detail")
 
 
-def _boton_ir_proyecto_flotante(codigo):
-    """"Ir al proyecto →" fijo en la esquina inferior izquierda, justo encima de "← Atrás": en la pantalla del ensayo se digita hasta abajo y ahí
-    mismo se guarda el progreso, así que el atajo no puede estar solo arriba."""
+def _boton_ir_proyecto_flotante(codigo, perf_codigo=None, muestra_id=None, diferir=False):
+    """"Ir a la muestra" e "Ir al proyecto →" fijos en la esquina inferior izquierda, justo encima de "← Atrás": en la pantalla del ensayo se digita
+    hasta abajo y ahí mismo se guarda el progreso, así que los atajos no pueden estar solo arriba. «Ir a la muestra» sirve para comparar los
+    resultados de los demás ensayos de la misma muestra sin devolverse al proyecto.
+    Con `diferir`, el cambio de pantalla se hace DESPUÉS del autoguardado del ensayo (ver _nav_tras_guardar en render_assay_form): así lo último que
+    se digitó antes de pulsar el botón no se pierde."""
+    destino = None
     with st.container(key="proj-sticky"):
+        if muestra_id and st.button("Ir a la muestra", key="ir_muestra_flotante", icon=":material/science:"):
+            st.session_state.selected_codigo = codigo
+            st.session_state.selected_perforacion = perf_codigo
+            st.session_state.selected_muestra_id = muestra_id
+            destino = "muestra-detail"
         if st.button("Ir al proyecto →", key="ir_proyecto_flotante", icon=":material/folder_open:"):
             st.session_state.selected_codigo = codigo
-            navigate("project-detail")
+            destino = "project-detail"
+    if destino:
+        if diferir:
+            st.session_state["_nav_tras_guardar"] = destino
+        else:
+            navigate(destino)
 
 
 def _boton_atras():
@@ -14170,8 +14184,9 @@ def render_assay_form(prueba=False):
     if titulo_excel:   # el mismo título del encabezado del Excel del ensayo
         st.markdown(f'<div style="font-weight:700;font-size:13px;letter-spacing:0.02em;line-height:1.4;color:{PRIMARY};margin:-6px 0 10px;">'
                     f'{html.escape(" ".join(titulo_excel.split()))}</div>', unsafe_allow_html=True)
+    st.session_state.pop("_nav_tras_guardar", None)
     if not prueba:
-        _boton_ir_proyecto_flotante(codigo)
+        _boton_ir_proyecto_flotante(codigo, perf_codigo, muestra_id, diferir=not read_only)
     st.caption("Resultados de Ensayo" if read_only else ("Revisión del Jefe de Laboratorio" if jefe_edita else ("Revisión del Director Técnico" if ing_edita else
                                                                     ("Registro de Ensayo (Jefe de Laboratorio)" if jefe_trabaja else "Registro de Ensayo"))))
     st.markdown(f'<div style="margin-bottom:10px;">{status_badge_html(assay_estado_display(assay))}&nbsp;&nbsp;'
@@ -14185,6 +14200,8 @@ def render_assay_form(prueba=False):
             st.session_state.selected_perforacion = perf_codigo
             st.session_state.selected_muestra_id = muestra_id
             navigate("muestra-detail")
+        if st.session_state.get("_nav_tras_guardar"):   # aquí no hay nada que guardar: se va de una vez
+            navigate(st.session_state.pop("_nav_tras_guardar"))
         return
     # Se llena más abajo, cuando ya están calculados los resultados (en edición, DESPUÉS de dibujar el formulario, para
     # que la alerta siga lo que se acaba de digitar); el contenedor lo deja arriba, donde se ve de una vez.
@@ -14533,6 +14550,8 @@ def render_assay_form(prueba=False):
                          "esta pantalla: vuelve a intentarlo digitando algo más o pulsa «Guardar borrador».")
         if _guardado_ok:
             st.session_state[_snap_key] = dict(data)   # lo que muestran los campos ya quedó atendido; el próximo cambio se mide contra esto
+        if st.session_state.get("_nav_tras_guardar"):   # «Ir a la muestra» / «Ir al proyecto» flotantes: se va después de guardar lo último digitado
+            navigate(st.session_state.pop("_nav_tras_guardar"))
         _hora_guardado = st.session_state.get(f"_guardado_{assay_id}")
         st.markdown(f'<div class="timestamp-caption">{icon("cloud_done", size=13)} Los cambios se guardan automáticamente mientras digitas.'
                     + (f' <b>Último guardado: {_hora_guardado}</b>' if _hora_guardado else "") + '</div>', unsafe_allow_html=True)
