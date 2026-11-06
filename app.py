@@ -67,6 +67,23 @@ from exportacion_formatos import LibroFormatoOriginal, escribir_entradas, Format
 from presentacion_excel import ajustar_presentacion, reparar_formulas_clasificacion
 
 
+def _precalentar_graficos():
+    """Importa Altair y arma un gráfico de prueba (descarta el resultado). La primera vez en el proceso eso tarda 2 a 3 segundos (importar la
+    librería y validar su esquema): sin esto los pagaba la primera persona que abría un ensayo con gráfico (CBR, Proctor, Granulometría…)."""
+    try:
+        import altair as alt
+        alt.Chart(pd.DataFrame({"x": [0, 1], "y": [0, 1]})).mark_line().encode(x="x:Q", y="y:Q").to_dict()
+    except Exception:
+        pass
+
+
+# Una sola vez por proceso del servidor (el módulo streamlit sobrevive entre corridas), en un hilo aparte para no demorar la primera pantalla.
+if not getattr(st, "_gd_graficos_precalentados", False):
+    st._gd_graficos_precalentados = True
+    import threading
+    threading.Thread(target=_precalentar_graficos, daemon=True, name="precalentar-graficos").start()
+
+
 # Funciones de db que modifican datos del laboratorio. En el "Modo de prueba" (pantalla "pruebas") se ignoran: los formularios y
 # las descargas son los de verdad, pero nada llega a Supabase. Sesión, notificaciones leídas, balanzas y usuarios no se tocan acá.
 _PREFIJOS_ESCRITURA_DB = ("update_", "create_", "add_", "set_", "upsert_", "restore_or_create", "asignar_", "archive_", "commit_",
@@ -6146,9 +6163,11 @@ def render_project_detail():
             # Esa pantalla se conserva para lo que sí sigue necesitando por fuera de esto:
             # exportar el perfil completo, o que el Jefe agregue una muestra nueva.
             if muestras:
-                with st.expander(f"Ver muestras ({len(muestras)})", icon=":material/visibility:"):
-                    _render_tabla_muestras_con_semaforo(sorted(muestras, key=lambda m: clave_numero_muestra(m["numero"])),
-                                                        codigo, perf["codigo"])
+                with desplegable_perezoso(f"Ver muestras ({len(muestras)})", key=f"vermuestras_{codigo}_{perf['codigo']}",
+                                          icon=":material/visibility:") as abierto:
+                    if abierto:
+                        _render_tabla_muestras_con_semaforo(sorted(muestras, key=lambda m: clave_numero_muestra(m["numero"])),
+                                                            codigo, perf["codigo"])
 
             # (Antes había aquí un botón "Ver detalle del sondeo": las muestras y sus ensayos ya se abren directo desde
             # "Ver muestras", así que esa pantalla intermedia no hacía falta.)
@@ -7319,6 +7338,20 @@ def clasificar_aashto(gran_data, lim_data):
 # ════════════════════════════════════════════════════════════════════
 # DETALLE DE MUESTRA → LISTA DE ENSAYOS SOLICITADOS
 # ════════════════════════════════════════════════════════════════════
+@contextlib.contextmanager
+def desplegable_perezoso(label, key, **kwargs):
+    """Como st.expander, pero lo de adentro solo se arma cuando está ABIERTO (devuelve True/False en el `with ... as abierto`). Un desplegable
+    cerrado de Streamlit igual corre y dibuja todo su contenido en cada clic: en el detalle del proyecto eso eran las tablas de muestras de
+    todas las perforaciones (cientos de botones) aunque nadie las mirara. Abrirlo hace una corrida extra, solo de lo que se va a ver.
+    En versiones de Streamlit sin desplegable con estado (antes de on_change en st.expander) se comporta como antes: siempre dibuja."""
+    try:
+        exp = st.expander(label, key=key, on_change="rerun", **kwargs)
+    except TypeError:
+        exp = st.expander(label, **kwargs)
+    with exp:
+        yield getattr(exp, "open", None) is not False
+
+
 def _seleccion_multiple(label, opciones, actuales, key):
     """Varias opciones a la vez como etiquetas tocables (st.pills, Streamlit >= 1.40); en versiones viejas, un multiselect."""
     if hasattr(st, "pills"):
@@ -7785,9 +7818,10 @@ def render_muestra_detail():
                                 on_click=_marcar_emision, args=(codigo, perf_codigo))
                     # Quien revisa ve los resultados aquí mismo, sin entrar al ensayo: aparece cuando el laboratorista ya lo envió.
                         if mostrar_aprobacion and (st.session_state.role == "ingeniero" or (st.session_state.role == "jefe" and not jefe_en_modo_laboratorista())):
-                            with st.expander("Resultados", icon=":material/calculate:"):
+                            with desplegable_perezoso("Resultados", key=f"resultados_{existing['id']}", icon=":material/calculate:") as abierto:
                                 try:
-                                    render_resultados_ensayo(tipo_interno, existing.get("data") or {}, muestra)
+                                    if abierto:
+                                        render_resultados_ensayo(tipo_interno, existing.get("data") or {}, muestra)
                                 except Exception as _e:
                                     if "RerunData" in type(_e).__name__ or "Stop" in type(_e).__name__:
                                         raise
@@ -14104,7 +14138,9 @@ def _render_trasladar_datos(assay, muestra, assay_id, actor):
     ya enviado a revisión no se toca."""
     tipo = assay["tipo"]
     datos = assay.get("data") or {}
-    with st.expander("Trasladar estos datos a otro ensayo", icon=":material/move_up:"):
+    with desplegable_perezoso("Trasladar estos datos a otro ensayo", key=f"trasladar_{assay_id}", icon=":material/move_up:") as abierto:
+        if not abierto:
+            return
         if not tiene_valores_digitados(datos):
             st.caption("Este ensayo todavía no tiene datos que trasladar.")
             return
@@ -14531,7 +14567,10 @@ def render_assay_form(prueba=False):
         _snap = st.session_state.get(_snap_key)
         if _snap is None:
             _snap = dict(data)
-        _cambios = {k: v for k, v in data.items() if (k not in _snap or _snap[k] != v) or k not in _base}
+        # Una casilla que todavía no existía en lo guardado y sigue VACÍA (p. ej. un campo nuevo del formulario) no es un cambio: antes solo abrir un
+        # ensayo viejo ya lo guardaba (y quien solo miró quedaba como el último que lo editó).
+        _cambios = {k: v for k, v in data.items()
+                    if (k in _snap and _snap[k] != v) or ((k not in _snap or k not in _base) and v not in ("", None, [], {}))}
         _quitados = [k for k in _snap if k not in data and k in _base]
         def _mezclar(base):
             mezcla = dict(base)
@@ -14556,7 +14595,11 @@ def render_assay_form(prueba=False):
                 st.rerun()
         _guardado_ok = not autoguardado_bloqueado   # bloqueado: la foto de los campos NO avanza, así el aviso y el botón de recuperar siguen ahí
         # (Entrar a mirar un ensayo NO lo guarda: antes bastaba con que otra persona lo abriera para que quedara su nombre como el último.)
-        if not autoguardado_bloqueado and (data_guardar != assay.get("data", {}) or observations != assay.get("observations", "")):
+        # Solo se escribe si la persona cambió algo (o hay un valor digitado nuevo). Los valores que el formulario pone por defecto (la norma, los
+        # equipos…) no provocan por sí solos un guardado al abrir el ensayo: viajan con el siguiente guardado de verdad.
+        _hay_cambio_real = bool(_quitados) or any((k in _snap and _snap[k] != v) or _es_valor_digitado(k, v) for k, v in _cambios.items())
+        if not autoguardado_bloqueado and ((_hay_cambio_real and data_guardar != assay.get("data", {}))
+                                           or observations != assay.get("observations", "")):
             # La copia del ensayo que trae esta pantalla puede estar vieja (el mismo ensayo abierto en otra pestaña, tableta o por otra persona que ya
             # guardó). Escribir «copia vieja + mis cambios» BORRABA lo que la otra pantalla guardó después. Por eso, justo antes de escribir, se lee lo que
             # hay AHORA en la base y los cambios de esta pantalla se mezclan sobre eso: solo se tocan los campos que esta persona cambió.
