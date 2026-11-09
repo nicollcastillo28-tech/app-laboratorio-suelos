@@ -1501,18 +1501,20 @@ def _texto_segundo_grano(principal, nombre, nivel, adjetivo=None):
 
 
 def _propiedades_descripcion(muestra, tipo, incluir_plasticidad=True):
-    """Todo lo que va después del nombre del suelo (angulosidad, forma, color, cementación o consistencia, estructura, humedad, HCl, olor), solo con
-    lo que le corresponde al grano `tipo`: si la clasificación cambió el grano (grava -> arena), la angulosidad o la cementación que se anotaron
-    para la grava ya no salen en la arena; tampoco la consistencia de un fino en un grueso."""
-    partes = []
+    """(del_grano, resto): lo que va después del nombre del suelo, solo con lo que le corresponde al grano `tipo` (si la clasificación cambió el
+    grano, grava -> arena, la angulosidad o la cementación de la grava ya no salen en la arena; tampoco la consistencia de un fino en un grueso).
+      del_grano: angulosidad y forma -- van PEGADAS al grano principal, antes del segundo grano: en «GRAVA, CON ARENA SUB ANGULOSA» parecía que
+                 la angulosa era la arena.
+      resto:     color, cementación o plasticidad/consistencia, estructura, humedad, HCl y olor."""
+    del_grano, partes = [], []
     angulosidades = _angulosidades(muestra) if tipo in DESC_TIPOS_CON_ANGULOSIDAD else []
     if tipo in ("BOLO", "NÚCLEO DE ROCA"):   # nombres masculinos: "BOLO ANGULOSO", no "BOLO ANGULOSA"
         angulosidades = [a[:-1] + "O" if a.endswith("A") else a for a in angulosidades]
     if angulosidades:
-        partes.append(_lista_y(angulosidades))
+        del_grano.append(_lista_y(angulosidades))
     forma = (muestra.get("desc_forma") or "").upper() if tipo == "GRAVA" else None
     if forma:
-        partes.append(f"DE FORMA {forma}")
+        del_grano.append(f"DE FORMA {forma}")
 
     color, subtonalidad, intensidad = _partes_color(muestra)
     if color or subtonalidad or intensidad:
@@ -1545,24 +1547,24 @@ def _propiedades_descripcion(muestra, tipo, incluir_plasticidad=True):
     olor = (muestra.get("desc_olor") or "").upper() or None
     if olor:
         partes.append(f"CON OLOR {olor}")
-    return partes
+    return del_grano, partes
 
 
 def descripcion_visual_estructurada(muestra):
-    """Arma la frase en mayúscula (ej. 'ARCILLA CON ALGO DE ARENA DE COLOR MARRÓN ROJIZO DE CONSISTENCIA DURA EN CONDICIÓN SECA') con lo que
-    eligió el laboratorista en los recuadros: un grano principal, a lo sumo UN segundo grano (-OSA / CON / CON ALGO DE) y las propiedades que le
-    corresponden a ese grano. None si todavía no se ha elegido nada."""
+    """Arma la frase en mayúscula, por partes separadas con comas (ej. 'GRAVA, SUB ANGULOSA, CON ARENA, DE COLOR MARRÓN OSCURO, EN CONDICIÓN
+    HÚMEDA') con lo que eligió el laboratorista en los recuadros: el grano principal con su angulosidad y forma, a lo sumo UN segundo grano
+    (-OSA / CON / CON ALGO DE) y el resto de propiedades que le corresponden a ese grano. None si todavía no se ha elegido nada."""
     # .upper(): datos de antes (migración 0015) se guardaron en minúscula/mixta ("Limo", "Café oscuro").
     tipo = (muestra.get("desc_tipo_suelo") or "").upper() or None
+    del_grano, resto = _propiedades_descripcion(muestra, tipo)
     partes = []
+    complemento = None
     if tipo:
         nombre, nivel = _secundario(muestra, tipo)
         adjetivo, complemento = _texto_segundo_grano(tipo, nombre, nivel)
         partes.append(tipo + (f" {adjetivo}" if adjetivo else ""))
-        if complemento:
-            partes.append(complemento)
-    partes += _propiedades_descripcion(muestra, tipo)
-    return " ".join(partes) if partes else None
+    partes += del_grano + ([complemento] if complemento else []) + resto
+    return ", ".join(partes) if partes else None
 
 
 def descripcion_visual_para_excel(muestra):
@@ -1625,10 +1627,17 @@ def grano_segun_clasificacion(res):
                 segundo=segundo, segundo_simple=segundo_simple, nivel=nivel, adjetivo=adjetivo)
 
 
-def nombre_segun_clasificacion(g):
-    """'ARENA MAL GRADADA CON ALGO DE LIMO', 'GRAVA ARCILLOSA', 'ARCILLA ARENOSA DE BAJA PLASTICIDAD'... a partir de grano_segun_clasificacion."""
+def _nombre_y_segundo_grano(g):
+    """('ARENA MAL GRADADA', 'CON ALGO DE LIMO') | ('GRAVA ARCILLOSA', None) | ('ARCILLA DE BAJA PLASTICIDAD', 'CON ARENA')... a partir de
+    grano_segun_clasificacion: el nombre del suelo (grano principal, adjetivo del segundo grano si pasa del 30 %, gradación o plasticidad de la
+    USCS) y aparte el «CON …», que en la frase va después de la angulosidad del grano principal."""
     adjetivo, complemento = _texto_segundo_grano(g["principal"], g["segundo"], g["nivel"], g["adjetivo"])
-    return " ".join(x for x in (g["principal"], adjetivo, g["gradacion"], complemento, g["plasticidad"]) if x)
+    return " ".join(x for x in (g["principal"], adjetivo, g["gradacion"], g["plasticidad"]) if x), complemento
+
+
+def nombre_segun_clasificacion(g):
+    """'ARENA MAL GRADADA, CON ALGO DE LIMO', 'GRAVA ARCILLOSA', 'ARCILLA ARENOSA DE BAJA PLASTICIDAD'..."""
+    return ", ".join(x for x in _nombre_y_segundo_grano(g) if x)
 
 
 def clasificacion_de_muestra(muestra):
@@ -1647,13 +1656,15 @@ def descripcion_visual_calculada(muestra):
     g = clasificacion_de_muestra(muestra)
     if not g:
         return None
-    nombre = nombre_segun_clasificacion(g)
     libre = (muestra.get("descripcion_visual") or "").strip().upper()
     if libre and not muestra.get("desc_tipo_suelo"):
         # Muestras de antes con la descripción escrita a mano: se conserva lo que escribió salvo el tipo de grano del comienzo.
-        return _fusionar_clasificacion_y_texto(nombre, libre)
-    # La plasticidad la da la clasificación (baja / alta): la que se anotó a ojo no se repite.
-    return " ".join([nombre] + _propiedades_descripcion(muestra, g["principal_simple"], incluir_plasticidad=False))
+        return _fusionar_clasificacion_y_texto(nombre_segun_clasificacion(g), libre)
+    # Grano principal y su angulosidad/forma, luego el segundo grano y después el resto, separados con comas. La plasticidad la da la
+    # clasificación (baja / alta): la que se anotó a ojo no se repite.
+    nombre, complemento = _nombre_y_segundo_grano(g)
+    del_grano, resto = _propiedades_descripcion(muestra, g["principal_simple"], incluir_plasticidad=False)
+    return ", ".join([nombre] + del_grano + ([complemento] if complemento else []) + resto)
 
 
 _MARCAS_DESCRIPCION = re.compile(r"\b(DE COLOR|COLOR|CON CEMENTACI[ÓO]N|CEMENTAD[AO]|D[ÉE]BILMENTE|DE CONSISTENCIA|CONSISTENCIA|EN CONDICI[ÓO]N)\b")
