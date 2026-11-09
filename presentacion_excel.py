@@ -78,15 +78,105 @@ def corregir_avisos_vacios(xml):
                   lambda m: re.sub(r'\bpriority="\d+"', f'priority="{orden[m.start()]}"', m.group(0)), resultado)
 
 
+TAMANO_ENCABEZADO = "11"
+
+
+class _EstilosPorContenido(dict):
+    """Índice de estilos (<xf>) que reconoce como iguales dos estilos con los mismos atributos en distinto orden o escritos como <xf .../> y
+    <xf ...></xf>. Sin esto, ajustar dos veces el mismo libro creaba copias repetidas de un estilo que ya estaba."""
+    @staticmethod
+    def _clave(xf):
+        m = re.match(r'<xf\b([^>]*?)(/?)>', xf)
+        cuerpo = '' if m.group(2) else xf[m.end():-len('</xf>')]
+        return tuple(sorted(re.findall(r'([\w:]+)="([^"]*)"', m.group(1)))), cuerpo
+
+    def __init__(self, pares=()):
+        super().__init__()
+        for xf, i in pares:
+            self.setdefault(self._clave(xf), i)
+
+    def __contains__(self, xf):
+        return super().__contains__(self._clave(xf))
+
+    def __getitem__(self, xf):
+        return super().__getitem__(self._clave(xf))
+
+    def __setitem__(self, xf, i):
+        super().__setitem__(self._clave(xf), i)
+
+
+def _fila_descripcion_visual(z, xml):
+    """Fila del rótulo «DESCRIPCIÓN VISUAL» de la hoja (el final del encabezado de los informes), o None si la hoja no lo tiene."""
+    if 'xl/sharedStrings.xml' not in z.namelist():
+        return None
+    textos = [''.join(re.findall(r'<t\b[^>]*>([^<]*)</t>', si)) for si in
+              re.findall(r'<si>(.*?)</si>', z.read('xl/sharedStrings.xml').decode('utf-8'), re.S)]
+    indices = {str(i) for i, t in enumerate(textos) if re.match(r'\s*DESCRIPCI', t, re.I)}
+    filas = [int(m.group(1)) for m in re.finditer(r'<c\b[^>]*\br="[A-Z]+(\d+)"[^>]*\bt="s"[^>]*><v>(\d+)</v>', xml) if m.group(2) in indices]
+    return min(filas) if filas else None
+
+
 def ajustar_presentacion(contenido, parte, referencias):
-    """Centra las entradas sin modificar valores, formatos numéricos ni objetos."""
+    """Centra las entradas sin modificar valores, formatos numéricos ni objetos. Además, lo que la app escribe en el ENCABEZADO del informe
+    (de la fila 1 a la de «DESCRIPCIÓN VISUAL») va siempre en letra 11: varias plantillas traen algunas de esas casillas en 10 (el proyecto en
+    Humedad, la perforación en la 001 de antes…) y al descargar se veían más pequeñas. El estilo original no se toca: se usa una copia del mismo
+    estilo con la letra en 11."""
     with zipfile.ZipFile(BytesIO(contenido)) as z:
         xml = z.read(parte).decode('utf-8')
         estilos = z.read('xl/styles.xml').decode('utf-8')
         bloque = re.search(r'<cellXfs\b[^>]*>(.*?)</cellXfs>', estilos, re.S)
         xfs = re.findall(r'<xf\b[^>]*?/>|<xf\b[^>]*>.*?</xf>', bloque.group(1), re.S)
-        existentes = {xf:i for i,xf in enumerate(xfs)}
+        existentes = _EstilosPorContenido((xf, i) for i, xf in enumerate(xfs))
         indices = {}
+        bloque_f =re.search(r'<fonts\b[^>]*>(.*?)</fonts>', estilos, re.S)
+        fuentes = re.findall(r'<font\b[^>]*?/>|<font\b[^>]*>.*?</font>', bloque_f.group(1), re.S) if bloque_f else []
+        n_fuentes = len(fuentes)
+        fuentes_11, indices_11 = {}, {}
+
+        def fuente_11(fid):
+            """Índice de una fuente igual a `fid` pero de tamaño 11 (la misma si ya lo es)."""
+            if fid in fuentes_11:
+                return fuentes_11[fid]
+            f = fuentes[fid]
+            if re.search(r'<sz\b[^>]*\bval="' + TAMANO_ENCABEZADO + r'"', f):
+                fuentes_11[fid] = fid
+                return fid
+            if f.endswith('/>'):
+                nueva = f'<font><sz val="{TAMANO_ENCABEZADO}"/></font>'
+            elif re.search(r'<sz\b[^>]*/>', f):
+                nueva = re.sub(r'<sz\b[^>]*/>', f'<sz val="{TAMANO_ENCABEZADO}"/>', f, count=1)
+            else:
+                apertura_f = re.match(r'<font\b[^>]*>', f).group(0)
+                nueva = apertura_f + f'<sz val="{TAMANO_ENCABEZADO}"/>' + f[len(apertura_f):]
+            if nueva not in fuentes:
+                fuentes.append(nueva)
+            fuentes_11[fid] = fuentes.index(nueva)
+            return fuentes_11[fid]
+
+        def en_11(indice):
+            """Índice de un estilo igual a `indice` pero con la letra en 11 (el mismo si ya lo es)."""
+            if indice in indices_11:
+                return indices_11[indice]
+            xf = xfs[indice]
+            tag = re.match(r'<xf\b[^>]*>', xf).group(0)
+            fid = re.search(r'\bfontId="(\d+)"', tag)
+            fid = int(fid.group(1)) if fid else 0
+            if fid >= len(fuentes) or fuente_11(fid) == fid:
+                indices_11[indice] = indice
+                return indice
+            tag_nuevo = re.sub(r'\s+applyFont="[^"]*"', '', tag)
+            if re.search(r'\bfontId="\d+"', tag_nuevo):
+                tag_nuevo = re.sub(r'\bfontId="\d+"', f'fontId="{fuente_11(fid)}"', tag_nuevo)
+            else:
+                tag_nuevo = tag_nuevo.replace('<xf', f'<xf fontId="{fuente_11(fid)}"', 1)
+            tag_nuevo = tag_nuevo[:-2] + ' applyFont="1"/>' if tag_nuevo.endswith('/>') else tag_nuevo[:-1] + ' applyFont="1">'
+            nuevo = tag_nuevo + xf[len(tag):]
+            if nuevo not in existentes:
+                existentes[nuevo] = len(xfs)
+                xfs.append(nuevo)
+            indices_11[indice] = existentes[nuevo]
+            return indices_11[indice]
+
         def centrado(indice):
             if indice in indices:
                 return indices[indice]
@@ -114,15 +204,23 @@ def ajustar_presentacion(contenido, parte, referencias):
             return indices[indice]
         # Identificadores estables: dos muestras del mismo formato comparten estilos
         # al agruparse, aunque una tenga campos vacíos o límites NP/NL.
-        for indice in range(len(xfs)):
+        n_base = len(xfs)
+        for indice in range(n_base):
             centrado(indice)
+        # Las versiones con letra 11 también se crean siempre en el mismo orden, por la misma razón.
+        for indice in range(n_base):
+            centrado(en_11(indice))
         refs = set(referencias)
+        fin_encabezado = _fila_descripcion_visual(z, xml)
         def celda(m):
             if m.group(1) not in refs:
                 return m.group(0)
             tag = m.group(0)
             s = re.search(r'\bs="(\d+)"', tag)
-            nuevo = str(centrado(int(s.group(1)) if s else 0))
+            base = int(s.group(1)) if s else 0
+            if fin_encabezado and int(re.sub(r'^[A-Z]+', '', m.group(1))) <= fin_encabezado:
+                base = en_11(base)   # encabezado del informe: siempre en letra 11
+            nuevo = str(centrado(base))
             if s:
                 return re.sub(r'\bs="\d+"', f's="{nuevo}"', tag)
             return tag[:-2] + f' s="{nuevo}"/>' if tag.endswith('/>') else tag[:-1] + f' s="{nuevo}">'
@@ -131,6 +229,10 @@ def ajustar_presentacion(contenido, parte, referencias):
         if len(xfs) != len(re.findall(r'<xf\b', bloque.group(1))):
             apertura = re.sub(r'\bcount="\d+"', f'count="{len(xfs)}"', estilos[bloque.start():bloque.start(1)])
             estilos = estilos[:bloque.start()] + apertura + ''.join(xfs) + '</cellXfs>' + estilos[bloque.end():]
+        if len(fuentes) != n_fuentes:   # <fonts> va antes de <cellXfs>: se busca de nuevo, ya con cellXfs reemplazado
+            bloque_f = re.search(r'<fonts\b[^>]*>(.*?)</fonts>', estilos, re.S)
+            apertura = re.sub(r'\bcount="\d+"', f'count="{len(fuentes)}"', estilos[bloque_f.start():bloque_f.start(1)])
+            estilos = estilos[:bloque_f.start()] + apertura + ''.join(fuentes) + '</fonts>' + estilos[bloque_f.end():]
         salida = BytesIO()
         with zipfile.ZipFile(salida, 'w', zipfile.ZIP_DEFLATED) as out:
             for item in z.infolist():

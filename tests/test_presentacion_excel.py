@@ -45,7 +45,14 @@ class PresentacionTest(unittest.TestCase):
             self.assertEqual(len(regla_alerta),1)
             self.assertEqual(regla_alerta[0].get('operator'),'greaterThan')
             self.assertEqual(regla_alerta[0].findtext(S+'formula'),'$S$31')
-            self.assertEqual(a.read('xl/styles.xml').split(b'<cellXfs')[0],b.read('xl/styles.xml').split(b'<cellXfs')[0])
+            # Antes de las fuentes nada cambia; de las fuentes, las originales quedan iguales y en su orden (solo se agregan al final las
+            # variantes en letra 11 que usa el encabezado del informe).
+            ea, eb = a.read('xl/styles.xml'), b.read('xl/styles.xml')
+            self.assertEqual(ea.split(b'<fonts')[0], eb.split(b'<fonts')[0])
+            fuentes = lambda x: re.findall(rb'<font\b[^>]*?/>|<font\b[^>]*>.*?</font>', re.search(rb'<fonts\b[^>]*>(.*?)</fonts>', x, re.S).group(1), re.S)
+            self.assertEqual(fuentes(ea), fuentes(eb)[:len(fuentes(ea))])
+            self.assertTrue(all(b'<sz val="11"/>' in f for f in fuentes(eb)[len(fuentes(ea)):]))
+        self.assertEqual(ws['D6'].font.sz, 11)   # encabezado del informe: letra 11
         for celda in valores:
             self.assertEqual(ws[celda].alignment.horizontal,'center')
             self.assertEqual(ws[celda].alignment.vertical,'center')

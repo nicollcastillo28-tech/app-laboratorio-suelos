@@ -8165,8 +8165,8 @@ def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observ
 
     perf = get_perforacion(codigo, perf_codigo)
     ws["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""  # Tipo de perforación (lista desplegable)
-    # El número de perforación cae en una celda distinta según la plantilla: E12 en la de Humedad (GDA-FLC-014, noviembre de 2026),
-    # F12 en Granulometría/Límites (GDA-FLC-001, revisión de octubre de 2026).
+    # El número de perforación va en E12 (E12:F12 combinadas) en Humedad (GDA-FLC-014) y en Granulometría/Límites (GDA-FLC-001), versiones de
+    # noviembre de 2026; el INFORME ID (K10) lo lee de ahí.
     ws[perf_numero_cell] = perf_para_encabezado(perf_codigo, muestra, perf["consecutivo"] if perf else "")
     ws["H12"] = muestra_para_encabezado(perf_codigo, muestra)
     ws["K12"] = to_float(muestra.get("profundidad_de"))
@@ -9044,7 +9044,7 @@ def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_dat
     wb = _cargar_plantilla_informe(TEMPLATE_GRANULOMETRIA, keep_vba=True,
                                   celdas_formula_editables={'FORMATO': editables})
     ws = wb["FORMATO"]
-    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo, perf_numero_cell="F12", datas=[gran_data, lim_data])
+    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo, perf_numero_cell="E12", datas=[gran_data, lim_data])
 
     if gran_data is not None:
         masa_inicial_seca = to_float(gran_data.get("masa_inicial_seca"))
