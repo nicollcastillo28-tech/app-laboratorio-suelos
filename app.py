@@ -64,7 +64,7 @@ if not getattr(st.download_button, "_gd_con_contexto", False):
     _download_button_con_contexto._gd_con_contexto = True
     st.download_button = _download_button_con_contexto
 from exportacion_formatos import LibroFormatoOriginal, escribir_entradas, FormatoIncompatibleError
-from presentacion_excel import ajustar_presentacion, reparar_formulas_clasificacion, reparar_punto_carta_plasticidad
+from presentacion_excel import ajustar_presentacion, reparar_formulas_clasificacion, reparar_punto_carta_plasticidad, reponer_formulas_faltantes
 
 
 def _precalentar_graficos():
@@ -8165,8 +8165,8 @@ def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observ
 
     perf = get_perforacion(codigo, perf_codigo)
     ws["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""  # Tipo de perforación (lista desplegable)
-    # El número de perforación cae en una celda distinta según la plantilla: F12 en la de
-    # Humedad (GDA-FLC-014), F12 también en Granulometría/Límites (GDA-FLC-001, revisión de octubre de 2026).
+    # El número de perforación cae en una celda distinta según la plantilla: E12 en la de Humedad (GDA-FLC-014, noviembre de 2026),
+    # F12 en Granulometría/Límites (GDA-FLC-001, revisión de octubre de 2026).
     ws[perf_numero_cell] = perf_para_encabezado(perf_codigo, muestra, perf["consecutivo"] if perf else "")
     ws["H12"] = muestra_para_encabezado(perf_codigo, muestra)
     ws["K12"] = to_float(muestra.get("profundidad_de"))
@@ -9101,12 +9101,14 @@ def generar_excel_humedad(codigo, perf_codigo, muestra, project, data, observaci
     wb = _cargar_plantilla_informe(TEMPLATE_HUMEDAD)
     ws = wb["Hoja1"]
 
-    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo, datas=[data])
+    # Número de perforación: E12 desde la versión de noviembre de 2026 (E12:F12 combinadas; el INFORME ID de K10 lo lee de E12).
+    _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo, perf_numero_cell="E12", datas=[data])
     ws["I19"] = data.get("hum_recipiente", "")
     ws["I20"] = to_float(data.get("hum_masa_humedo_mas_recipiente"))
     ws["I21"] = to_float(data.get("hum_seco_mas_recipiente"))
     ws["I22"] = to_float(data.get("hum_masa_recipiente"))
-    # I23 (masa seca) e I24 (% humedad) son fórmulas de la propia plantilla; no se tocan.
+    # I23 (masa seca) e I24 (% humedad) son fórmulas de la propia plantilla; no se tocan. La versión de noviembre de 2026 de la plantilla
+    # llegó sin ellas: si faltan, se ponen las mismas de siempre al final (ver reponer_formulas_faltantes).
 
     metodo = data.get("hum_metodo", "")
     ws["C28"] = "MÉTODO A" if metodo == "Método A" else ("MÉTODO B" if metodo == "Método B" else "")
@@ -9123,8 +9125,13 @@ def generar_excel_humedad(codigo, perf_codigo, muestra, project, data, observaci
 
     bio = BytesIO()
     wb.save(bio)
-    bio.seek(0)
-    return bio.getvalue()
+    salida = bio.getvalue()
+    from exportacion_formatos import partes_hojas
+    return reponer_formulas_faltantes(salida, partes_hojas(salida)["Hoja1"], HUMEDAD_FORMULAS_PLANTILLA)
+
+
+# Cálculos de la plantilla GDA-FLC-014 (masa seca y % de humedad), tal como venían en ella: se reponen si una versión los pierde.
+HUMEDAD_FORMULAS_PLANTILLA = {"I23": '+IF(I21=0,"",I21-I22)', "I24": '+IF(I20=0,"",(I20-I21)/(I21-I22)*100)'}
 
 
 @_exportacion_controlada

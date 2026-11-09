@@ -214,3 +214,27 @@ def reparar_punto_carta_plasticidad(contenido, ll=None, ip=None):
             for item in z.infolist():
                 out.writestr(item, cambios.get(item.filename) or z.read(item.filename))
         return salida.getvalue()
+
+
+def reponer_formulas_faltantes(contenido, parte, formulas):
+    """Pone en la hoja `parte` las fórmulas de `formulas` ({celda: fórmula sin «=»}) SOLO en las celdas que no traen fórmula ni valor.
+    Para cálculos que la plantilla oficial perdió (p. ej. la masa seca y la humedad del GDA-FLC-014): si la plantilla ya los trae, no se toca
+    nada. Se conserva el estilo de la celda; Excel calcula el resultado al abrir (el libro ya va con recálculo completo)."""
+    import html
+    with zipfile.ZipFile(BytesIO(contenido)) as z:
+        xml = z.read(parte).decode('utf-8')
+        nuevo = xml
+        for ref, formula in formulas.items():
+            m = re.search(r'<c\b[^>]*\br="' + ref + r'"[^>]*?(?:/>|>(.*?)</c>)', nuevo, re.S)
+            if not m or (m.group(1) and re.search(r'<f\b|<v>[^<]', m.group(1))):
+                continue
+            abre = re.match(r'<c\b[^>]*?(?=/?>)', m.group(0)).group(0)
+            abre = re.sub(r'\s+t="[^"]*"', '', abre)
+            nuevo = nuevo[:m.start()] + f'{abre}><f>{html.escape(formula, quote=False)}</f></c>' + nuevo[m.end():]
+        if nuevo == xml:
+            return contenido
+        salida = BytesIO()
+        with zipfile.ZipFile(salida, 'w', zipfile.ZIP_DEFLATED) as out:
+            for item in z.infolist():
+                out.writestr(item, nuevo.encode('utf-8') if item.filename == parte else z.read(item.filename))
+        return salida.getvalue()
