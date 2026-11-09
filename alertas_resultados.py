@@ -121,6 +121,11 @@ FUENTES = {
         "url": "https://store.astm.org/c0033_c0033m-18.html",
         "nota": "ASTM C142/C33 fija 3.0 % máx. en agregado fino. Es un criterio de ESPECIFICACIÓN (cumple / no cumple), no un rango típico.",
         "estado": "secundaria"},
+    "plantilla_lp": {
+        "titulo": "Formato GDA-FLC-001 (Límite Plástico): la plantilla marca en rojo la humedad mayor cuando supera a la otra en más de 1 punto",
+        "url": "",
+        "nota": "Formato condicional de las celdas Y25 y Z25 del Excel oficial (Y25 > Z25 + 1, o Z25 > Y25 + 1).",
+        "estado": "criterio"},
     "fisica": {
         "titulo": "Relaciones físicas básicas de suelos (sin fuente externa)",
         "url": "",
@@ -288,9 +293,19 @@ def _humedad(v, material, ctx):
     return alertas_humedad(v.get("w"), material, ctx)
 
 
+# Diferencia máxima entre las dos humedades del Límite Plástico: la misma regla con que la plantilla GDA-FLC-001 pinta de rojo la mayor.
+LP_DIFERENCIA_MAX = 1.0
+
+
 def _limites(v, material, ctx):
     out = []
     ll, lp, ip = v.get("ll"), v.get("lp"), v.get("ip")
+    lps = [w for w in (v.get("lp_humedades") or []) if _num(w)]
+    if len(lps) == 2 and abs(lps[0] - lps[1]) > LP_DIFERENCIA_MAX:
+        mayor = 1 if lps[0] > lps[1] else 2
+        out.append(_a("revisar", f"Límite Plástico: las humedades de los dos ensayos se alejan {_f(abs(lps[0] - lps[1]), 2)} puntos ({_f(lps[0], 2)} % y "
+                                 f"{_f(lps[1], 2)} %). La plantilla marca en rojo el ensayo {mayor} cuando la diferencia pasa de 1 punto: revisa sus masas "
+                                 "o repítelo.", "plantilla_lp"))
     if not (_num(ll) and _num(lp)):
         return out
     if lp > ll or (_num(ip) and ip < 0):

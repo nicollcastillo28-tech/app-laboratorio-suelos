@@ -2689,6 +2689,15 @@ def _tiene_datos_ll(data):
                if k.startswith("lim_ll_") and "recipiente" not in k and not k.endswith("_lastsync") and isinstance(v, str))
 
 
+def limite_plastico_disperso(r):
+    """(mayor, diferencia) si las dos humedades del Límite Plástico se alejan más de 1 punto -- la regla con que la plantilla GDA-FLC-001 pinta de
+    rojo la mayor (Y25 > Z25 + 1 o al revés); None si no. `r`: resultado de calcular_limites."""
+    w = r.get("plasticos") or []
+    if r.get("np") or len(w) != 2 or w[0] is None or w[1] is None or abs(w[0] - w[1]) <= alertas_res.LP_DIFERENCIA_MAX:
+        return None
+    return (1 if w[0] > w[1] else 2), abs(w[0] - w[1])
+
+
 def limites_sin_limites(data):
     """True si el suelo se reporta N.L. – N.P. sin datos: se marcó "No líquido" o "No plástico" sin haber digitado el Límite Líquido."""
     return bool((data or {}).get("lim_nl")) or (bool((data or {}).get("lim_np")) and not _tiene_datos_ll(data))
@@ -13268,7 +13277,8 @@ def render_limites_form(data, assay_id):
             hum, sec, rec = (to_float(data.get(f"{pref}_{c}_{i}")) for c in ("humedo", "seco", "recip_masa"))
             if sec is not None and rec is not None and (sec - rec <= 0 or (hum is not None and hum < sec)):
                 revisar.append(str(i))
-        if revisar:
+        disperso = limite_plastico_disperso(r) if tipo == "lp" else None
+        if revisar or disperso:
             titulo_res += " ⚠️"
         with st.expander(titulo_res, icon=":material/calculate:"):
             if revisar:
@@ -13280,7 +13290,10 @@ def render_limites_form(data, assay_id):
                 st.markdown(param_table_html([("Límite Líquido — LL (%)", r["ll"] if r["ll"] is not None else "—")], header_left="RESULTADO",
                                              header_right="VALOR"), unsafe_allow_html=True)
             else:
-                filas_lp = [(f"Ensayo {i}", fmt(w)) for i, w in enumerate(r["plasticos"], 1)]
+                if disperso:
+                    st.error(f"Las humedades de los dos ensayos se alejan {fmt_num(disperso[1], 2)} puntos: en el Excel la del ensayo {disperso[0]} sale "
+                             "en rojo (la plantilla la marca cuando la diferencia pasa de 1 punto). Revisa sus masas o repite ese ensayo.")
+                filas_lp = [(f"Ensayo {i}" + (" ⚠️" if disperso and disperso[0] == i else ""), fmt(w)) for i, w in enumerate(r["plasticos"], 1)]
                 st.markdown(param_table_html(filas_lp, header_left="ENSAYO", header_right="HUMEDAD (%)"), unsafe_allow_html=True)
                 st.markdown(param_table_html([("Límite Plástico — LP (%)", r["lp"] if r["lp"] is not None else "—"),
                                               ("Índice de Plasticidad — IP (%)", r["ip"] if r["ip"] is not None else "—")],
@@ -13951,7 +13964,7 @@ def _valores_alertas(tipo, data, muestra):
         if r["nl"]:
             return []
         ll, lp, ip = _calcular_limites_atterberg(data)
-        return [{"ll": ll, "lp": lp, "ip": ip}]
+        return [{"ll": ll, "lp": lp, "ip": ip, "lp_humedades": [] if r["np"] else r["plasticos"]}]
     if tipo in ("granulometria", "pasa200"):
         curva = _calcular_curva_granulometrica(data)
         if curva is None:
