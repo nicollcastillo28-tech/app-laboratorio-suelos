@@ -14334,8 +14334,7 @@ def render_assay_form(prueba=False):
         if st.session_state.get("_nav_tras_guardar"):   # aquí no hay nada que guardar: se va de una vez
             navigate(st.session_state.pop("_nav_tras_guardar"))
         return
-    # Se llena más abajo, cuando ya están calculados los resultados (en edición, DESPUÉS de dibujar el formulario, para
-    # que la alerta siga lo que se acaba de digitar); el contenedor lo deja arriba, donde se ve de una vez.
+    # Alertas del ensayo en modo consulta: arriba, donde se ven de una vez. Mientras se digita van abajo, junto a «Enviar a revisión».
     slot_alertas = st.container()
 
     with st.container(border=True):
@@ -14550,10 +14549,6 @@ def render_assay_form(prueba=False):
         elif assay["tipo"] == "alargamiento-aplanamiento":
             render_alargamiento_aplanamiento_form(data, assay_id)
 
-        with slot_alertas:
-            render_avisos_coherencia(assay["tipo"], data, muestra)
-            render_alertas_resultados(*alertas_de_ensayo(assay["tipo"], data, muestra))
-
         # Si el suelo no tiene límites, las observaciones traen por defecto la razón (se puede cambiar); no se pisa lo que ya esté escrito.
         obs_inicial = assay.get("observations", "")
         if assay["tipo"] == "limites" and limites_sin_limites(data) and not (obs_inicial or "").strip():
@@ -14730,7 +14725,11 @@ def render_assay_form(prueba=False):
                 base = assay.get("data") or {}
             return {**_mezclar(base), **(extra or {})}
 
+        # Mientras se digita, las alertas («Consultar resultados», incoherencias con los límites) van AQUÍ, justo encima de «Enviar a revisión»:
+        # arriba del formulario quedaban fuera de la vista y se podía enviar sin verlas.
         st.markdown("<br>", unsafe_allow_html=True)
+        render_avisos_coherencia(assay["tipo"], data, muestra)
+        render_alertas_resultados(*alertas_de_ensayo(assay["tipo"], data, muestra))
         if supervisor_edita:
             if st.button("Guardar cambios", type="primary", use_container_width=True, icon=":material/save:"):
                 data_guardar = _datos_frescos()
