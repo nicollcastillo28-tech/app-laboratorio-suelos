@@ -1567,10 +1567,22 @@ def descripcion_visual_estructurada(muestra):
     return ", ".join(partes) if partes else None
 
 
+# Emojis y símbolos gráficos (caritas, banderas, estrellas…) y los caracteres invisibles que los unen. En el texto escrito a mano se colaban
+# desde el teclado de la tableta (las sugerencias de emoji) y salían en la pantalla y en el Excel. No toca tildes, «°», «±» ni «–».
+_EMOJIS = re.compile("[\U0001F000-\U0001FAFF☀-➿⬀-⯿⌀-⏿︎️‍⃣]+")
+
+
+def descripcion_libre(muestra):
+    """La descripción escrita a mano de muestras de antes, sin emojis ni espacios de más ('' si no hay)."""
+    texto = _EMOJIS.sub(" ", str(muestra.get("descripcion_visual") or ""))
+    texto = re.sub(r"\s+([,.;])", r"\1", re.sub(r"\s{2,}", " ", texto))
+    return texto.strip()
+
+
 def descripcion_visual_para_excel(muestra):
     """La descripción que digitó el laboratorista: la frase de los recuadros, o el texto escrito a mano de muestras de antes (ya no se puede
     escribir a mano, pero lo viejo se sigue mostrando en vez de perderse). None si no hay ninguna."""
-    return descripcion_visual_estructurada(muestra) or (muestra.get("descripcion_visual") or "").strip() or None
+    return descripcion_visual_estructurada(muestra) or descripcion_libre(muestra) or None
 
 
 def descripcion_completa(muestra):
@@ -1656,7 +1668,7 @@ def descripcion_visual_calculada(muestra):
     g = clasificacion_de_muestra(muestra)
     if not g:
         return None
-    libre = (muestra.get("descripcion_visual") or "").strip().upper()
+    libre = descripcion_libre(muestra).upper()
     if libre and not muestra.get("desc_tipo_suelo"):
         # Muestras de antes con la descripción escrita a mano: se conserva lo que escribió salvo el tipo de grano del comienzo.
         return _fusionar_clasificacion_y_texto(nombre_segun_clasificacion(g), libre)
@@ -7448,7 +7460,7 @@ def _render_descripcion_visual(muestra, muestra_id, puede_editar_muestra):
                 st.rerun()
             # Solo con recuadros (ya no se escribe a mano): así la frase sale siempre con el mismo orden y es fácil corregirla si la
             # clasificación dice otro grano. Las muestras de antes escritas a mano siguen mostrando su texto hasta que se describan aquí.
-            libre_viejo = (muestra.get("descripcion_visual") or "").strip()
+            libre_viejo = descripcion_libre(muestra)
             if libre_viejo and not muestra.get("desc_tipo_suelo"):
                 st.caption(f"Esta muestra tenía la descripción escrita a mano: «{libre_viejo}». Ahora se describe con los recuadros; al guardar "
                            "reemplaza ese texto.")
