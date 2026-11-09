@@ -58,7 +58,7 @@ class FormatosOficialesTest(unittest.TestCase):
     def test_no_sobrescribir_formula_original(self):
         original = (ROOT / 'templates/GDA-FLC-014_humedad_natural.xlsx').read_bytes()
         with self.assertRaises(FormatoIncompatibleError):
-            escribir_entradas(original, partes_hojas(original)['Hoja1'], {'I24': 25.3})
+            escribir_entradas(original, partes_hojas(original)['Hoja1'], {'K10': 'GDA-001'})   # K10 = fórmula del INFORME ID
 
     def test_no_descombinar_casillas_cbr(self):
         original = (ROOT / 'templates/GDA-FLC-013_cbr.xlsx').read_bytes()
