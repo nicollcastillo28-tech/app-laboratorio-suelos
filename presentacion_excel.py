@@ -169,15 +169,13 @@ def reparar_formulas_clasificacion(contenido, parte):
         return salida.getvalue()
 
 
-_CELDA_PUNTO_ROTO = "FORMATO!$AI$29"
-
-
 def reparar_punto_carta_plasticidad(contenido, ll=None, ip=None):
-    """La plantilla oficial GDA-FLC-001 tiene mal la serie del punto de la muestra en la CARTA DE PLASTICIDAD (el triángulo verde): toma X e Y
-    de la misma celda, FORMATO!$AI$29, que es un 0 de la línea vertical de LL = 50. Por eso el punto salía siempre en la esquina (0, 0). Aquí se
-    apunta a donde debe: X = Límite Líquido (R40), Y = Índice de Plasticidad (R42). Si `ll` e `ip` son números, también se deja calculado el
-    valor en el gráfico (los visores que no recalculan, como la vista previa del celular, ya lo ven en su sitio); con N.L. / N.P. no hay punto.
-    Si la plantilla oficial ya viene corregida (otra referencia), no se toca nada. El resto del archivo queda byte por byte igual."""
+    """El punto de la muestra en la CARTA DE PLASTICIDAD (el triángulo verde) debe ir en X = Límite Líquido (R40), Y = Índice de Plasticidad (R42).
+    La plantilla oficial GDA-FLC-001 lo traía mal: primero X e Y en FORMATO!$AI$29 (un 0: salía en la esquina) y luego Y en R41, que es el
+    Límite Plástico (con LL 65 / LP 21 / IP 44 caía en MH en vez de CH). Aquí se busca en la carta la serie de un solo punto (X e Y de una sola
+    celda, no un rango como las líneas A, U y las zonas) y se apunta a R40 / R42. Si `ll` e `ip` son números, también queda calculado el valor
+    en el gráfico (los visores que no recalculan, como la vista previa del celular, ya lo ven en su sitio); con N.L. / N.P. no hay punto.
+    El resto del archivo queda byte por byte igual."""
     def num(v):
         return isinstance(v, (int, float)) and not isinstance(v, bool)
 
@@ -189,22 +187,23 @@ def reparar_punto_carta_plasticidad(contenido, ll=None, ip=None):
     def eje(etiqueta, ref, valor):
         return f'<c:{etiqueta}><c:numRef><c:f>{ref}</c:f>{cache(valor)}</c:numRef></c:{etiqueta}>'
 
-    patron_eje = r'<c:{0}><c:numRef><c:f>' + re.escape(_CELDA_PUNTO_ROTO) + r'</c:f>.*?</c:numRef></c:{0}>'
+    hay_punto = num(ll) and num(ip)
+    un_punto = r"<c:{0}><c:numRef><c:f>'?FORMATO'?!\$?[A-Z]+\$?\d+</c:f>.*?</c:numRef></c:{0}>"
     cambios = {}
     with zipfile.ZipFile(BytesIO(contenido)) as z:
         for nombre in z.namelist():
             if not re.match(r'xl/charts/chart\d+\.xml$', nombre):
                 continue
             xml = z.read(nombre).decode('utf-8')
-            if xml.count(_CELDA_PUNTO_ROTO) < 2:
+            if 'CARTA DE PLASTICIDAD' not in xml:
                 continue
 
             def arreglar(m):
                 serie = m.group(0)
-                if not (re.search(patron_eje.format('xVal'), serie, re.S) and re.search(patron_eje.format('yVal'), serie, re.S)):
+                if not (re.search(un_punto.format('xVal'), serie, re.S) and re.search(un_punto.format('yVal'), serie, re.S)):
                     return serie
-                serie = re.sub(patron_eje.format('xVal'), lambda _m: eje('xVal', 'FORMATO!$R$40', ll if num(ip) else None), serie, flags=re.S)
-                return re.sub(patron_eje.format('yVal'), lambda _m: eje('yVal', 'FORMATO!$R$42', ip if num(ll) else None), serie, flags=re.S)
+                serie = re.sub(un_punto.format('xVal'), lambda _m: eje('xVal', 'FORMATO!$R$40', ll if hay_punto else None), serie, flags=re.S)
+                return re.sub(un_punto.format('yVal'), lambda _m: eje('yVal', 'FORMATO!$R$42', ip if hay_punto else None), serie, flags=re.S)
             nuevo = re.sub(r'<c:ser>.*?</c:ser>', arreglar, xml, flags=re.S)
             if nuevo != xml:
                 cambios[nombre] = nuevo.encode('utf-8')

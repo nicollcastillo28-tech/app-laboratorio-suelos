@@ -8796,18 +8796,72 @@ def empaquetar_hojas(hoja_principal, archivos):
             # relaciones "r:id" que ya trae escritas adentro (drawing/legacyDrawing/controls/...) tienen que
             # apuntar a los MISMOS Id que traia alla -- por eso agregar_relacion_fija(rid) y no agregar_relacion
             # (que inventaria unos nuevos que la hoja copiada no referencia, dejandola con relaciones colgantes).
+            # Lo que es PROPIO de cada hoja tampoco se comparte: el dibujo VML (las notas y las casillas de verificación) y la
+            # configuración de cada casilla (ctrlProp). Compartidos, Excel mostraba en la 2a hoja las casillas de las dos (8 en vez de 4). Las
+            # casillas se numeran por bloques de 1024 por hoja (o:idmap del VML): la copia recibe un bloque nuevo y se renumeran sus ids en la
+            # hoja (<control shapeId>), en el VML y en el drawing (spid).
+            desplazar = _desplazamiento_figuras(pkg)
+            nuevo_drawing = None
             for rid, tipo, target in _leer_rels(zin, parte_ws):
                 if tipo == T_DRAWING:
                     nuevo_drawing = _clonar_drawing(zin, pkg, target, hoja_principal, etiqueta_final)
                     pkg.agregar_relacion_fija(nueva_ws, rid, tipo, _target_relativo(nueva_ws, nuevo_drawing))
+                elif tipo.rsplit("/", 1)[-1] in _PARTES_PROPIAS_DE_HOJA:
+                    corto = tipo.rsplit("/", 1)[-1]
+                    if corto == "vmlDrawing":
+                        nueva = pkg.siguiente_nombre("drawings", "vmlDrawing", "vml")
+                        pkg.partes[nueva] = _renumerar_figuras(zin.read(target).decode("utf-8", "ignore"), desplazar, vml=True).encode("utf-8")
+                    elif corto == "ctrlProp":
+                        nueva = pkg.siguiente_nombre("ctrlProps", "ctrlProp", "xml")
+                        pkg.partes[nueva] = zin.read(target)
+                    else:
+                        n = 1
+                        while f"xl/comments{n}.xml" in pkg.partes:
+                            n += 1
+                        nueva = f"xl/comments{n}.xml"
+                        pkg.partes[nueva] = zin.read(target)
+                    pkg.agregar_content_type(nueva, _content_type_de(ct_origen, target))
+                    pkg.agregar_relacion_fija(nueva_ws, rid, tipo, _target_relativo(nueva_ws, nueva))
                 else:
                     if target not in pkg.partes:
                         pkg.partes[target] = zin.read(target)
                         pkg.agregar_content_type(target, _content_type_de(ct_origen, target))
                     pkg.agregar_relacion_fija(nueva_ws, rid, tipo, _target_relativo(nueva_ws, target))
+            if desplazar:
+                pkg.partes[nueva_ws] = re.sub(r'(<control\b[^>]*\bshapeId=")(\d+)"', lambda m: f'{m.group(1)}{int(m.group(2)) + desplazar}"',
+                                              pkg.partes[nueva_ws].decode("utf-8")).encode("utf-8")
+                if nuevo_drawing:
+                    pkg.partes[nuevo_drawing] = _renumerar_figuras(pkg.partes[nuevo_drawing].decode("utf-8"), desplazar).encode("utf-8")
 
     _forzar_recalculo(pkg)
     return pkg.guardar()
+
+
+# Se clonan por hoja en los paquetes (ver empaquetar_hojas): el dibujo VML y la configuración de cada casilla. Los comentarios NO: clonados,
+# Excel no abría el libro (probado con Excel real); compartidos funcionan.
+_PARTES_PROPIAS_DE_HOJA = ("vmlDrawing", "ctrlProp")
+
+
+def _desplazamiento_figuras(pkg):
+    """Cuánto sumarle a los ids de figura (_x0000_sNNNN) de una hoja copiada para que no choquen con los de ninguna otra: cada dibujo VML
+    reserva bloques de 1024 ids (o:idmap data="1" -> 1024-2047). Se toma el siguiente bloque libre del libro."""
+    usados = [0]
+    for nombre, contenido in pkg.partes.items():
+        if nombre.endswith(".vml"):
+            for grupo in re.findall(r'<o:idmap\b[^>]*\bdata="([^"]*)"', contenido.decode("utf-8", "ignore")):
+                usados += [int(x) for x in re.findall(r"\d+", grupo)]
+    return (max(usados) + 1 - 1) * 1024 if max(usados) else 0
+
+
+def _renumerar_figuras(xml, desplazar, vml=False):
+    """Suma `desplazar` a los ids de figura _x0000_sNNNN (VML y spid del drawing); en el VML también mueve su bloque o:idmap."""
+    if not desplazar:
+        return xml
+    xml = re.sub(r"_x0000_s(\d+)", lambda m: f"_x0000_s{int(m.group(1)) + desplazar}", xml)
+    if vml:
+        xml = re.sub(r'(<o:idmap\b[^>]*\bdata=")([^"]*)"',
+                     lambda m: m.group(1) + ",".join(str(int(x) + desplazar // 1024) for x in re.findall(r"\d+", m.group(2))) + '"', xml)
+    return xml
 
 
 def _renombrar_hoja_en_workbook(pkg, nombre_viejo, nombre_nuevo, sheet_id):
