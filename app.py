@@ -64,7 +64,7 @@ if not getattr(st.download_button, "_gd_con_contexto", False):
     _download_button_con_contexto._gd_con_contexto = True
     st.download_button = _download_button_con_contexto
 from exportacion_formatos import LibroFormatoOriginal, escribir_entradas, FormatoIncompatibleError
-from presentacion_excel import ajustar_presentacion, reparar_formulas_clasificacion
+from presentacion_excel import ajustar_presentacion, reparar_formulas_clasificacion, reparar_punto_carta_plasticidad
 
 
 def _precalentar_graficos():
@@ -9015,7 +9015,11 @@ def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_dat
     wb.save(bio)
     bio.seek(0)
     salida = bio.getvalue()
-    return reparar_formulas_clasificacion(salida, _parte_hoja_informe(salida, 'FORMATO'))
+    salida = reparar_formulas_clasificacion(salida, _parte_hoja_informe(salida, 'FORMATO'))
+    # El punto de la muestra en la Carta de Plasticidad: la plantilla oficial lo tiene apuntando a una celda en 0 (sale en la esquina).
+    r_lim = calcular_limites(lim_data) if _limites_tienen_datos(lim_data) else None
+    con_punto = r_lim is not None and not (r_lim['nl'] or r_lim['np'])
+    return reparar_punto_carta_plasticidad(salida, r_lim['ll'] if con_punto else None, r_lim['ip'] if con_punto else None)
 
 
 @_exportacion_controlada

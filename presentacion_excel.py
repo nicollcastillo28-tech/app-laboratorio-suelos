@@ -167,3 +167,51 @@ def reparar_formulas_clasificacion(contenido, parte):
             for item in z.infolist():
                 out.writestr(item,xml.encode('utf-8') if item.filename==parte else z.read(item.filename))
         return salida.getvalue()
+
+
+_CELDA_PUNTO_ROTO = "FORMATO!$AI$29"
+
+
+def reparar_punto_carta_plasticidad(contenido, ll=None, ip=None):
+    """La plantilla oficial GDA-FLC-001 tiene mal la serie del punto de la muestra en la CARTA DE PLASTICIDAD (el triángulo verde): toma X e Y
+    de la misma celda, FORMATO!$AI$29, que es un 0 de la línea vertical de LL = 50. Por eso el punto salía siempre en la esquina (0, 0). Aquí se
+    apunta a donde debe: X = Límite Líquido (R40), Y = Índice de Plasticidad (R42). Si `ll` e `ip` son números, también se deja calculado el
+    valor en el gráfico (los visores que no recalculan, como la vista previa del celular, ya lo ven en su sitio); con N.L. / N.P. no hay punto.
+    Si la plantilla oficial ya viene corregida (otra referencia), no se toca nada. El resto del archivo queda byte por byte igual."""
+    def num(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+    def cache(valor):
+        if not num(valor):
+            return '<c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="1"/></c:numCache>'
+        return f'<c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="1"/><c:pt idx="0"><c:v>{valor}</c:v></c:pt></c:numCache>'
+
+    def eje(etiqueta, ref, valor):
+        return f'<c:{etiqueta}><c:numRef><c:f>{ref}</c:f>{cache(valor)}</c:numRef></c:{etiqueta}>'
+
+    patron_eje = r'<c:{0}><c:numRef><c:f>' + re.escape(_CELDA_PUNTO_ROTO) + r'</c:f>.*?</c:numRef></c:{0}>'
+    cambios = {}
+    with zipfile.ZipFile(BytesIO(contenido)) as z:
+        for nombre in z.namelist():
+            if not re.match(r'xl/charts/chart\d+\.xml$', nombre):
+                continue
+            xml = z.read(nombre).decode('utf-8')
+            if xml.count(_CELDA_PUNTO_ROTO) < 2:
+                continue
+
+            def arreglar(m):
+                serie = m.group(0)
+                if not (re.search(patron_eje.format('xVal'), serie, re.S) and re.search(patron_eje.format('yVal'), serie, re.S)):
+                    return serie
+                serie = re.sub(patron_eje.format('xVal'), lambda _m: eje('xVal', 'FORMATO!$R$40', ll if num(ip) else None), serie, flags=re.S)
+                return re.sub(patron_eje.format('yVal'), lambda _m: eje('yVal', 'FORMATO!$R$42', ip if num(ll) else None), serie, flags=re.S)
+            nuevo = re.sub(r'<c:ser>.*?</c:ser>', arreglar, xml, flags=re.S)
+            if nuevo != xml:
+                cambios[nombre] = nuevo.encode('utf-8')
+        if not cambios:
+            return contenido
+        salida = BytesIO()
+        with zipfile.ZipFile(salida, 'w', zipfile.ZIP_DEFLATED) as out:
+            for item in z.infolist():
+                out.writestr(item, cambios.get(item.filename) or z.read(item.filename))
+        return salida.getvalue()
