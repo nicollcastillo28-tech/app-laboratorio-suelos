@@ -6359,13 +6359,19 @@ def _recipientes_txt(assay, tipo=None, maximo=8):
     # Solo el NÚMERO del recipiente: se descartan las masas («masa…», «seco_mas_recipiente…») y las claves de control de la app («…_lastsync»).
     claves = sorted((k for k, v in d.items() if ("recipiente" in k or k.endswith("picnometro")) and "masa" not in k and "mas_recipiente" not in k and "lastsync" not in k
                      and not k.startswith("_") and str(v or "").strip() and not isinstance(v, (list, dict))), key=lambda k: (k.startswith("cbrc"), k))   # Proctor primero, luego su CBR compactado
+    # Suelo sin límites (N.L. – N.P.): no se muestran los recipientes de un intento anterior que quedaron guardados (tampoco van al Excel).
+    if tipo == "limites" and limites_sin_limites(d):
+        return "N.L. – N.P."
     if not claves:
-        return ""
+        return "N.P." if (tipo == "limites" and d.get("lim_np")) else ""
 
     def valores(ks):
         return [str(d[k]).strip() for k in ks]
     if tipo == "limites":
+        # Con N.P. y el Límite Líquido digitado, solo los recipientes del líquido.
         ll = valores([k for k in claves if "_ll_" in k])
+        if d.get("lim_np"):
+            return (" - ".join(ll) + "  /  " if ll else "") + "N.P."
         lp = valores([k for k in claves if "_lp_" in k])
         return " - ".join(ll) + ("  /  " + " - ".join(lp) if lp else "")
     todos = []
