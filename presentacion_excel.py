@@ -340,3 +340,31 @@ def reponer_formulas_faltantes(contenido, parte, formulas):
             for item in z.infolist():
                 out.writestr(item, nuevo.encode('utf-8') if item.filename == parte else z.read(item.filename))
         return salida.getvalue()
+
+
+def cambiar_formulas_si_iguales(contenido, parte, cambios):
+    """Cambia fórmulas de la hoja `parte` SOLO si todavía son las de antes: {celda: (fórmula vieja, fórmula nueva)}, sin «=». Para corregir en la
+    descarga una fórmula de una plantilla que tiene la hoja protegida con contraseña (p. ej. el ×10 del kN/m³ del peso unitario parafinado):
+    si la plantilla oficial ya viene corregida, no se toca nada. Se quita el valor guardado de la celda; Excel la recalcula al abrir."""
+    import html
+    with zipfile.ZipFile(BytesIO(contenido)) as z:
+        xml = z.read(parte).decode('utf-8')
+        nuevo = xml
+        for ref, (vieja, nueva) in cambios.items():
+            m = re.search(r'(<c\b[^>]*\br="' + ref + r'"[^>]*>)(.*?)(</c>)', nuevo, re.S)
+            if not m:
+                continue
+            f = re.search(r'(<f\b[^>]*>)(.*?)</f>', m.group(2), re.S)
+            if not f or html.unescape(f.group(2)).replace(' ', '') != vieja.replace(' ', ''):
+                continue   # (una celda de fórmula COMPARTIDA que no es la principal no trae texto: cambia sola al cambiar la principal)
+            # Se conserva la etiqueta <f ...> tal cual: si es la principal de una fórmula compartida (t="shared" ref=... si=...), las demás
+            # celdas del grupo siguen apuntando a ella y toman la fórmula nueva (G27 = G25*9.81 al cambiar G26 = G24*9.81).
+            apertura = re.sub(r'\s+t="[^"]*"', '', m.group(1))
+            nuevo = nuevo[:m.start()] + f'{apertura}{f.group(1)}{html.escape(nueva, quote=False)}</f>{m.group(3)}' + nuevo[m.end():]
+        if nuevo == xml:
+            return contenido
+        salida = BytesIO()
+        with zipfile.ZipFile(salida, 'w', zipfile.ZIP_DEFLATED) as out:
+            for item in z.infolist():
+                out.writestr(item, nuevo.encode('utf-8') if item.filename == parte else z.read(item.filename))
+        return salida.getvalue()

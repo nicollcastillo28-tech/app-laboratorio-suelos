@@ -64,7 +64,7 @@ if not getattr(st.download_button, "_gd_con_contexto", False):
     _download_button_con_contexto._gd_con_contexto = True
     st.download_button = _download_button_con_contexto
 from exportacion_formatos import LibroFormatoOriginal, escribir_entradas, FormatoIncompatibleError
-from presentacion_excel import ajustar_presentacion, reparar_formulas_clasificacion, reparar_punto_carta_plasticidad, reponer_formulas_faltantes
+from presentacion_excel import ajustar_presentacion, reparar_formulas_clasificacion, reparar_punto_carta_plasticidad, reponer_formulas_faltantes, cambiar_formulas_si_iguales
 
 
 def _precalentar_graficos():
@@ -9188,8 +9188,12 @@ def generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, obs
 
     bio = BytesIO()
     wb.save(bio)
-    bio.seek(0)
-    return bio.getvalue()
+    # kN/m³ con la gravedad real (×9,81), igual que los resultados de la app: la plantilla oficial multiplica por 10 y tiene la hoja protegida con
+    # contraseña, así que se corrige en la descarga (solo si la plantilla todavía trae el ×10).
+    from exportacion_formatos import partes_hojas
+    salida = bio.getvalue()
+    return cambiar_formulas_si_iguales(salida, partes_hojas(salida)["FORMATO"],
+                                       {"G26": ("G24*10", "G24*9.81"), "G27": ("G25*10", "G25*9.81")})
 
 
 def _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo="", datas=()):
