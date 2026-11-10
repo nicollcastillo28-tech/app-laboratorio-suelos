@@ -9558,7 +9558,7 @@ def _muestras_para_lote(muestras, tipo_lote):
     for m in muestras:
         if not m["ensayos"].get(cfg["bitacora"]):
             continue
-        assay = get_assay(m["id_unico"], tipo_lote)
+        assay = get_assay(m["id_unico"], cfg.get("assay_tipo", tipo_lote))   # un ensayo con varias plantillas tiene un paquete por plantilla
         data = assay.get("data") if assay else None
         if not data or data.get("_no_realizado"):
             continue
@@ -9649,7 +9649,7 @@ def render_descarga_excel_perforacion(codigo, perf, project, muestras):
         pares = _muestras_para_lote(pedidas, tipo)
         if not pares:
             continue
-        terminadas = sum(1 for m in pedidas if (get_assay(m["id_unico"], tipo) or {}).get("status") == "finalizado")
+        terminadas = sum(1 for m in pedidas if (get_assay(m["id_unico"], cfg.get("assay_tipo", tipo)) or {}).get("status") == "finalizado")
         paquetes.append((tipo, cfg, pares, len(pedidas) - terminadas))
     with st.expander("Descargar Excel", icon=":material/download:"):
         if not paquetes:
@@ -9866,6 +9866,31 @@ def generar_excel_gravedad_grueso(codigo, perf_codigo, muestra, project, data, o
               "G21": data.get("gesp_g_masa_sss"), "AD29": data.get("gesp_g_temp")}
     return _generar_excel_gravedad(TEMPLATE_GESP_GRUESO, "Hoja1 (2)", celdas, codigo, perf_codigo, muestra, project,
                                     data, observaciones_ensayo, celda_observaciones="C32")
+
+
+def _primera_hoja(plantilla):
+    """Nombre de la primera hoja de una plantilla (la del informe), leído del workbook.xml sin cargar el libro."""
+    import zipfile as _zf
+    with _zf.ZipFile(plantilla) as z:
+        m = re.search(r'<sheet\b[^>]*\bname="([^"]+)"', z.read("xl/workbook.xml").decode("utf-8"))
+    return html.unescape(m.group(1)) if m else "FORMATO"
+
+
+# Gravedad específica: un mismo ensayo con TRES plantillas según el material (lo que se eligió en el formulario, gesp_sel). Cada una tiene su propio
+# paquete por perforación con las muestras de ese material; «Ambos» (finos y gruesos) entra en los dos. `assay_tipo` es el ensayo de la app.
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+for _clave, _gen, _plantilla, _prefijo, _etiqueta, _opciones in (
+        ("gravedad-fino", generar_excel_gravedad_fino, TEMPLATE_GESP_FINO, "Gravedad_especifica_fino",
+         "Gravedad específica — agregado fino (INV E-222)", (GESP_OPCIONES[0], GESP_OPCIONES[2])),
+        ("gravedad-grueso", generar_excel_gravedad_grueso, TEMPLATE_GESP_GRUESO, "Gravedad_especifica_grueso",
+         "Gravedad específica — agregado grueso (INV E-223)", (GESP_OPCIONES[1], GESP_OPCIONES[2])),
+        ("gravedad-arcilla", generar_excel_gravedad_arcilla, TEMPLATE_GESP_ARCILLA, "Gravedad_especifica_arcilla",
+         "Gravedad específica — arcillas y limos (INV E-128)", (GESP_OPCIONES[3],))):
+    EXCEL_LOTE_CONFIG[_clave] = {
+        "assay_tipo": "gravedad-especifica", "hoja": _primera_hoja(_plantilla), "generar": _gen, "ext": "xlsx", "mime": _XLSX_MIME,
+        "prefijo": _prefijo, "etiqueta": _etiqueta, "bitacora": "Gravedad específica",
+        "filtro": (lambda data, _ops=_opciones: data.get("gesp_sel", GESP_OPCIONES[0]) in _ops),
+    }
 
 
 CORTE_TIPO_EXCEL = {"CD": "CONSOLIDADO DRENADO (CD)", "CU": "CONSOLIDADO NO DRENADO (CU)",
