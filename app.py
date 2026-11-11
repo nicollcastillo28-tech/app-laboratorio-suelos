@@ -6149,12 +6149,8 @@ def render_project_detail():
             # Lo mismo que lleva a mano el Excel de seguimiento (APIQUE / SONDEO | ORDEN DE ENSAYO | MUESTRAS EN LABORATORIO | FECHA ORDEN DE
             # ENSAYO | FECHA INICIO ENSAYOS): la orden existe si hay muestras con ensayos marcados; las muestras están en el laboratorio solo si se
             # registró su fecha de recepción; esa misma fecha es la "fecha orden de ensayo" y la ejecución es la "fecha inicio ensayos".
-            hay_orden = muestras_con_ensayo > 0
-            en_laboratorio = bool(fecha_ingreso_perf(perf, project))
-
-            def _si_no(v):
-                return f'<span style="color:{SUCCESS if v else NEUTRAL};">{"SÍ" if v else "NO"}</span>'
-
+            # («Orden de ensayo: SÍ/NO» y «Muestras en laboratorio: SÍ/NO» ya no van en la tarjeta para nadie: la recepción y la ejecución
+            # ya dicen lo mismo con la fecha.)
             def _celda_perf(ico, lbl, val, pista="", tamano=15):
                 pista_html = f'<div class="cell-muted" style="font-size:10px;">{pista}</div>' if pista else ""
                 return (f'<div style="flex:1 1 90px;min-width:90px;">'
@@ -6162,23 +6158,14 @@ def render_project_detail():
                         f'{icon(ico, size=12)} {lbl}</div>'
                         f'<div style="font-weight:700;font-size:{tamano}px;">{val}</div>{pista_html}</div>')
 
-            fila_estado = "".join([
-                _celda_perf("assignment", "Orden de ensayo", _si_no(hay_orden)),
-                _celda_perf("biotech", "Muestras en laboratorio", _si_no(en_laboratorio)),
-            ])
             fila_fechas = "".join([
                 _celda_perf("move_to_inbox", "Recepción", fecha_ingreso_perf_txt(perf, project), "= fecha orden de ensayo", tamano=13),
                 _celda_perf("science", "Ejecución", _fecha_txt(fecha_ejecucion_perf(codigo, perf["codigo"], muestras)), "= inicio de ensayos", tamano=13),
                 _celda_perf("outbox", "Emisión", _fecha_txt(perf.get("fecha_emision")), tamano=13),
             ])
-            # Al laboratorista no le sirven «Orden de ensayo / Muestras en laboratorio» (son del seguimiento del Jefe): su tarjeta solo lleva las fechas.
-            bloque_estado = "" if st.session_state.role == "laboratorista" else (
-                f'<div style="display:flex;flex-wrap:wrap;gap:8px 16px;margin-bottom:10px;padding-bottom:10px;'
-                f'border-bottom:1px solid rgba(74,120,98,0.16);">{fila_estado}</div>')
             st.markdown(
                 f'<div style="margin:8px 0 6px;padding:8px 12px;border-radius:10px;background:rgba(74,120,98,0.06);'
                 f'border:1px solid rgba(74,120,98,0.16);">'
-                f'{bloque_estado}'
                 f'<div style="display:flex;flex-wrap:wrap;gap:8px 16px;">{fila_fechas}</div></div>',
                 unsafe_allow_html=True)
             # Avance por ENSAYO (no por muestra completa) — antes solo se veía entrando a la
