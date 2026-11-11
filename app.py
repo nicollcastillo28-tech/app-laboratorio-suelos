@@ -807,8 +807,9 @@ st.markdown(f"""
     }}
 
     .perf-code-box.perf-code-largo {{
-        display: flex; width: 100%; min-height: 30px; height: auto; padding: 5px 10px; box-sizing: border-box; margin-bottom: 12px;
-        justify-content: flex-start; text-align: left; line-height: 1.25; font-size: 13px; overflow-wrap: anywhere;
+        /* El nombre de la perforación (o el código del proyecto) en letra grande: con 13px se confundía con el contenido de la tarjeta. */
+        display: flex; width: 100%; min-height: 40px; height: auto; padding: 7px 14px; box-sizing: border-box; margin-bottom: 12px;
+        justify-content: flex-start; text-align: left; line-height: 1.25; font-size: 19px; letter-spacing: 0.02em; overflow-wrap: anywhere;
     }}
 
     /* Botón flotante "+" para crear proyecto desde Proyectos en ejecución */
