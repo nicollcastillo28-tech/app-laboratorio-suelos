@@ -1332,6 +1332,24 @@ PROCTOR_HUMEDAD_FILAS = [
     ("hum_masa_recipiente", "Masa del recipiente (g)"),
 ]
 EQUIPO_CORTE_GRAVEDAD = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Termómetro GDA-E-126", "Baño de María GDA-E-009"]
+# Calibración de los picnómetros del Corte directo, tal como la trae la plantilla GDA-FLC-007 (FORMATO1!C114:H116): masa del picnómetro
+# + agua a la temperatura del ensayo = a·T + b. La plantilla calcula con esto la «Masa Picnómetro + agua» (D26 = HLOOKUP del picnómetro de D23).
+CORTE_PIC_CALIBRACION = {1: (-0.1428, 688.64), 2: (-0.1158, 694.37), 3: (-0.0614, 349.31), 4: (-0.0655, 344.51),
+                         5: (-0.0652, 344.03), 6: (-0.061, 355.9)}
+
+
+def corte_masa_pic_calibrada(data):
+    """(masa picnómetro + agua según la calibración, número de picnómetro) o (None, número) si el picnómetro no está en la tabla (1 a 6) o
+    falta la temperatura. Es la masa que usa el Excel."""
+    n = to_float(data.get("corte_ge_picnometro"))
+    temp = to_float(data.get("corte_ge_temperatura"))
+    n = int(n) if n is not None and float(n).is_integer() else None
+    if n not in CORTE_PIC_CALIBRACION or temp is None:
+        return None, n
+    a, b = CORTE_PIC_CALIBRACION[n]
+    return a * temp + b, n
+
+
 CORTE_GRAVEDAD_CAMPOS = [
     ("masa_suelo_seco", "Masa del suelo seco (g)"),
     ("masa_pic_muestra", "Masa pic. + muestra aforado a temp. (g)"),
@@ -3200,6 +3218,9 @@ def calcular_corte_directo(data):
     vol = area * alt if area and alt else None
     gs = None
     temp, mpw, mpws, ms = (to_float(data.get(f"corte_ge_{k}")) for k in ("temperatura", "masa_pic", "masa_pic_muestra", "masa_suelo_seco"))
+    mpw_cal, _n_pic = corte_masa_pic_calibrada(data)
+    if mpw_cal is not None:   # la misma masa que calcula la plantilla con la calibración del picnómetro
+        mpw = mpw_cal
     dens_agua = None
     if temp is not None:
         dk = _tabla_agua_temperatura().get(round(temp, 1))
@@ -8013,7 +8034,7 @@ def _bitacora_filas_perforacion(codigo, perf_codigo):
 
 
 
-EXPORTACIONES_EN_REVISION = frozenset({"corte-directo", "consolidacion"})   # el CBR ya se descarga; estos dos escriben sobre celdas con fórmulas del formato
+EXPORTACIONES_EN_REVISION = frozenset({"consolidacion"})   # escribe sobre celdas con fórmulas del formato (X4); el Corte directo ya se descarga
 LOTES_EN_REVISION = frozenset({"proctor"})   # el CBR ya se descarga por paquete (probado); el paquete de Proctor sigue sin verificarse
 
 
@@ -9929,8 +9950,11 @@ def generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, obs
             ws[f"D{48 + i}"] = esfuerzo
 
     # Gravedad específica (INV E-128)
+    # La «Masa Picnómetro + agua» (D26) la calcula la plantilla con su tabla de calibración a partir del número de picnómetro (D23) y la
+    # temperatura (D25): se escribe el picnómetro y la fórmula de D26 se deja como está.
+    n_pic = to_float(data.get("corte_ge_picnometro"))
+    ws["D23"] = int(n_pic) if n_pic is not None and float(n_pic).is_integer() else (str(data.get("corte_ge_picnometro") or "").strip() or None)
     ws["D25"] = to_float(data.get("corte_ge_temperatura"))
-    ws["D26"] = to_float(data.get("corte_ge_masa_pic"))
     ws["D27"] = to_float(data.get("corte_ge_masa_pic_muestra"))
     ws["D28"] = to_float(data.get("corte_ge_masa_suelo_seco"))
 
@@ -9966,6 +9990,15 @@ def generar_excel_corte_directo(codigo, perf_codigo, muestra, project, data, obs
     wb.save(bio)
     bio.seek(0)
     return bio.getvalue()
+
+
+# Descarga del Corte directo desde la tarjeta del ensayo (pantalla de la muestra). No tiene paquete por perforación: cada muestra usa varias
+# hojas (FORMATO1/2/3 y «Fuente» con las lecturas de la máquina), no una sola.
+EXCEL_INDIVIDUAL_CONFIG["corte-directo"] = {
+    "hoja": "FORMATO1", "generar": generar_excel_corte_directo, "ext": "xlsx",
+    "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "prefijo": "Corte_directo", "etiqueta": "Corte directo", "bitacora": "Corte CD",
+}
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -10973,6 +11006,13 @@ def render_corte_directo_form(data, assay_id):
         st.markdown('<div class="cell-muted" style="font-weight:700;margin-top:8px;">Equipos utilizados (gravedad)</div>',
                     unsafe_allow_html=True)
         _campo("corte_ge_picnometro", "Picnómetro No.", placeholder="1")
+        mpw_cal, n_pic = corte_masa_pic_calibrada(data)
+        if mpw_cal is not None:
+            st.caption(f"Masa pic. + agua según la calibración del picnómetro {n_pic} a {fmt_num(to_float(data.get('corte_ge_temperatura')), 1)} °C: "
+                       f"**{fmt_num(mpw_cal, 2)} g**. Es la que usan los resultados y el Excel (la plantilla la calcula con su tabla de calibración).")
+        elif str(data.get("corte_ge_picnometro") or "").strip():
+            st.warning("La plantilla del Excel solo tiene la calibración de los picnómetros 1 a 6: con otro número no calcula la masa del picnómetro "
+                       "+ agua ni la gravedad específica.")
         data["corte_ge_equipos"] = equipos_selector(f"eqsel_corte_ge_{assay_id}", EQUIPO_CORTE_GRAVEDAD, data.get("corte_ge_equipos", []))
 
     with resultados_desplegable("Resultados: humedades, densidades y saturación"):
