@@ -368,3 +368,35 @@ def cambiar_formulas_si_iguales(contenido, parte, cambios):
             for item in z.infolist():
                 out.writestr(item, nuevo.encode('utf-8') if item.filename == parte else z.read(item.filename))
         return salida.getvalue()
+
+
+def vaciar_celdas_solo_espacios(contenido, parte):
+    """Deja vacías (con su mismo formato) las celdas de la hoja `parte` cuyo texto son SOLO espacios. Algunas plantillas traen celdas con 80-90
+    espacios (p. ej. I26/I29 en gravedad específica fino, I25/I28 en grueso): ese texto invisible se desborda hacia la derecha y Excel no dibuja
+    el borde del marco por donde pasa, así que la línea salía cortada al imprimir. Las plantillas tienen la hoja protegida, así que se corrige
+    en la descarga. Nada visible cambia."""
+    with zipfile.ZipFile(BytesIO(contenido)) as z:
+        xml = z.read(parte).decode('utf-8')
+        sst = []
+        if 'xl/sharedStrings.xml' in z.namelist():
+            sst = [''.join(re.findall(r'<t\b[^>]*>([^<]*)</t>', si)) for si in
+                   re.findall(r'<si>(.*?)</si>', z.read('xl/sharedStrings.xml').decode('utf-8'), re.S)]
+        en_blanco = {str(i) for i, t in enumerate(sst) if t and not t.strip()}
+
+        def limpiar(m):
+            apertura, cuerpo = m.group(1), m.group(2)
+            v = re.search(r'<v>(\d+)</v>', cuerpo)
+            if 't="s"' in apertura and v and v.group(1) in en_blanco:
+                return re.sub(r'\s+t="s"', '', apertura)[:-1] + '/>'
+            t = re.search(r'<is>.*?</is>', cuerpo, re.S)
+            if 't="inlineStr"' in apertura and t and not ''.join(re.findall(r'<t\b[^>]*>([^<]*)</t>', t.group(0))).strip():
+                return re.sub(r'\s+t="inlineStr"', '', apertura)[:-1] + '/>'
+            return m.group(0)
+        nuevo = re.sub(r'(<c\b[^>]*[^/]>)(.*?)</c>', limpiar, xml, flags=re.S)   # [^/]>: no toma las celdas vacías <c .../>
+        if nuevo == xml:
+            return contenido
+        salida = BytesIO()
+        with zipfile.ZipFile(salida, 'w', zipfile.ZIP_DEFLATED) as out:
+            for item in z.infolist():
+                out.writestr(item, nuevo.encode('utf-8') if item.filename == parte else z.read(item.filename))
+        return salida.getvalue()

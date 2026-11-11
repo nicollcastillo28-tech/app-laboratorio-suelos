@@ -64,7 +64,7 @@ if not getattr(st.download_button, "_gd_con_contexto", False):
     _download_button_con_contexto._gd_con_contexto = True
     st.download_button = _download_button_con_contexto
 from exportacion_formatos import LibroFormatoOriginal, escribir_entradas, FormatoIncompatibleError
-from presentacion_excel import ajustar_presentacion, reparar_formulas_clasificacion, reparar_punto_carta_plasticidad, reponer_formulas_faltantes, cambiar_formulas_si_iguales
+from presentacion_excel import ajustar_presentacion, reparar_formulas_clasificacion, reparar_punto_carta_plasticidad, reponer_formulas_faltantes, cambiar_formulas_si_iguales, vaciar_celdas_solo_espacios
 
 
 def _precalentar_graficos():
@@ -9335,8 +9335,11 @@ def _generar_excel_gravedad(template, hoja, celdas, codigo, perf_codigo, muestra
         ws[celda_observaciones] = observaciones_ensayo.strip()
     bio = BytesIO()
     wb.save(bio)
-    bio.seek(0)
-    return bio.getvalue()
+    # Celdas con solo espacios en la plantilla (I26/I29 en fino, I25/I28 en grueso) cortaban la línea derecha del marco: se vacían.
+    from exportacion_formatos import partes_hojas
+    from presentacion_excel import vaciar_celdas_solo_espacios
+    salida = bio.getvalue()
+    return vaciar_celdas_solo_espacios(salida, list(partes_hojas(salida).values())[0])
 
 
 @_exportacion_controlada
