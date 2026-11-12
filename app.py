@@ -63,8 +63,8 @@ if not getattr(st.download_button, "_gd_con_contexto", False):
         return _download_button_original(*args, **kwargs)
     _download_button_con_contexto._gd_con_contexto = True
     st.download_button = _download_button_con_contexto
-from exportacion_formatos import LibroFormatoOriginal, escribir_entradas, FormatoIncompatibleError
-from presentacion_excel import ajustar_presentacion, reparar_formulas_clasificacion, reparar_punto_carta_plasticidad, reponer_formulas_faltantes, cambiar_formulas_si_iguales, vaciar_celdas_solo_espacios
+from exportacion_formatos import LibroFormatoOriginal, escribir_entradas, FormatoIncompatibleError, partes_hojas
+from presentacion_excel import ajustar_presentacion, reparar_formulas_clasificacion, reparar_punto_carta_plasticidad, reponer_formulas_faltantes, cambiar_formulas_si_iguales, cambiar_formulas_varias, vaciar_celdas_solo_espacios
 
 
 def _precalentar_graficos():
@@ -11280,6 +11280,35 @@ def cons_raiz_t90(data, i):
     return raiz_t90_taylor(xy)
 
 
+_CONS_REJILLA = {}
+
+
+def _cons_rejilla_tiempos(path):
+    """{columna de tiempo: [(fila, minutos)]} de la hoja "DATOS MAQUINA " de la plantilla: las celdas de las columnas de tiempo de
+    CONS_MAQ_BLOQUES (desde la fila 4) que traen un número fijo, sin fórmula. Se lee del XML y se guarda por versión de la plantilla: abrir
+    la plantilla entera con openpyxl para esto ocupaba unos 190 MB de memoria en el servidor."""
+    clave = (str(path), os.path.getmtime(path))
+    if clave not in _CONS_REJILLA:
+        with open(path, "rb") as f:
+            contenido = f.read()
+        with zipfile.ZipFile(BytesIO(contenido)) as z:
+            xml = z.read(partes_hojas(contenido)["DATOS MAQUINA "]).decode("utf-8")
+        columnas = {col_t for _c, col_t, _d in CONS_MAQ_BLOQUES}
+        rejilla = {c: [] for c in columnas}
+        for m in re.finditer(r'<c\b\s+r="([A-Z]+)(\d+)"([^>]*?)(?:/>|>(.*?)</c>)', xml, re.S):
+            col, fila, atributos, cuerpo = m.group(1), int(m.group(2)), m.group(3), m.group(4)
+            if col not in columnas or fila < 4 or not cuerpo or "<f" in cuerpo or re.search(r'\bt="(?!n")', atributos):
+                continue
+            v = re.search(r"<v>([^<]*)</v>", cuerpo)
+            if v:
+                numero = float(v.group(1))
+                rejilla[col].append((fila, int(numero) if numero.is_integer() and "." not in v.group(1) and "E" not in v.group(1).upper() else numero))
+        if len(_CONS_REJILLA) > 4:
+            _CONS_REJILLA.clear()
+        _CONS_REJILLA[clave] = rejilla
+    return _CONS_REJILLA[clave]
+
+
 def _cons_final(data, clave_fin, clave_ini):
     """Valor de la columna final; si no se digitó, repite el de la columna inicial."""
     v = to_float(data.get(clave_fin))
@@ -11520,7 +11549,8 @@ def render_consolidacion_form(data, assay_id):
 @_exportacion_controlada
 def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Diligencia entradas del formato 009 sin corregir sus fórmulas. Si una columna de la máquina está calculada por el original, la exportación queda pendiente de revisión."""
-    wb = _cargar_plantilla_informe(TEMPLATE_CONSOLIDACION, celdas_formula_editables={"FORMATO": ("AB20",), "GS": ("G21",),
+    # Solo lectura: openpyxl no carga las celdas (la plantilla abierta entera ocupaba ~190 MB); el generador solo escribe entradas.
+    wb = _cargar_plantilla_informe(TEMPLATE_CONSOLIDACION, read_only=True, celdas_formula_editables={"FORMATO": ("AB20",), "GS": ("G21",),
                                                                                      **{h: ("L29", "L38") for h in CONS_HOJAS_CARGA}})
     ws = wb["FORMATO"]
     ws["D6"] = project.get("cliente", "") if project else ""
@@ -11601,40 +11631,39 @@ def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, obs
     # Lecturas de la máquina: la plantilla ya trae la rejilla de tiempos (min) de cada carga en "DATOS MAQUINA ";
     # se escribe la deformación de la máquina interpolada en cada tiempo, hasta donde haya datos.
     hoja_maq = wb["DATOS MAQUINA "]
+    rejilla = _cons_rejilla_tiempos(TEMPLATE_CONSOLIDACION)
     for i, (_enc, col_t, col_d) in enumerate(CONS_MAQ_BLOQUES, start=1):
         puntos = data.get(f"cons_maq_{i}")
         if not puntos:
             continue
-        for fila in range(4, hoja_maq.max_row + 1):
-            t_min = hoja_maq[f"{col_t}{fila}"].value
-            if isinstance(t_min, (int, float)):
-                hoja_maq[f"{col_d}{fila}"] = _cons_deformacion_en(puntos, t_min * 60)
+        for fila, t_min in rejilla[col_t]:
+            hoja_maq[f"{col_d}{fila}"] = _cons_deformacion_en(puntos, t_min * 60)
 
     bio = BytesIO()
     wb.save(bio)
     salida = bio.getvalue()
     # La calibración de los picnómetros (B110:G110 = a·T + b) toma la temperatura de B109:G109, que en la plantilla apunta a G23 (vacía en
     # esta hoja: así la masa del picnómetro lleno de agua salía como si el ensayo fuera a 0 °C). La temperatura del ensayo está en AB22.
+    # Fórmulas rotas de la plantilla, corregidas en la descarga solo si todavía están como venían (todas de una vez: el archivo pesa 15 MB
+    # descomprimido y rearmarlo una vez por hoja hacía la descarga muy lenta).
     partes = partes_hojas(salida)
-    salida = cambiar_formulas_si_iguales(salida, partes["FORMATO"], {
+    cambios = {partes["FORMATO"]: {
         **{c: ("$G$23", "$AB$22") for c in ("B109", "G109")},
         "K30": ("#REF!", "AB25"),   # Gs de los cálculos de volumen y relación de vacíos (J30 «Gs»): es la gravedad específica de AB25
-    })
+    }}
     # Hoja de 1,0 kg: la deformación (columna E) perdió sus referencias; queda como en las demás cargas (lectura − lectura inicial D19).
     if "1,0 kg " in partes:
-        salida = cambiar_formulas_si_iguales(salida, partes["1,0 kg "], {"E19": ("#REF!-#REF!", "D19-$D$19"), "E20": ("D19-#REF!", "D20-$D$19")})
+        cambios.setdefault(partes["1,0 kg "], {}).update({"E19": ("#REF!-#REF!", "D19-$D$19"), "E20": ("D19-#REF!", "D20-$D$19")})
     # Hojas de 1,0 a 32 kg: la fila de √t = 0.32 (6 s) leía la lectura de t = 0 de "Datos " (fila 39) y toda la columna quedaba corrida un
     # tiempo; como en la hoja de 0,5 kg, las filas 20 a 49 leen las filas 40 a 69 (la fila 19 ya es el final de la carga anterior).
     for hoja, col in zip(CONS_HOJAS_CARGA[1:], "DEFGHI"):
         if hoja in partes:
-            salida = cambiar_formulas_si_iguales(salida, partes[hoja], {f"D{f}": (f"'Datos '!{col}{f + 19}", f"'Datos '!{col}{f + 20}")
-                                                                        for f in range(20, 50)})
+            cambios.setdefault(partes[hoja], {}).update({f"D{f}": (f"'Datos '!{col}{f + 19}", f"'Datos '!{col}{f + 20}") for f in range(20, 50)})
     # M9 de las hojas de carga usa CONCAT, que esa versión de Excel no tiene (#¿NOMBRE?).
     for nombre, parte in partes.items():
         if "kg" in nombre:
-            salida = cambiar_formulas_si_iguales(salida, parte, {"M9": ('_xludf.CONCAT(FORMATO!N9," ","-"," ",FORMATO!P9)',
-                                                                        'CONCATENATE(FORMATO!N9," - ",FORMATO!P9)')})
-    return salida
+            cambios.setdefault(parte, {})["M9"] = ('_xludf.CONCAT(FORMATO!N9," ","-"," ",FORMATO!P9)', 'CONCATENATE(FORMATO!N9," - ",FORMATO!P9)')
+    return cambiar_formulas_varias(salida, cambios)
 
 # Descarga desde la tarjeta del ensayo en la muestra (no hay paquete por perforación: cada muestra usa varias hojas).
 EXCEL_INDIVIDUAL_CONFIG["consolidacion"] = {
