@@ -1285,11 +1285,15 @@ CONS_HUMEDAD_FILAS = [
     ("seco_17", "Masa suelo seco + recipiente (g) (17 horas)"), ("seco_18", "Masa suelo seco + recipiente (g) (18 horas)"),
     ("seco_19", "Masa suelo seco + recipiente (g) (19 horas)"), ("recipiente_masa", "Masa del recipiente (g)"),
 ]
+# Mismos datos y orden que la Gravedad específica en arcillas y limos (INV E-128, GESP_ARCILLA_CAMPOS); van al bloque X17:AB30
+# de la plantilla GDA-FLC-009.
 CONS_GS_CAMPOS = [
-    ("cons_pic_no", "Picnómetro No. (1 a 6)"),
-    ("cons_pic_masa_agua_suelo", "Masa picnómetro + agua + suelo a T °C (g)"),
-    ("cons_pic_temp", "Temperatura de aforo (°C)"),
-    ("cons_pic_masa_seco", "Masa suelo seco (g)"),
+    ("cons_pic_no", "Picnómetro No."),                                          # AB18
+    ("cons_pic_masa_seco", "Masa en el aire de la muestra (g)"),                # AB19
+    ("cons_pic_masa_agua", "Masa del picnómetro lleno de agua (g)"),            # AB20 (vacía: la calcula la plantilla con la calibración)
+    ("cons_pic_masa_agua_suelo", "Masa del picnómetro aforado + muestra (g)"),  # AB21
+    ("cons_pic_temp", "Temperatura del ensayo (°C)"),                           # AB22
+    ("cons_pct_retenido", "% material retenido en el tamiz No. 4"),            # Z28
 ]
 # Cargas de la hoja "DATOS MAQUINA " de la plantilla: (encabezado, columna del tiempo en min, columna donde se pega
 # la deformación de la máquina). El tiempo ya viene en la plantilla; el bloque de 32 kg comparte la rejilla del de 16 kg.
@@ -11161,17 +11165,33 @@ def _cons_humedad(data, prefijo):
     return (humedo - seco) / (seco - rec) * 100
 
 
+def _cons_masa_pic_calibrada(data):
+    """Masa del picnómetro lleno de agua según la calibración de la plantilla (a·T + b, picnómetros 1 a 6) o None."""
+    pic, temp = to_float(data.get("cons_pic_no")), to_float(data.get("cons_pic_temp"))
+    if pic is None or temp is None or not float(pic).is_integer() or int(pic) not in CONS_PIC_CALIBRACION:
+        return None
+    a, b = CONS_PIC_CALIBRACION[int(pic)]
+    return a * temp + b
+
+
+def _cons_masa_pic_agua(data):
+    """(masa del picnómetro lleno de agua, origen): la digitada ("digitada") o la de la calibración ("calibracion"); (None, None) si no hay."""
+    digitada = to_float(data.get("cons_pic_masa_agua"))
+    if digitada is not None:
+        return digitada, "digitada"
+    cal = _cons_masa_pic_calibrada(data)
+    return (cal, "calibracion") if cal is not None else (None, None)
+
+
 def _cons_gravedad(data):
     """Gravedad específica corregida (misma fórmula de la plantilla GDA-FLC-009: Ws·ρ/(Wpw+Ws−Wpws)·K)."""
     ws_, wpws, temp = (to_float(data.get(k)) for k in ("cons_pic_masa_seco", "cons_pic_masa_agua_suelo", "cons_pic_temp"))
-    pic = to_float(data.get("cons_pic_no"))
-    if None in (ws_, wpws, temp, pic) or int(pic) not in CONS_PIC_CALIBRACION:
+    wpw = _cons_masa_pic_agua(data)[0]
+    if None in (ws_, wpws, temp, wpw):
         return None
     dens_k = _tabla_agua_temperatura().get(round(temp, 1))
     if not dens_k:
         return None
-    a, b = CONS_PIC_CALIBRACION[int(pic)]
-    wpw = a * temp + b
     if (wpw + ws_ - wpws) == 0:
         return None
     return ws_ * dens_k[0] / (wpw + ws_ - wpws) * dens_k[1]
@@ -11269,9 +11289,24 @@ def render_consolidacion_form(data, assay_id):
         _radio("cons_temp_secado", "Temperatura de secado", CONS_TEMP_SECADO)
         _radio("cons_metodo", "Método utilizado", CONS_METODOS)
     with st.container(border=True):
-        st.markdown(card_header_html("science", "Gravedad Específica"), unsafe_allow_html=True)
+        st.markdown(card_header_html("science", "Gravedad Específica relativa en arcillas y limos (INV E-128-13)"), unsafe_allow_html=True)
         for key, label in CONS_GS_CAMPOS:
-            _campo(key, label)
+            if key == "cons_pic_masa_agua":
+                cal = _cons_masa_pic_calibrada(data)
+                _campo(key, label, placeholder=f"{cal:.2f} (calibración)" if cal is not None else "0.00")
+            else:
+                _campo(key, label, placeholder="No." if key == "cons_pic_no" else "0.00")
+        wpw, origen = _cons_masa_pic_agua(data)
+        if origen == "calibracion":
+            st.caption(f"Masa del picnómetro lleno de agua según la calibración del picnómetro {int(to_float(data.get('cons_pic_no')))} a "
+                       f"{fmt_num(to_float(data.get('cons_pic_temp')), 1)} °C: **{fmt_num(wpw, 2)} g** (es la que usa el Excel si la dejas vacía).")
+        retenido = to_float(data.get("cons_pct_retenido"))
+        if retenido is not None and retenido > 0:
+            st.warning("Con material retenido en el tamiz No. 4, la plantilla de consolidación combina la gravedad con la de los gruesos, "
+                       "que no se digita aquí: revisa la gravedad específica en el Excel. La app muestra la de la fracción fina.")
+        gs = _cons_gravedad(data)
+        if gs is not None:
+            st.caption(f"Gravedad específica corregida a 20 °C: **{fmt_num(gs, 4)}**")
     with st.container(border=True):
         st.markdown(card_header_html("straighten", "Deformaciones (mm)"), unsafe_allow_html=True)
         st.caption("Se guardan en la app como respaldo de la bitácora; la plantilla toma las lecturas de la máquina.")
@@ -11337,7 +11372,7 @@ def render_consolidacion_form(data, assay_id):
 @_exportacion_controlada
 def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Diligencia entradas del formato 009 sin corregir sus fórmulas. Si una columna de la máquina está calculada por el original, la exportación queda pendiente de revisión."""
-    wb = _cargar_plantilla_informe(TEMPLATE_CONSOLIDACION)
+    wb = _cargar_plantilla_informe(TEMPLATE_CONSOLIDACION, celdas_formula_editables={"FORMATO": ("AB20",)})
     ws = wb["FORMATO"]
     ws["D6"] = project.get("cliente", "") if project else ""
     ws["D7"] = project["nombre"] if project else codigo
@@ -11379,9 +11414,12 @@ def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, obs
 
     ws["AB18"] = to_float(data.get("cons_pic_no"))
     ws["AB19"] = to_float(data.get("cons_pic_masa_seco"))
+    if to_float(data.get("cons_pic_masa_agua")) is not None:   # digitada; si no, queda la fórmula de la calibración (=D118)
+        ws["AB20"] = to_float(data.get("cons_pic_masa_agua"))
     ws["AB21"] = to_float(data.get("cons_pic_masa_agua_suelo"))
     ws["AB22"] = to_float(data.get("cons_pic_temp"))
-    ws["Z28"] = 0  # la bitácora no captura el % retenido en el tamiz No. 4
+    retenido = to_float(data.get("cons_pct_retenido"))
+    ws["Z28"] = retenido if retenido is not None else 0
 
     # Lecturas de la máquina: la plantilla ya trae la rejilla de tiempos (min) de cada carga en "DATOS MAQUINA ";
     # se escribe la deformación de la máquina interpolada en cada tiempo, hasta donde haya datos.
@@ -11397,8 +11435,10 @@ def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, obs
 
     bio = BytesIO()
     wb.save(bio)
-    bio.seek(0)
-    return bio.getvalue()
+    salida = bio.getvalue()
+    # La calibración de los picnómetros (B110:G110 = a·T + b) toma la temperatura de B109:G109, que en la plantilla apunta a G23 (vacía en
+    # esta hoja: así la masa del picnómetro lleno de agua salía como si el ensayo fuera a 0 °C). La temperatura del ensayo está en AB22.
+    return cambiar_formulas_si_iguales(salida, partes_hojas(salida)["FORMATO"], {"B109": ("$G$23", "$AB$22")})
 
 def _ci_promedio(data, prefijo):
     valores = [v for v in (to_float(data.get(f"{prefijo}_{i}")) for i in (1, 2, 3)) if v is not None]
