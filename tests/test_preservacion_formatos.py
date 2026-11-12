@@ -75,7 +75,7 @@ class FormatosOficialesTest(unittest.TestCase):
         ruta = ROOT / 'templates/GDA-FLC-006_gravedad_arcilla.xlsx'
         original = ruta.read_bytes()
         arbol = ast.parse((ROOT / 'app.py').read_text(encoding='utf-8'))
-        nombres = {'_generar_excel_gravedad', 'generar_excel_gravedad_arcilla'}
+        nombres = {'_generar_excel_gravedad', '_llenar_encabezado_gravedad', 'generar_excel_gravedad_arcilla'}
         funciones = [n for n in arbol.body if isinstance(n, ast.FunctionDef) and n.name in nombres]
         for funcion in funciones:
             funcion.decorator_list = []

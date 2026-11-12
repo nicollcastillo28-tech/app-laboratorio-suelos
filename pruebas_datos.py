@@ -180,7 +180,7 @@ def _consolidacion():
         for h in (17, 18, 19):
             d[f"cons_{pref}_seco_{h}"] = "80.00"
     # Deformación de cada escalón de carga (mm) en la bitácora y lecturas de la máquina (un archivo por carga).
-    incrementos = [0.020, 0.030, 0.050, 0.090, 0.160, 0.280, 0.450, 0.600]
+    incrementos = [0.020, 0.030, 0.050, 0.090, 0.160, 0.280, 0.450]   # las 7 cargas de la plantilla (0,5 a 32 kg)
     acumulada = 0.0
     tiempos = [0, 6, 15, 30, 60, 120, 240, 480, 900, 1800, 3600, 7200, 14400, 28800, 57600, 86400]
     for i, inc in enumerate(incrementos, start=1):

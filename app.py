@@ -1295,10 +1295,13 @@ CONS_GS_CAMPOS = [
     ("cons_pic_temp", "Temperatura del ensayo (°C)"),                           # AB22
     ("cons_pct_retenido", "% material retenido en el tamiz No. 4"),            # Z28
 ]
-# Cargas de la hoja "DATOS MAQUINA " de la plantilla: (encabezado, columna del tiempo en min, columna donde se pega
-# la deformación de la máquina). El tiempo ya viene en la plantilla; el bloque de 32 kg comparte la rejilla del de 16 kg.
-CONS_MAQ_BLOQUES = [("0,25 kg", "B", "C"), ("0,5 kg", "E", "F"), ("1,0 kg", "H", "I"), ("2,0 kg", "K", "L"),
-                    ("4,0 kg", "N", "O"), ("8,0 kg", "Q", "R"), ("16 kg", "T", "U"), ("32 kg", "T", "X")]
+# Cargas de la hoja "DATOS MAQUINA " de la plantilla: (carga, columna del tiempo en min, columna donde se pega la deformación de la
+# máquina). La plantilla tiene 7 bloques, rotulados con la carga en el brazo (0,25 a 16 kg); la hoja "Datos " los lleva en orden a las
+# hojas de 0,5 a 32 kg (la carga sobre la muestra, la de la bitácora). El bloque "32 kg" de DATOS MAQUINA (W:Y) no es una entrada: sus
+# columnas son fórmulas que copian el bloque de 16 kg. El tiempo ya viene en la plantilla.
+CONS_MAQ_BLOQUES = [("0,5 kg (brazo 0,25 kg)", "B", "C"), ("1,0 kg (brazo 0,5 kg)", "E", "F"), ("2,0 kg (brazo 1,0 kg)", "H", "I"),
+                    ("4,0 kg (brazo 2,0 kg)", "K", "L"), ("8,0 kg (brazo 4,0 kg)", "N", "O"), ("16 kg (brazo 8,0 kg)", "Q", "R"),
+                    ("32 kg (brazo 16 kg)", "T", "U")]
 CONS_CONSOLIDOMETROS = ["", "GDA-E-003", "GDA-E-004", "GDA-E-005", "GDA-E-006", "GDA-E-393", "GDA-E-394"]
 EQUIPO_CONSOLIDACION = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Termómetro GDA-E-126", "Horno GDA-E-007", "Horno GDA-E-404"]
 # Calibración de los picnómetros (hoja Resultados de la plantilla): masa del picnómetro lleno de agua
@@ -8038,7 +8041,7 @@ def _bitacora_filas_perforacion(codigo, perf_codigo):
 
 
 
-EXPORTACIONES_EN_REVISION = frozenset({"consolidacion"})   # escribe sobre celdas con fórmulas del formato (X4); el Corte directo ya se descarga
+EXPORTACIONES_EN_REVISION = frozenset()   # Corte directo y Consolidación ya se descargan; aquí van las que escriban sobre fórmulas del formato
 LOTES_EN_REVISION = frozenset({"proctor"})   # el CBR ya se descarga por paquete (probado); el paquete de Proctor sigue sin verificarse
 
 
@@ -9336,6 +9339,22 @@ def _generar_excel_gravedad(template, hoja, celdas, codigo, perf_codigo, muestra
     las densidades y la absorción las calcula el propio Excel."""
     wb = _cargar_plantilla_informe(template, celdas_formula_editables={hoja: celdas_formula_editables})
     ws = wb.worksheets[0]   # el informe es siempre la primera hoja (cada versión de la plantilla le pone un nombre distinto)
+    _llenar_encabezado_gravedad(ws, codigo, perf_codigo, muestra, project, data)
+    for celda, valor in celdas.items():
+        ws[celda] = to_float(valor)
+    if celda_observaciones and (observaciones_ensayo or "").strip():
+        ws[celda_observaciones] = observaciones_ensayo.strip()
+    bio = BytesIO()
+    wb.save(bio)
+    # Celdas con solo espacios en la plantilla (I26/I29 en fino, I25/I28 en grueso) cortaban la línea derecha del marco: se vacían.
+    from exportacion_formatos import partes_hojas
+    from presentacion_excel import vaciar_celdas_solo_espacios
+    salida = bio.getvalue()
+    return vaciar_celdas_solo_espacios(salida, list(partes_hojas(salida).values())[0])
+
+
+def _llenar_encabezado_gravedad(ws, codigo, perf_codigo, muestra, project, data):
+    """Encabezado de los informes de gravedad específica (GDA-FLC-027/028/006 y la hoja GS de Consolidación, con la misma disposición)."""
     ws["C6"] = project.get("cliente", "") if project else ""
     ws["C7"] = project["nombre"] if project else codigo
     ws["C8"] = project.get("correo_cliente", "") if project else ""
@@ -9354,17 +9373,6 @@ def _generar_excel_gravedad(template, hoja, celdas, codigo, perf_codigo, muestra
     ws["I12"] = to_float(muestra.get("profundidad_de"))
     ws["K12"] = to_float(muestra.get("profundidad_hasta"))
     ws["C13"] = descripcion_para_informe(muestra)
-    for celda, valor in celdas.items():
-        ws[celda] = to_float(valor)
-    if celda_observaciones and (observaciones_ensayo or "").strip():
-        ws[celda_observaciones] = observaciones_ensayo.strip()
-    bio = BytesIO()
-    wb.save(bio)
-    # Celdas con solo espacios en la plantilla (I26/I29 en fino, I25/I28 en grueso) cortaban la línea derecha del marco: se vacían.
-    from exportacion_formatos import partes_hojas
-    from presentacion_excel import vaciar_celdas_solo_espacios
-    salida = bio.getvalue()
-    return vaciar_celdas_solo_espacios(salida, list(partes_hojas(salida).values())[0])
 
 
 @_exportacion_controlada
@@ -11229,7 +11237,10 @@ def resultados_consolidacion(data):
     filas += [("Área de la muestra (cm²)", fmt_num(area, 2)), ("Volumen inicial (cm³)", fmt_num(vol, 2))]
     if mt is not None:
         filas.append(("Peso unitario total inicial (g/cm³)", fmt_num(mt / vol, 3)))
-        if wi is not None:
+        # Como la plantilla (K21 = Md / volumen, con Md = masa final / (1 + humedad final)); sin datos finales, con la humedad inicial.
+        if mf is not None and wf is not None:
+            filas.append(("Peso unitario total seco inicial (g/cm³)", fmt_num(mf / (1 + wf / 100) / vol, 3)))
+        elif wi is not None:
             filas.append(("Peso unitario total seco inicial (g/cm³)", fmt_num(mt / vol / (1 + wi / 100), 3)))
     if mt is not None and mf is not None and wf is not None and gs:
         md = mf / (1 + wf / 100)
@@ -11326,9 +11337,18 @@ def render_consolidacion_form(data, assay_id):
         st.markdown(card_header_html("show_chart", "Lecturas de la Máquina"), unsafe_allow_html=True)
         st.caption("Sube el Excel que arroja la máquina (hoja \"Data2\", columna D): se guardan las lecturas de cada carga y "
                    "van directo a la hoja \"DATOS MAQUINA\" del Excel que descargas. Un archivo por carga.")
+        if data.get(f"cons_maq_{len(CONS_MAQ_BLOQUES) + 1}"):
+            st.warning("Hay lecturas cargadas en una octava carga que la plantilla no tiene (solo trae 7, de 0,5 a 32 kg): no van al Excel. "
+                       "Revisa que cada archivo esté en su carga.")
+            if st.button("Quitar esas lecturas", key=f"cons_maq_quitar_extra_{assay_id}"):
+                data.pop(f"cons_maq_{len(CONS_MAQ_BLOQUES) + 1}", None)
+                if _guardar_inmediato(assay_id, data):
+                    st.rerun()
         for par in range(0, len(CONS_MAQ_BLOQUES), 2):
             cols = st.columns(2)
             for col, i in zip(cols, (par + 1, par + 2)):
+                if i > len(CONS_MAQ_BLOQUES):
+                    continue
                 enc = CONS_MAQ_BLOQUES[i - 1][0]
                 with col:
                     st.markdown(f'<div style="font-weight:700;padding-top:6px;">Carga {enc}</div>', unsafe_allow_html=True)
@@ -11372,7 +11392,7 @@ def render_consolidacion_form(data, assay_id):
 @_exportacion_controlada
 def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Diligencia entradas del formato 009 sin corregir sus fórmulas. Si una columna de la máquina está calculada por el original, la exportación queda pendiente de revisión."""
-    wb = _cargar_plantilla_informe(TEMPLATE_CONSOLIDACION, celdas_formula_editables={"FORMATO": ("AB20",)})
+    wb = _cargar_plantilla_informe(TEMPLATE_CONSOLIDACION, celdas_formula_editables={"FORMATO": ("AB20",), "GS": ("G21",)})
     ws = wb["FORMATO"]
     ws["D6"] = project.get("cliente", "") if project else ""
     ws["D7"] = project["nombre"] if project else codigo
@@ -11420,6 +11440,18 @@ def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, obs
     ws["AB22"] = to_float(data.get("cons_pic_temp"))
     retenido = to_float(data.get("cons_pct_retenido"))
     ws["Z28"] = retenido if retenido is not None else 0
+    # Hoja GS: el informe de gravedad específica (misma disposición que GDA-FLC-006) con los mismos datos. Sin masa del picnómetro lleno
+    # de agua digitada, G21 queda con su fórmula (la calibración de esa hoja, con la temperatura de G23).
+    if "GS" in wb.sheetnames:
+        gs = wb["GS"]
+        _llenar_encabezado_gravedad(gs, codigo, perf_codigo, muestra, project, data)
+        gs["G19"] = to_float(data.get("cons_pic_no"))
+        gs["G20"] = to_float(data.get("cons_pic_masa_seco"))
+        if to_float(data.get("cons_pic_masa_agua")) is not None:
+            gs["G21"] = to_float(data.get("cons_pic_masa_agua"))
+        gs["G22"] = to_float(data.get("cons_pic_masa_agua_suelo"))
+        gs["G23"] = to_float(data.get("cons_pic_temp"))
+        gs["D32"] = retenido if retenido is not None else 0
 
     # Lecturas de la máquina: la plantilla ya trae la rejilla de tiempos (min) de cada carga en "DATOS MAQUINA ";
     # se escribe la deformación de la máquina interpolada en cada tiempo, hasta donde haya datos.
@@ -11438,7 +11470,28 @@ def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, obs
     salida = bio.getvalue()
     # La calibración de los picnómetros (B110:G110 = a·T + b) toma la temperatura de B109:G109, que en la plantilla apunta a G23 (vacía en
     # esta hoja: así la masa del picnómetro lleno de agua salía como si el ensayo fuera a 0 °C). La temperatura del ensayo está en AB22.
-    return cambiar_formulas_si_iguales(salida, partes_hojas(salida)["FORMATO"], {"B109": ("$G$23", "$AB$22")})
+    partes = partes_hojas(salida)
+    salida = cambiar_formulas_si_iguales(salida, partes["FORMATO"], {
+        **{c: ("$G$23", "$AB$22") for c in ("B109", "G109")},
+        "K30": ("#REF!", "AB25"),   # Gs de los cálculos de volumen y relación de vacíos (J30 «Gs»): es la gravedad específica de AB25
+    })
+    # Hoja de 1,0 kg: la deformación (columna E) perdió sus referencias; queda como en las demás cargas (lectura − lectura inicial D19).
+    if "1,0 kg " in partes:
+        salida = cambiar_formulas_si_iguales(salida, partes["1,0 kg "], {"E19": ("#REF!-#REF!", "D19-$D$19"), "E20": ("D19-#REF!", "D20-$D$19")})
+    # M9 de las hojas de carga usa CONCAT, que esa versión de Excel no tiene (#¿NOMBRE?).
+    for nombre, parte in partes.items():
+        if "kg" in nombre:
+            salida = cambiar_formulas_si_iguales(salida, parte, {"M9": ('_xludf.CONCAT(FORMATO!N9," ","-"," ",FORMATO!P9)',
+                                                                        'CONCATENATE(FORMATO!N9," - ",FORMATO!P9)')})
+    return salida
+
+# Descarga desde la tarjeta del ensayo en la muestra (no hay paquete por perforación: cada muestra usa varias hojas).
+EXCEL_INDIVIDUAL_CONFIG["consolidacion"] = {
+    "hoja": "FORMATO", "generar": generar_excel_consolidacion, "ext": "xlsx",
+    "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "prefijo": "Consolidacion", "etiqueta": "Consolidación", "bitacora": "Consolidación",
+}
+
 
 def _ci_promedio(data, prefijo):
     valores = [v for v in (to_float(data.get(f"{prefijo}_{i}")) for i in (1, 2, 3)) if v is not None]
