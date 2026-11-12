@@ -10271,12 +10271,43 @@ def campos_faltantes(tipo, data):
     return faltan
 
 
+def humedad_para_pasa200(muestra_id):
+    """(de dónde, {casilla de Pasa 200 «antes del lavado»: valor}) con lo digitado en la humedad de la muestra: la muestra que se seca para la
+    humedad es la misma que después se lava para el Pasa 200. Se toma del ensayo de Contenido de humedad y, si la muestra no lo tiene (o está
+    vacío), de la humedad antes de inmersión del CBR. (None, {}) si no hay ninguna."""
+    if not muestra_id:
+        return None, {}
+    fuentes = []
+    hum = get_assay(muestra_id, "humedad")
+    if hum:
+        fuentes.append(("del ensayo de Contenido de humedad", hum.get("data") or {}))
+    cbr = get_assay(muestra_id, "cbr")
+    if cbr and any(f"cbr_antes_{k}" in (cbr.get("data") or {}) for k, _hk in CBR_HUM_ANTES):
+        fuentes.append(("de la humedad antes de inmersión del CBR", datos_humedad_antes_cbr(cbr.get("data") or {})))
+    for nombre, d in fuentes:
+        valores = {"p200_recipiente_antes": d.get("hum_recipiente"), "p200_masa_recipiente_antes": d.get("hum_masa_recipiente"),
+                   "p200_seco_mas_recipiente_antes": d.get("hum_seco_mas_recipiente")}
+        valores = {k: str(v).strip() for k, v in valores.items() if str(v if v is not None else "").strip()}
+        if valores:
+            return nombre, valores
+    return None, {}
+
+
 def render_pasa200_section(data, assay_id, requerido=True):
     """Campos de "Determinación Pasa No. 200". Se usa tanto embebido dentro del formulario de
     Granulometría como en el formulario del ensayo "Pasa 200" independiente — en ambos casos
     `data` puede terminar siendo el mismo diccionario compartido (ver render_assay_form), así
     que lo que se digite en cualquiera de las dos pantallas se refleja en la otra."""
     badge = '<span class="badge badge-warning">Requerido</span>' if requerido else ""
+    # Recipiente, masa del recipiente y masa seca + recipiente «antes del lavado» salen de la humedad de la muestra (ensayo de Humedad o, si no
+    # hay, la del CBR): se copian solos cada vez que cambian allá. Si se corrigen aquí a mano, la corrección manda hasta que la humedad cambie.
+    fuente_hum, valores_hum = humedad_para_pasa200(st.session_state.get("selected_muestra_id"))
+    for _clave, _valor in valores_hum.items():
+        _ultimo = f"{_clave}_hum_lastsync"
+        if data.get(_ultimo) != _valor:
+            st.session_state[f"{_clave}_{assay_id}"] = _valor
+            data[_clave] = _valor
+            data[_ultimo] = _valor
     # "Masa suelo seco + recipiente" DESPUÉS del lavado es, físicamente, lo mismo que ya se pesó por separado
     # en cada tamiz de Granulometría (el material que queda retenido en el tamiz No. 200 se reparte en la
     # serie completa de tamices) — si esos tamices ya están digitados, no hace falta pesarlo aparte: se suma
@@ -10306,6 +10337,12 @@ def render_pasa200_section(data, assay_id, requerido=True):
         suma_tamices = sum(to_float(v) or 0.0 for v in _tam)
     with st.container(border=True):
         st.markdown(card_header_html("water_drop", "Determinación Pasa No. 200", badge), unsafe_allow_html=True)
+        if fuente_hum:
+            _nombres = {"p200_recipiente_antes": "el recipiente", "p200_masa_recipiente_antes": "la masa del recipiente",
+                        "p200_seco_mas_recipiente_antes": "la masa seca + recipiente"}
+            _que = [n for k, n in _nombres.items() if k in valores_hum]
+            _que = ", ".join(_que[:-1]) + " y " + _que[-1] if len(_que) > 1 else _que[0]
+            st.caption(f"Antes del lavado: {_que} se toman {fuente_hum} de esta muestra y se actualizan solos si cambian allá.")
         head = st.columns([2.2, 1, 1])
         head[1].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Antes del lavado (g)</div>', unsafe_allow_html=True)
         head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Después del lavado (g)</div>', unsafe_allow_html=True)
