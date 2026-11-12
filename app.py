@@ -1307,12 +1307,16 @@ CONS_GS_CAMPOS = [
     ("cons_pct_retenido", "% material retenido en el tamiz No. 4"),            # Z28
 ]
 # Cargas de la hoja "DATOS MAQUINA " de la plantilla: (carga, columna del tiempo en min, columna donde se pega la deformación de la
-# máquina). La plantilla tiene 7 bloques, rotulados con la carga en el brazo (0,25 a 16 kg); la hoja "Datos " los lleva en orden a las
-# hojas de 0,5 a 32 kg (la carga sobre la muestra, la de la bitácora). El bloque "32 kg" de DATOS MAQUINA (W:Y) no es una entrada: sus
-# columnas son fórmulas que copian el bloque de 16 kg. El tiempo ya viene en la plantilla.
-CONS_MAQ_BLOQUES = [("0,5 kg (brazo 0,25 kg)", "B", "C"), ("1,0 kg (brazo 0,5 kg)", "E", "F"), ("2,0 kg (brazo 1,0 kg)", "H", "I"),
-                    ("4,0 kg (brazo 2,0 kg)", "K", "L"), ("8,0 kg (brazo 4,0 kg)", "N", "O"), ("16 kg (brazo 8,0 kg)", "Q", "R"),
-                    ("32 kg (brazo 16 kg)", "T", "U")]
+# máquina). La plantilla tiene 7 bloques; la hoja "Datos " los lleva en orden a las hojas de 0,5 a 32 kg (las cargas de la bitácora, que
+# van en el brazo: la plantilla las multiplica por 10). Los encabezados de DATOS MAQUINA dicen 0,25 a 16 kg, corridos una casilla, y su
+# bloque "32 kg" (W:Y) no es una entrada: sus columnas son fórmulas que copian el de 16 kg. El tiempo ya viene en la plantilla.
+CONS_MAQ_BLOQUES = [("0,5 kg", "B", "C"), ("1,0 kg", "E", "F"), ("2,0 kg", "H", "I"), ("4,0 kg", "K", "L"), ("8,0 kg", "N", "O"),
+                    ("16 kg", "Q", "R"), ("32 kg", "T", "U")]
+# Tiempos (min) de las lecturas de cada carga en la plantilla (hoja "Datos ", columna A; las hojas de carga grafican su raíz).
+CONS_TIEMPOS_MIN = [0, 0.1, 0.25, 0.5, 1, 2, 3, 4, 6, 9, 12, 16, 25, 36, 49, 64, 81, 100, 120, 144, 169, 196, 225, 256, 289, 324, 361,
+                    400, 441, 484, 1440]
+# Hoja de la plantilla de cada carga, en el orden de CONS_MAQ_BLOQUES; en cada una, L38 es la raíz de t90 (√min) del método de Taylor.
+CONS_HOJAS_CARGA = ["0.5 kg", "1,0 kg ", "2,0 kg ", "4,0 kg  ", "8,0 kg", "16,0 kg", "32,0 kg"]
 CONS_CONSOLIDOMETROS = ["", "GDA-E-003", "GDA-E-004", "GDA-E-005", "GDA-E-006", "GDA-E-393", "GDA-E-394"]
 EQUIPO_CONSOLIDACION = ["Balanza GDA-E-010", "Balanza GDA-E-011", "Termómetro GDA-E-126", "Horno GDA-E-007", "Horno GDA-E-404"]
 # Calibración de los picnómetros (hoja Resultados de la plantilla): masa del picnómetro lleno de agua
@@ -11220,6 +11224,62 @@ def _cons_deformacion_en(puntos, t_seg):
     return d0 if t1 == t0 else d0 + (d1 - d0) * (t_seg - t0) / (t1 - t0)
 
 
+def raiz_t90_taylor(xy):
+    """Método de Taylor (raíz del tiempo, INV E-151): xy = [(√t en √min, lectura)] en orden de tiempo. Recta por el tramo inicial de la
+    curva (la más larga con R² ≥ 0.995 desde la primera lectura con t > 0, sin pasar del 60 % del asentamiento final: el punto de t = 0
+    queda fuera por el asentamiento inicial), segunda recta desde su cero corregido con abscisas 1.15 veces mayores; √t90 es donde esa
+    segunda recta corta la curva. None si no hay datos suficientes o la curva no la corta."""
+    pts = [(x, y) for x, y in xy if x is not None and y is not None]
+    if len(pts) < 6:
+        return None
+    if pts[-1][1] < pts[0][1]:   # lecturas que bajan al asentarse
+        pts = [(x, -y) for x, y in pts]
+    y0 = pts[0][1]
+    pts = [(x, y - y0) for x, y in pts]
+    y_fin = pts[-1][1]
+    if y_fin <= 0:
+        return None
+    tramo = [pt for pt in pts if pt[0] > 0]
+    mejor = None
+    for n in range(3, len(tramo) + 1):
+        sub = tramo[:n]
+        if mejor is not None and sub[-1][1] > 0.6 * y_fin:
+            break
+        xs, ys = [pt[0] for pt in sub], [pt[1] for pt in sub]
+        mx, my = sum(xs) / n, sum(ys) / n
+        sxx = sum((x - mx) ** 2 for x in xs)
+        if sxx == 0:
+            continue
+        m = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
+        if m <= 0:
+            continue
+        b = my - m * mx
+        syy = sum((y - my) ** 2 for y in ys)
+        r2 = 1 - sum((y - (b + m * x)) ** 2 for x, y in zip(xs, ys)) / syy if syy else 1
+        if mejor is None or r2 >= 0.995:
+            mejor = (m, b, sub[-1][0])
+        else:
+            break
+    if not mejor:
+        return None
+    m, b, x_fin_recta = mejor
+    m2 = m / 1.15
+    for (xa, ya), (xb, yb) in zip(pts, pts[1:]):
+        fa, fb = ya - (b + m2 * xa), yb - (b + m2 * xb)
+        if xa >= x_fin_recta and fa > 0 >= fb:
+            return xa + (xb - xa) * fa / (fa - fb)
+    return None
+
+
+def cons_raiz_t90(data, i):
+    """√t90 (√min) de la carga i (1 a 7) con las lecturas de la máquina, en los mismos tiempos que grafica la plantilla."""
+    puntos = data.get(f"cons_maq_{i}")
+    if not puntos:
+        return None
+    xy = [(math.sqrt(t), _cons_deformacion_en(puntos, t * 60)) for t in CONS_TIEMPOS_MIN]
+    return raiz_t90_taylor(xy)
+
+
 def _cons_final(data, clave_fin, clave_ini):
     """Valor de la columna final; si no se digitó, repite el de la columna inicial."""
     v = to_float(data.get(clave_fin))
@@ -11292,6 +11352,10 @@ def resultados_consolidacion(data):
     gs = _cons_gravedad(data)
     if gs is not None:
         filas.append(("Gravedad específica, Gs", fmt_num(gs, 4)))
+    for i, (carga, _col_t, _col_d) in enumerate(CONS_MAQ_BLOQUES, start=1):
+        raiz = cons_raiz_t90(data, i)
+        if raiz is not None:
+            filas.append((f"√t90 (Taylor), carga {carga}", f"{fmt_num(raiz, 3)} √min (t90 = {fmt_num(raiz ** 2, 2)} min)"))
     d, h = f("cons_diametro"), f("cons_altura")
     if None in (d, h) or d <= 0 or h <= 0:
         return filas
@@ -11456,7 +11520,8 @@ def render_consolidacion_form(data, assay_id):
 @_exportacion_controlada
 def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Diligencia entradas del formato 009 sin corregir sus fórmulas. Si una columna de la máquina está calculada por el original, la exportación queda pendiente de revisión."""
-    wb = _cargar_plantilla_informe(TEMPLATE_CONSOLIDACION, celdas_formula_editables={"FORMATO": ("AB20",), "GS": ("G21",)})
+    wb = _cargar_plantilla_informe(TEMPLATE_CONSOLIDACION, celdas_formula_editables={"FORMATO": ("AB20",), "GS": ("G21",),
+                                                                                     **{h: ("L29", "L38") for h in CONS_HOJAS_CARGA}})
     ws = wb["FORMATO"]
     ws["D6"] = project.get("cliente", "") if project else ""
     ws["D7"] = project["nombre"] if project else codigo
@@ -11517,6 +11582,22 @@ def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, obs
         gs["G23"] = to_float(data.get("cons_pic_temp"))
         gs["D32"] = retenido if retenido is not None else 0
 
+    # Hoja de cada carga con lecturas de la máquina: la carga aplicada en el brazo (L29, kg; de ahí salen la fuerza y el esfuerzo de la
+    # tabla de FORMATO y con ellos Cc, Cr, av y mv) y √t90 por el método de Taylor (L38; de ahí salen D90, D100, t100 y Cv).
+    for i, hoja in enumerate(CONS_HOJAS_CARGA, start=1):
+        if not data.get(f"cons_maq_{i}") or hoja not in wb.sheetnames:
+            continue
+        wb[hoja]["L29"] = float(CONS_CARGAS[i - 1])
+        raiz = cons_raiz_t90(data, i)
+        if raiz is not None:
+            wb[hoja]["L38"] = round(raiz, 3)
+    # Descarga: la plantilla toma la deformación (mm) al bajar a 8, 2 y 0,5 kg de "Datos " AA2:AA4 (Z2:Z4); se usan las de la bitácora.
+    if "Datos " in wb.sheetnames:
+        for fila, carga in ((2, "8.0"), (3, "2.0"), (4, "0.5")):
+            valor = to_float(data.get(f"cons_def_{CONS_CARGAS.index(carga) + 1}_descarga"))
+            if valor is not None:
+                wb["Datos "][f"AA{fila}"] = valor
+
     # Lecturas de la máquina: la plantilla ya trae la rejilla de tiempos (min) de cada carga en "DATOS MAQUINA ";
     # se escribe la deformación de la máquina interpolada en cada tiempo, hasta donde haya datos.
     hoja_maq = wb["DATOS MAQUINA "]
@@ -11542,6 +11623,12 @@ def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, obs
     # Hoja de 1,0 kg: la deformación (columna E) perdió sus referencias; queda como en las demás cargas (lectura − lectura inicial D19).
     if "1,0 kg " in partes:
         salida = cambiar_formulas_si_iguales(salida, partes["1,0 kg "], {"E19": ("#REF!-#REF!", "D19-$D$19"), "E20": ("D19-#REF!", "D20-$D$19")})
+    # Hojas de 1,0 a 32 kg: la fila de √t = 0.32 (6 s) leía la lectura de t = 0 de "Datos " (fila 39) y toda la columna quedaba corrida un
+    # tiempo; como en la hoja de 0,5 kg, las filas 20 a 49 leen las filas 40 a 69 (la fila 19 ya es el final de la carga anterior).
+    for hoja, col in zip(CONS_HOJAS_CARGA[1:], "DEFGHI"):
+        if hoja in partes:
+            salida = cambiar_formulas_si_iguales(salida, partes[hoja], {f"D{f}": (f"'Datos '!{col}{f + 19}", f"'Datos '!{col}{f + 20}")
+                                                                        for f in range(20, 50)})
     # M9 de las hojas de carga usa CONCAT, que esa versión de Excel no tiene (#¿NOMBRE?).
     for nombre, parte in partes.items():
         if "kg" in nombre:
