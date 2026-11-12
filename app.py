@@ -987,10 +987,14 @@ components.html("""
     // Se recuerda hasta dónde bajó la persona y, si la página se mueve sola, se devuelve a ese punto. Cuenta como movimiento de la persona:
     // rueda, dedo, flechas/RePág/AvPág fuera de un campo y arrastrar la barra de desplazamiento (cualquier distancia); y, solo hasta ~500 px,
     // lo que hace el navegador al enfocar un campo o saltar con Enter/Tab. Digitar NO cuenta (justo ahí ocurre la recarga). Al cambiar de
-    // pantalla (cambia la dirección) se parte de cero.
+    // pantalla (cambia la dirección) se parte de cero y se sube al inicio.
     (function() {
         var doc = window.parent.document, win = window.parent;
         var guardado = 0, fuerte = 0, suave = 0, urlAntes = win.location.search, t1 = null, t2 = null;
+        function clave(q) {
+            var p = new URLSearchParams(q);
+            return ['screen', 'codigo', 'perf', 'muestra', 'assay'].map(function(k) { return p.get(k) || ''; }).join('|');
+        }
         function scroller() {
             var c = [doc.querySelector('[data-testid="stMain"]'), doc.querySelector('section.main'), doc.scrollingElement];
             for (var i = 0; i < c.length; i++) {
@@ -1012,7 +1016,14 @@ components.html("""
             var s = scroller();
             if (!s) return;
             var u = win.location.search;
-            if (u !== urlAntes) { urlAntes = u; guardado = s.scrollTop; return; }
+            if (u !== urlAntes) {
+                // Otra pantalla (o la misma con otra perforación, muestra o ensayo): se abre desde arriba, no a la altura de la anterior.
+                var otra = clave(u) !== clave(urlAntes);
+                urlAntes = u;
+                if (otra) s.scrollTop = 0;
+                guardado = s.scrollTop;
+                return;
+            }
             var ahora = Date.now(), dif = Math.abs(s.scrollTop - guardado);
             if (ahora - fuerte < 1200) { guardado = s.scrollTop; return; }
             if (ahora - suave < 1200 && dif <= 500) { guardado = s.scrollTop; return; }
@@ -2490,7 +2501,11 @@ def navigate(screen):
     if _navegacion_muy_seguida():
         return
     actual = st.session_state.get("screen")
-    if actual and actual != screen:
+    if screen in st.session_state.nav_stack:
+        # Ir a una pantalla por la que ya se pasó (p. ej. «Ir a la perforación» desde un ensayo) es volver a ella: la pila se recorta hasta ahí,
+        # así después «← Atrás» sigue el camino normal (perforación → proyecto) en vez de devolverse por el ensayo y la muestra.
+        del st.session_state.nav_stack[len(st.session_state.nav_stack) - 1 - st.session_state.nav_stack[::-1].index(screen):]
+    elif actual and actual != screen:
         st.session_state.nav_stack.append(actual)
     st.session_state.screen = screen
     st.session_state["_nav_token"] = st.session_state.get("_nav_token", 0) + 1
@@ -4212,7 +4227,7 @@ def _boton_ir_proyecto(codigo, clave):
 
 
 def _boton_ir_proyecto_flotante(codigo, perf_codigo=None, muestra_id=None, diferir=False):
-    """"Ir a la muestra" e "Ir al proyecto →" fijos en la esquina inferior izquierda, justo encima de "← Atrás": en la pantalla del ensayo se digita
+    """"Ir a la muestra", "Ir a la perforación" e "Ir al proyecto →" fijos en la esquina inferior izquierda, justo encima de "← Atrás": en la pantalla del ensayo se digita
     hasta abajo y ahí mismo se guarda el progreso, así que los atajos no pueden estar solo arriba. «Ir a la muestra» sirve para comparar los
     resultados de los demás ensayos de la misma muestra sin devolverse al proyecto.
     Con `diferir`, el cambio de pantalla se hace DESPUÉS del autoguardado del ensayo (ver _nav_tras_guardar en render_assay_form): así lo último que
@@ -4224,6 +4239,10 @@ def _boton_ir_proyecto_flotante(codigo, perf_codigo=None, muestra_id=None, difer
             st.session_state.selected_perforacion = perf_codigo
             st.session_state.selected_muestra_id = muestra_id
             destino = "muestra-detail"
+        if perf_codigo and st.button("Ir a la perforación", key="ir_perforacion_flotante", icon=":material/layers:"):
+            st.session_state.selected_codigo = codigo
+            st.session_state.selected_perforacion = perf_codigo
+            destino = "perforacion-detail"
         if st.button("Ir al proyecto →", key="ir_proyecto_flotante", icon=":material/folder_open:"):
             st.session_state.selected_codigo = codigo
             destino = "project-detail"
@@ -6210,15 +6229,13 @@ def render_project_detail():
             # _render_tabla_muestras_con_semaforo, la misma tabla de "Orden de Laboratorio").
             # Esa pantalla se conserva para lo que sí sigue necesitando por fuera de esto:
             # exportar el perfil completo, o que el Jefe agregue una muestra nueva.
-            if muestras:
-                with desplegable_perezoso(f"Ver muestras ({len(muestras)})", key=f"vermuestras_{codigo}_{perf['codigo']}",
-                                          icon=":material/visibility:") as abierto:
-                    if abierto:
-                        _render_tabla_muestras_con_semaforo(sorted(muestras, key=lambda m: clave_numero_muestra(m["numero"])),
-                                                            codigo, perf["codigo"])
-
-            # (Antes había aquí un botón "Ver detalle del sondeo": las muestras y sus ensayos ya se abren directo desde
-            # "Ver muestras", así que esa pantalla intermedia no hacía falta.)
+            # Cada perforación tiene su propia pantalla con sus muestras: al entrar a una muestra o a un ensayo y volver («← Atrás» o «Ir a la
+            # perforación»), se llega directo a ella sin buscarla otra vez entre todas las perforaciones del proyecto.
+            if st.button(f"Abrir perforación · {len(muestras)} muestra(s)", key=f"abrir_perf_{codigo}_{perf['codigo']}", type="primary",
+                         icon=":material/arrow_forward:", use_container_width=True):
+                st.session_state.selected_codigo = codigo
+                st.session_state.selected_perforacion = perf["codigo"]
+                navigate("perforacion-detail")
             if st.session_state.role == "jefe":   # los Excel de resultados los descarga solo el Jefe de Laboratorio
                 render_descarga_excel_perforacion(codigo, perf, project, muestras)
 
@@ -6503,18 +6520,25 @@ def _render_tabla_muestras_con_semaforo(muestras, codigo, perf_codigo):
 
 
 def render_perforacion_detail():
+    """Pantalla propia de UNA perforación: sus muestras con los ensayos (chips de color que abren el ensayo), el avance y sus descargas. Desde la
+    muestra o el ensayo, «← Atrás» o «Ir a la perforación» vuelven aquí, y el selector de arriba cambia a otra perforación del mismo proyecto sin
+    pasar por el proyecto."""
     codigo = st.session_state.selected_codigo
     perf_codigo = st.session_state.selected_perforacion
     project = get_project(codigo)
     if not project:
         navigate("home")
         return
+    perforaciones = st.session_state.perforaciones.get(codigo, [])
+    perf = next((p for p in perforaciones if p["codigo"] == perf_codigo), None)
+    if not perf:   # renombrada o borrada mientras se estaba en ella
+        navigate("project-detail")
+        return
 
     if _boton_atras():
         go_back(fallback="project-detail")
 
-    perf = next((p for p in st.session_state.perforaciones.get(codigo, []) if p["codigo"] == perf_codigo), None)
-    muestras = st.session_state.muestras.get(f"{codigo}::{perf_codigo}", [])
+    muestras = sorted(st.session_state.muestras.get(f"{codigo}::{perf_codigo}", []), key=lambda m: clave_numero_muestra(m["numero"]))
     ensayos_completados, ensayos_total = _perforacion_ensayos_progress(codigo, perf_codigo)
     pct = round(ensayos_completados / ensayos_total * 100) if ensayos_total else 0
 
@@ -6522,43 +6546,33 @@ def render_perforacion_detail():
                 f'<span class="code-badge">{html.escape(project["codigo_interno"])}</span> '
                 f'<span style="font-weight:600;">{html.escape(project["nombre"])}</span>',
                 unsafe_allow_html=True)
-    st.markdown(f"### Muestras de Perforación {html.escape(perf_codigo)}")
-    _boton_ir_proyecto(codigo, "perforacion")
+    c_ir, c_cambiar = st.columns([1, 2], vertical_alignment="bottom")
+    with c_ir:
+        _boton_ir_proyecto(codigo, "perforacion")
+    with c_cambiar:
+        if len(perforaciones) > 1:
+            codigos = [p["codigo"] for p in perforaciones]
+            elegida = st.selectbox("Cambiar de perforación", codigos, index=codigos.index(perf_codigo), key=f"cambiar_perf_{codigo}_{perf_codigo}")
+            if elegida != perf_codigo:
+                st.session_state.selected_perforacion = elegida
+                _sync_query_params()
+                st.rerun()
 
     with st.container(border=True):
-        top = st.columns([3, 1])
-        with top[0]:
-            st.markdown(f"#### Sondeo {html.escape(perf_codigo)}")
-            st.markdown(f'<span class="assigned-chip">{html.escape(perf["tipo"] if perf else "—")}</span>',
-                        unsafe_allow_html=True)
-            ubicacion_txt = ("" if st.session_state.role == "laboratorista" else
-                             f'{icon("location_on", size=13)} {html.escape(project.get("localizacion") or "—")}&nbsp;&nbsp;&nbsp;')
-            st.markdown(f'<div class="cell-muted" style="margin-top:10px;">{ubicacion_txt}'
-                        f'{icon("biotech", size=13)} Muestras en laboratorio: {"SÍ" if fecha_ingreso_perf(perf, project) else "NO"}'
-                        f'&nbsp;&nbsp;&nbsp;{icon("move_to_inbox", size=13)} Recepción {fecha_ingreso_perf_txt(perf, project)}'
-                        f'&nbsp;&nbsp;&nbsp;{icon("science", size=13)} Ejecución {_fecha_txt(fecha_ejecucion_perf(codigo, perf_codigo, muestras))}'
-                        f'&nbsp;&nbsp;&nbsp;{icon("outbox", size=13)} Emisión {_fecha_txt((perf or {}).get("fecha_emision"))}</div>',
-                        unsafe_allow_html=True)
-        c1, c2 = st.columns(2)
-        with c1:
-            filas_perf = _bitacora_filas_perforacion(codigo, perf_codigo)
-            st.download_button("Exportar perfil", data=_excel_orden_diferido(project, filas_perf, {perf["tipo"]} if perf else set()),
-                                icon=":material/download:",
-                                file_name=f"{codigo} Bitacora de orden {perf_codigo}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True)
-        with c2:
-            if st.session_state.role == "jefe":
-                if st.button("Nueva muestra", icon=":material/add:", type="primary", use_container_width=True):
-                    navigate("bitacora")
-
-    with st.container(border=True):
-        st.markdown('<div class="section-title">Avance de la perforación</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="perf-code-box perf-code-largo">{html.escape(perf_codigo)}</div>', unsafe_allow_html=True)
+        st.markdown(f'<span class="assigned-chip">{html.escape(perf["tipo"])}</span>', unsafe_allow_html=True)
+        ubicacion_txt = ("" if st.session_state.role == "laboratorista" else
+                         f'{icon("location_on", size=13)} {html.escape(project.get("localizacion") or "—")}&nbsp;&nbsp;&nbsp;')
+        st.markdown(f'<div class="cell-muted" style="margin-top:10px;">{ubicacion_txt}'
+                    f'{icon("move_to_inbox", size=13)} Recepción {fecha_ingreso_perf_txt(perf, project)}'
+                    f'&nbsp;&nbsp;&nbsp;{icon("science", size=13)} Ejecución {_fecha_txt(fecha_ejecucion_perf(codigo, perf_codigo, muestras))}'
+                    f'&nbsp;&nbsp;&nbsp;{icon("outbox", size=13)} Emisión {_fecha_txt(perf.get("fecha_emision"))}</div>',
+                    unsafe_allow_html=True)
         c1, c2 = st.columns([1, 3])
         with c1:
-            st.markdown(f'<div style="font-size:32px;font-weight:800;color:{PRIMARY};">{pct}%</div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="font-size:28px;font-weight:800;color:{PRIMARY};">{pct}%</div>', unsafe_allow_html=True)
         with c2:
-            st.markdown(f'<div class="cell-muted" style="margin-top:16px;">'
+            st.markdown(f'<div class="cell-muted" style="margin-top:14px;">'
                         f'{icon("check_circle", size=14)} {ensayos_completados} de {ensayos_total} ensayos completados</div>',
                         unsafe_allow_html=True)
         st.progress(pct / 100)
@@ -6566,7 +6580,7 @@ def render_perforacion_detail():
     st.markdown(f'''
         <div style="background:{PRIMARY};color:#fff;border-radius:10px;padding:10px 16px;
                     display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;margin-bottom:10px;">
-            {icon("science", size=16)} Orden de Laboratorio
+            {icon("science", size=16)} Muestras ({len(muestras)})
         </div>
     ''', unsafe_allow_html=True)
     if not muestras:
@@ -6574,8 +6588,20 @@ def render_perforacion_detail():
     else:
         with st.container(border=True):
             _render_tabla_muestras_con_semaforo(muestras, codigo, perf_codigo)
-        if st.session_state.role in ("jefe", "ingeniero"):
-            render_descarga_por_lote(codigo, perf_codigo, project, muestras)
+
+    if st.session_state.role == "jefe":   # los Excel de resultados, el perfil y las muestras nuevas son del Jefe de Laboratorio
+        render_descarga_excel_perforacion(codigo, perf, project, muestras)
+        c1, c2 = st.columns(2)
+        with c1:
+            filas_perf = _bitacora_filas_perforacion(codigo, perf_codigo)
+            st.download_button("Exportar perfil", data=_excel_orden_diferido(project, filas_perf, {perf["tipo"]}),
+                               icon=":material/download:",
+                               file_name=f"{codigo} Bitacora de orden {perf_codigo}.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                               use_container_width=True)
+        with c2:
+            if st.button("Nueva muestra", icon=":material/add:", use_container_width=True):
+                navigate("bitacora")
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -7676,6 +7702,7 @@ def render_muestra_detail():
         c3.markdown(f'<div class="cell-muted">Perforación</div><div style="font-weight:600;">{html.escape(perf_codigo)}</div>',
                     unsafe_allow_html=True)
         _boton_ir_proyecto(codigo, "muestra")
+    _boton_ir_proyecto_flotante(codigo, perf_codigo)
 
     _render_descripcion_visual(muestra, muestra_id, puede_editar_muestra)
 
