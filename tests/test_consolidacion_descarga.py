@@ -26,7 +26,9 @@ def _namespace():
     arbol = ast.parse((ROOT / "app.py").read_text(encoding="utf-8"))
     ns = {"math": math, "re": re, "zipfile": zipfile, "BytesIO": BytesIO, "os": os, "load_workbook": load_workbook}
     for n in arbol.body:
-        if isinstance(n, ast.ImportFrom) and n.module in ("exportacion_formatos", "presentacion_excel"):
+        if isinstance(n, ast.Import) and all(a.name in ("base64", "html", "json", "math", "contextlib", "os", "re", "time", "zipfile") for a in n.names):
+            exec(compile(ast.Module(body=[n], type_ignores=[]), "app.py", "exec"), ns)
+        elif isinstance(n, ast.ImportFrom) and n.module in ("exportacion_formatos", "presentacion_excel", "io"):
             exec(compile(ast.Module(body=[n], type_ignores=[]), "app.py", "exec"), ns)
         elif isinstance(n, (ast.FunctionDef, ast.ClassDef)):
             n.decorator_list = []

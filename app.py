@@ -13150,6 +13150,8 @@ def generar_excel_solidez_sulfatos(codigo, perf_codigo, muestra, project, data, 
     c["D38"] = textos.get(solucion, solucion or None)
     c["D39"] = to_float(data.get("sulf_ciclos")) or (5 if data.get("sulf_ciclos") is None else None)
 
+    if (observaciones_ensayo or "").strip():
+        c["C41"] = observaciones_ensayo.strip()
     plantilla = _plantilla_informe_bytes(TEMPLATE_SOLIDEZ_SULFATOS)
     return escribir_entradas(plantilla, _parte_hoja_informe(plantilla, "FORMATO"), c)
 
@@ -13172,7 +13174,7 @@ TER_FRACCIONES = [
     ('1 1/2" a 3/4"', 19, (24, 25), 3000, "N° 4"),
     ('3/4" a 3/8"', 20, (26, 27), 2000, "N° 4"),
     ('3/8" a N° 4', 21, (28,), 1000, "N° 8"),
-    ("N° 4 a N° 10", 22, (29,), 25, "N° 20"),
+    ("N° 4 a N° 16", 22, (29, 30), 25, "N° 20"),
 ]
 # No hay bitácora física para confirmar los códigos exactos — se usa la misma balanza/horno/tamices
 # que Granulometría/Solidez en Sulfatos; corregir si no coincide con los equipos reales.
@@ -13205,8 +13207,10 @@ def resultados_terrones_arcilla(data):
         return o_por_fila.get(fila) or 0
 
     filas, ponderado_total, completas, alguna = [], 0.0, True, False
+    # % retenido de cada fracción llevado al 100 % entre las 5 fracciones (columna L de la plantilla: K·100/ΣK; lo que pasa el N° 16 no cuenta)
+    suma_k = sum(o(f) for _l, _f, tamices_k, _m, _t in TER_FRACCIONES for f in tamices_k)
     for label, fila_eg, tamices_k, _masa_min, _tamiz_perdida in TER_FRACCIONES:
-        h = sum(o(f) for f in tamices_k)
+        h = sum(o(f) for f in tamices_k) * 100 / suma_k if suma_k else 0
         e_i = to_float(data.get(f"ter_{fila_eg}_ini"))
         g_i = to_float(data.get(f"ter_{fila_eg}_fin"))
         if e_i is not None or g_i is not None:
@@ -13307,8 +13311,15 @@ def generar_excel_terrones_arcilla(codigo, perf_codigo, muestra, project, data, 
         c[f"E{fila}"] = to_float(data.get(f"ter_{fila}_ini"))
         c[f"G{fila}"] = to_float(data.get(f"ter_{fila}_fin"))
 
+    if (observaciones_ensayo or "").strip():
+        c["C26"] = observaciones_ensayo.strip()
+
     plantilla = _plantilla_informe_bytes(TEMPLATE_TERRONES_ARCILLA)
-    return escribir_entradas(plantilla, _parte_hoja_informe(plantilla, "FORMATO"), c)
+    parte = _parte_hoja_informe(plantilla, "FORMATO")
+    # La pérdida ponderada (I24 = SUM(K26:K30)) estaba mal en la plantilla: K26 es un 0 fijo y K27:K30 dividen por la masa inicial
+    # (I·H/E) en vez de por 100 — daba 0,09 % donde va 1,35 %. Se calcula directo: Σ(H·I)/100, con H ya llevado al 100 %.
+    return cambiar_formulas_si_iguales(escribir_entradas(plantilla, parte, c), parte,
+                                       {"I24": ("SUM(K26:K30)", "SUMPRODUCT(H18:H22,I18:I22)/100")})
 
 
 # ════════════════════════════════════════════════════════════════════
