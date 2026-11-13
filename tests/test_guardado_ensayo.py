@@ -24,7 +24,8 @@ def ahora():
     return datetime(2026, 10, 23, 12, 0, 0, RELOJ[0], tzinfo=timezone.utc).isoformat()
 
 
-TABLAS = {"projects": [], "perforaciones": [], "muestras": [], "assays": [], "notifications": [], "balance_checks": [], "profiles": []}
+TABLAS = {"projects": [], "perforaciones": [], "muestras": [], "assays": [], "notifications": [], "balance_checks": [], "profiles": [],
+          "assay_versions": []}
 FALLAR_ESCRITURAS = [False]   # simula que la base no responde al guardar
 
 
@@ -87,6 +88,14 @@ class Q:
             if FALLAR_ESCRITURAS[0]:
                 raise ConnectionError("sin conexión")
             for r in sel:
+                if s.t == "assays" and isinstance(s.upd.get("data"), dict):   # lo que hace el trigger de la base (migración 0042)
+                    viejo = {k: v for k, v in (r.get("data") or {}).items() if k != "_respaldo"}
+                    nuevo = {k: v for k, v in s.upd["data"].items() if k != "_respaldo"}
+                    dif = {k: {"a": viejo.get(k), "d": nuevo.get(k)} for k in set(viejo) | set(nuevo) if viejo.get(k) != nuevo.get(k)}
+                    if dif:
+                        TABLAS["assay_versions"].append({"id": len(TABLAS["assay_versions"]) + 1, "assay_id": r["id"], "data": {}, "cambios": dif,
+                                                         "autor": s.upd.get("editado_por") or r.get("editado_por"), "saved_at": ahora(),
+                                                         "digitado_por": r.get("editado_por"), "digitado_en": r.get("updated_at")})
                 r.update(copy.deepcopy(s.upd))
                 r["updated_at"] = ahora()
             return types.SimpleNamespace(data=[copy.deepcopy(r) for r in sel])
@@ -199,17 +208,24 @@ class GuardadoEnsayoTest(unittest.TestCase):
         self.assertNotIn("hum_masa_recipiente", _valores_bd()[1])
         self.assertEqual(len(at.error), 0)
 
-    def test_el_respaldo_permite_restaurar_la_version_anterior(self):
+    def test_el_historial_guarda_todo_y_permite_volver_a_un_momento_anterior(self):
         at = _sesion()
         at.run()
         at.text_input(key=MASA).set_value("18.45").run()
         at.text_input(key=HUM).set_value("117.65").run()
-        self.assertNotIn("_respaldo", TABLAS["assays"][0]["data"])      # agregar valores no genera respaldo
-        at.text_input(key=MASA).set_value("20.00").run()                 # cambiar un valor ya guardado sí
-        self.assertEqual(TABLAS["assays"][0]["data"]["_respaldo"]["hum_masa_recipiente"], "18.45")
-        at.button(key="restaurar_a1").click().run()
+        for v in TABLAS["assay_versions"]:                                # esos dos datos se digitaron temprano…
+            v["saved_at"] = "2026-10-23T10:00:00+00:00"
+        at.text_input(key=MASA).set_value("20.00").run()                  # …y este cambio, dos horas después
+        TABLAS["assay_versions"][-1]["saved_at"] = "2026-10-23T12:00:00+00:00"
+        self.assertEqual(len(TABLAS["assay_versions"]), 3)                # cada cambio queda guardado
+        at.session_state["histcambios_a1"] = True                         # se abre el historial de cambios
+        at.run()
+        volver = [b for b in at.button if (b.label or "").startswith("Volver a como quedó")]
+        self.assertEqual(len(volver), 1)                                   # el rato de las 10:00 (lo actual no ofrece volver)
+        volver[0].click().run()
         self.assertEqual(_valores_bd()[1]["hum_masa_recipiente"], "18.45")
-        self.assertEqual(at.text_input(key=MASA).value, "18.45")
+        self.assertEqual(at.text_input(key=MASA).value, "18.45")           # y la casilla también lo muestra
+        self.assertEqual(len(TABLAS["assay_versions"]), 4)                 # volver atrás también queda en el historial
 
     def test_campos_viejos_tras_reconectar_no_pisan_lo_guardado_despues(self):
         """La tableta se durmió y al reconectar la pantalla trae los valores VIEJOS en los campos, pero otro dispositivo ya guardó datos más nuevos."""

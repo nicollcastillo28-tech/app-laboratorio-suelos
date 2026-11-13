@@ -26,6 +26,7 @@ import streamlit.components.v1 as components
 from openpyxl import load_workbook
 
 import alertas_resultados as alertas_res
+import historial_cambios as hcambios
 import db
 import pruebas_datos
 from firmas_excel import agregar_firmas
@@ -500,6 +501,24 @@ st.markdown(f"""
     .timeline-cambios .tl-antes {{ color: {DANGER}; text-decoration: line-through; }}
     .timeline-cambios .tl-flecha {{ color: {MUTED}; text-align: center; }}
     .timeline-cambios .tl-despues {{ color: {SUCCESS}; font-weight: 700; }}
+
+    /* Historial de cambios de un ensayo, por fechas */
+    .hist-dia {{ font-weight: 800; color: {PRIMARY}; font-size: 15px; margin: 14px 0 6px; }}
+    .hist-bloque {{ border: 1px solid {BORDER}; border-left: 4px solid {PRIMARY}; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }}
+    .hist-bloque.hist-inicial {{ border-left-color: {MUTED}; }}
+    .hist-cab {{ font-size: 13px; margin-bottom: 6px; }}
+    .hist-cab b {{ font-size: 14px; }}
+    .hist-cab .hist-quien {{ color: {MUTED}; }}
+    .hist-bloque table {{ width: 100%; border-collapse: collapse; font-size: 12.5px; }}
+    .hist-bloque th {{ text-align: left; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: {MUTED};
+                       padding: 3px 6px; border-bottom: 1px solid {BORDER}; }}
+    .hist-bloque td {{ padding: 5px 6px; border-bottom: 1px solid {BORDER}; vertical-align: top; }}
+    .hist-bloque tr:last-child td {{ border-bottom: none; }}
+    .hist-bloque .hist-parte {{ color: {MUTED}; font-size: 11.5px; }}
+    .hist-bloque .hist-antes {{ color: {DANGER}; }}
+    .hist-bloque .hist-medio {{ color: {MUTED}; }}
+    .hist-bloque .hist-despues {{ color: {SUCCESS}; font-weight: 700; }}
+    .hist-bloque .hist-nota {{ color: {MUTED}; font-size: 11.5px; }}
 
     /* Tarjeta con acento a la izquierda, para encabezados de detalle (ej. Detalle de Muestra) */
     .st-key-muestra-header-card {{ border-left: 4px solid {PRIMARY} !important; }}
@@ -3538,16 +3557,53 @@ def _etiqueta_familia(clave):
     if m:
         que = {"carga": "carga P (kN)", "d": "diámetro D (mm)", "l1": "L / W1 (mm)", "w2": "W2 (mm)", "sentido": "sentido de la falla"}[m.group(2)]
         return f"Carga puntual — ensayo {m.group(1)}: {que}"
+    m = re.fullmatch(r"cp_(\d+)_masa", clave)
+    if m:
+        return f"Carga puntual — ensayo {m.group(1)}: masa (g)"
+    m = re.fullmatch(r"cons_maq_(\d+)", clave)
+    if m and 1 <= int(m.group(1)) <= len(CONS_MAQ_BLOQUES):
+        return f"Lecturas de la máquina › carga {CONS_MAQ_BLOQUES[int(m.group(1)) - 1][0]}"
+    if clave in ("ci_maq", "roca_maq"):
+        return "Lecturas de la máquina"
+    if clave == "masa_inicial_seca":
+        return "Granulometría › Masa inicial seca (g)"
+    # Casillas que se dibujan con funciones comunes a todos los ensayos (su clave de pantalla no es la del dato)
+    if clave.endswith("_norma"):
+        return "Norma aplicada"
+    if clave.endswith("_equipos"):
+        return "Equipos utilizados"
+    if clave.endswith("_excl_no"):
+        return "Material excluido › No se excluyó material (N/A)"
     return None
 
 
+@st.cache_resource
+def _etiquetas_formulario():
+    """{clave: "Tarjeta › Etiqueta"} tal como se ven en los formularios (etiquetas_campos.json, lo genera
+    tools/generar_etiquetas_campos.py dibujando cada formulario). {} si el archivo no está."""
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "etiquetas_campos.json"), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
 def etiqueta_campo(clave):
-    """Etiqueta legible de una clave de datos de ensayo. Si no se conoce exacta, prueba sin los números (lim_ll_humedo_2 ->
-    "… (2)") y con sufijos de la clave (corte_ge_masa_pic -> masa_pic); como último recurso, la clave "humanizada"."""
+    """Etiqueta legible de una clave de datos de ensayo: la de las familias que se arman en bucle (tamices, penetraciones del CBR, lecturas),
+    la del formulario (tarjeta › casilla) o, si no está, la de las parejas ("clave", "Etiqueta") del código; como último recurso, la clave
+    "humanizada". Las pesadas por hora se escriben igual en todos los ensayos («, pesada de las 14 h»)."""
+    texto = _etiqueta_campo_base(clave)
+    return re.sub(r"\s*\((\d{1,2})\s*(?:hrs?|horas?)\)", r", pesada de las \1 h", texto)
+
+
+def _etiqueta_campo_base(clave):
     et = _etiquetas_campos()
     especial = _etiqueta_familia(clave)
     if especial:
         return especial
+    formulario = _etiquetas_formulario()
+    if clave in formulario:
+        return formulario[clave]
     if clave in et:
         return et[clave]
     partes = clave.split("_")
@@ -14701,6 +14757,26 @@ def render_assay_form(prueba=False):
             if assay.get("status") == "en-proceso" and not tiene_valores_digitados(assay.get("data")):
                 assay["status"] = "sin-iniciar"
 
+    # Recién restaurada una versión desde el historial: las casillas se ponen con los valores restaurados ANTES de dibujarlas. Cambiar solo el
+    # valor por defecto no basta: Streamlit deja en pantalla lo que la casilla ya mostraba (y el autoguardado podía volver a escribirlo).
+    _restaurado_pend = st.session_state.pop(f"_restaurar_casillas_{assay_id}", None)
+    if isinstance(_restaurado_pend, dict):
+        for _k in [k for k in st.session_state.keys() if isinstance(k, str) and k.endswith(f"_{assay_id}") and not k.startswith(("_", "hist"))]:
+            _dato, _previo = _k[: -len(assay_id) - 1], st.session_state[_k]
+            _nuevo = _restaurado_pend.get(_dato)
+            try:
+                if isinstance(_previo, bool):
+                    st.session_state[_k] = bool(_nuevo)
+                elif isinstance(_previo, str):
+                    st.session_state[_k] = "" if _nuevo is None else str(_nuevo)
+                elif _dato in _restaurado_pend and _nuevo is not None:
+                    st.session_state[_k] = _nuevo
+                else:
+                    del st.session_state[_k]
+            except Exception:
+                st.session_state.pop(_k, None)
+        st.session_state.pop(f"_snap_{assay_id}", None)
+
     codigo, perf_codigo, muestra_id = assay["codigo_interno"], assay["perforacion_codigo"], assay["muestra_id"]
     project = get_project(codigo)
     muestra = get_muestra(codigo, perf_codigo, muestra_id)
@@ -14836,48 +14912,102 @@ def render_assay_form(prueba=False):
                     unsafe_allow_html=True)
 
     def _historial_versiones(puede_restaurar):
-        with st.expander("Historial de versiones", icon=":material/history:"):
-            st.caption("Cada vez que cambia un dato, la versión de antes queda guardada en la base (últimas 40). Elige una para ver qué cambió y, si hace "
-                       "falta, restaurarla; lo actual queda como respaldo.")
-            if st.button("Cargar historial", key=f"cargar_hist_{assay_id}", icon=":material/refresh:"):
-                st.session_state[f"_hist_{assay_id}"] = db.list_assay_versions(assay["id"])
-            _versiones = st.session_state.get(f"_hist_{assay_id}")
-            if _versiones is not None and not _versiones:
-                st.caption("Todavía no hay versiones anteriores guardadas.")
-            elif _versiones:
-                def _etiqueta_version(v):
-                    cuando = str(v.get("digitado_en") or v["saved_at"])[:19].replace("T", " ")
-                    return f"{cuando} (UTC)" + (f" — digitado por {v['digitado_por']}" if v.get("digitado_por") else "")
-                _opc = {_etiqueta_version(v): v for v in _versiones}
-                _sel = _opc[st.selectbox("Versión", list(_opc), key=f"sel_hist_{assay_id}")]
-                _actual_h = {k: v for k, v in (assay.get("data") or {}).items() if not k.startswith("_")}
-                _dif = [(k, _sel["data"].get(k), _actual_h.get(k)) for k in sorted(set(_sel["data"]) | set(_actual_h))
-                        if not k.startswith("_") and _sel["data"].get(k) != _actual_h.get(k)]
-                if _dif:
-                    st.dataframe([{"Campo": k, "Esa versión": str(a), "Ahora": str(b)} for k, a, b in _dif], hide_index=True, use_container_width=True)
-                else:
-                    st.caption("Es igual a lo actual.")
-                if _dif and puede_restaurar and st.button("Restaurar esta versión", key=f"rest_hist_{assay_id}", icon=":material/restore:"):
-                    _fuente = assay.get("data") or {}
-                    _actual = {k: v for k, v in _fuente.items() if not k.startswith("_") and not (isinstance(v, dict) and "b64" in v)}
-                    _fotos = {k: v for k, v in _fuente.items() if isinstance(v, dict) and "b64" in v}
-                    _restaurado = {**{k: v for k, v in _fuente.items() if k.startswith("_") and k != "_respaldo"}, **_fotos, **_sel["data"],
-                                   "_respaldo": _actual}
-                    try:
-                        db.update_assay_data(assay["id"], data=_restaurado)
-                        if pasa200_gran_sibling:
-                            db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], _restaurado)
-                        assay["data"] = _restaurado
-                        st.session_state.pop(f"_hist_{assay_id}", None)
-                        for _k in list(st.session_state.keys()):
-                            if isinstance(_k, str) and _k.endswith(f"_{assay_id}") and not _k.startswith("_"):
-                                del st.session_state[_k]
-                        st.toast("Versión restaurada.", icon=":material/check_circle:")
-                        st.rerun()
-                    except Exception as _e:
-                        if "RerunData" in type(_e).__name__ or "Stop" in type(_e).__name__:
-                            raise
-                        st.error("No se pudo restaurar (revisa tu conexión) — vuelve a intentarlo.")
+        """Historial de cambios del ensayo, por fechas: cada «rato de trabajo» (cambios seguidos de la misma persona) con la hora de Colombia,
+        quién y qué datos cambiaron (de qué valor a qué valor). Nada se borra; se puede volver a como quedó el ensayo en cualquier punto."""
+        with desplegable_perezoso("Historial de cambios", key=f"histcambios_{assay_id}", icon=":material/history:") as abierto:
+            if not abierto:
+                return
+            st.caption("Todo lo que se ha cambiado en este ensayo, del más reciente al más antiguo (hora de Colombia). Los cambios seguidos de "
+                       "una misma persona se agrupan; si un dato cambió varias veces se ven todos sus valores en orden. Nada se borra.")
+            c_buscar, c_act = st.columns([3, 1], vertical_alignment="bottom")
+            buscar = c_buscar.text_input("Buscar un dato", key=f"hist_buscar_{assay_id}", placeholder="Ej.: recipiente, golpes, masa seca…")
+            cache = f"_hist_{assay_id}"
+            if c_act.button("Actualizar", key=f"hist_act_{assay_id}", icon=":material/refresh:", use_container_width=True) \
+                    or cache not in st.session_state:
+                st.session_state[cache] = db.list_assay_versions(assay["id"])
+            eventos = hcambios.reconstruir_eventos(st.session_state[cache], assay.get("data"),
+                                                   assay.get("editado_por") or assay.get("laboratorist"),
+                                                   assay.get("lastModified") or assay.get("updated_at"))
+            bloques = hcambios.agrupar(eventos)
+            if not bloques:
+                st.caption("Todavía no hay datos guardados en este ensayo.")
+                return
+            filtro = (buscar or "").strip().lower()
+            actual = hcambios.datos_comparables(assay.get("data"))
+            dias = {}
+            for b in bloques:
+                cuando = b["fin"].astimezone(_TZ_COLOMBIA) if b["fin"] else None
+                dias.setdefault(cuando.date() if cuando else None, []).append(b)
+            nombres_dia = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+            nombres_mes = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+            def _hora(f):
+                if not f:
+                    return "—"
+                f = f.astimezone(_TZ_COLOMBIA)
+                return f"{f.hour % 12 or 12}:{f.minute:02d} {'a. m.' if f.hour < 12 else 'p. m.'}"
+
+            hay = False
+            for i_dia, dia in enumerate(sorted(dias, key=lambda d: d or date.min, reverse=True)):
+                piezas = []
+                for i_b, b in enumerate(reversed(dias[dia])):
+                    filas = []
+                    for clave, dato in b["datos"].items():
+                        nombre = etiqueta_campo(clave)
+                        if filtro and filtro not in nombre.lower() and filtro not in clave.lower():
+                            continue
+                        partes = nombre.split(" › ")
+                        parte_html = f'<div class="hist-parte">{html.escape(" › ".join(partes[:-1]))}</div>' if len(partes) > 1 else ""
+                        valores = [hcambios.texto_valor(v) for v in dato["valores"]]
+                        medio = "".join(f' <span class="hist-medio">→ {html.escape(v)}</span>' for v in valores[1:-1])
+                        horas = [str(h) for h in dato["horas"]]
+                        horas_txt = horas[0] if len(horas) == 1 else ", ".join(horas[:-1]) + " y " + horas[-1] if horas else ""
+                        nota = (f'<div class="hist-nota">También quedó en {"la pesada" if len(horas) == 1 else "las pesadas"} de las {horas_txt} h</div>'
+                                if horas else "")
+                        antes_html = "" if b["inicial"] else f'<span class="hist-antes">{html.escape(valores[0])}</span>{medio} → '
+                        filas.append(f'<tr><td>{parte_html}{html.escape(partes[-1])}{nota}</td>'
+                                     f'<td>{antes_html}<span class="hist-despues">{html.escape(valores[-1])}</span></td></tr>')
+                    if not filas:
+                        continue
+                    rango = _hora(b["inicio"]) if _hora(b["inicio"]) == _hora(b["fin"]) else f"{_hora(b['inicio'])} a {_hora(b['fin'])}"
+                    titulo = "Datos que ya tenía el ensayo" if b["inicial"] else f"{len(filas)} dato{'s' if len(filas) != 1 else ''} cambiado{'s' if len(filas) != 1 else ''}"
+                    quien = html.escape(b["autor"] or "—")
+                    piezas.append((b, f'<div class="hist-bloque{" hist-inicial" if b["inicial"] else ""}"><div class="hist-cab"><b>{rango}</b> · '
+                                      f'{titulo} <span class="hist-quien">· {quien}</span></div>'
+                                      f'<table><thead><tr><th>Dato</th><th>{"Valor" if b["inicial"] else "Antes → después"}</th></tr></thead>'
+                                      f'<tbody>{"".join(filas)}</tbody></table></div>'))
+                if not piezas:
+                    continue
+                hay = True
+                titulo_dia = (f"{nombres_dia[dia.weekday()].capitalize()} {dia.day} de {nombres_mes[dia.month - 1]} de {dia.year}" if dia else "Sin fecha")
+                st.markdown(f'<div class="hist-dia">{titulo_dia}</div>', unsafe_allow_html=True)
+                for i_b, (b, html_b) in enumerate(piezas):
+                    st.markdown(html_b, unsafe_allow_html=True)
+                    if puede_restaurar and b["estado"] is not None and not all(
+                            hcambios.mismo_valor(b["estado"].get(k), actual.get(k)) for k in set(b["estado"]) | set(actual)):
+                        if st.button(f"Volver a como quedó a las {_hora(b['fin'])}", key=f"hist_volver_{assay_id}_{i_dia}_{i_b}",
+                                     icon=":material/restore:"):
+                            _fuente = assay.get("data") or {}
+                            _actual = {k: v for k, v in _fuente.items() if not k.startswith("_") and not (isinstance(v, dict) and "b64" in v)}
+                            _fotos = {k: v for k, v in _fuente.items() if isinstance(v, dict) and "b64" in v}
+                            _internas = {k: v for k, v in _fuente.items() if k.startswith("_") and k != "_respaldo"}
+                            _restaurado = {**_internas, **_fotos, **b["estado"], "_respaldo": _actual}
+                            try:
+                                db.update_assay_data(assay["id"], data=_restaurado)
+                                if pasa200_gran_sibling:
+                                    db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], _restaurado)
+                                assay["data"] = _restaurado
+                                st.session_state.pop(cache, None)
+                                st.session_state[f"_restaurar_casillas_{assay_id}"] = _restaurado   # se ponen en las casillas al volver a dibujar
+                                st.toast("Listo: el ensayo quedó como estaba en ese momento. Lo de antes también quedó en el historial.",
+                                         icon=":material/check_circle:")
+                                st.rerun()
+                            except Exception as _e:
+                                if "RerunData" in type(_e).__name__ or "Stop" in type(_e).__name__:
+                                    raise
+                                st.error("No se pudo restaurar (revisa tu conexión) — vuelve a intentarlo.")
+            if not hay:
+                st.caption("Ningún cambio coincide con lo que buscas.")
 
     if read_only:
         if lab_entregado:
@@ -15113,30 +15243,6 @@ def render_assay_form(prueba=False):
         _hora_guardado = st.session_state.get(f"_guardado_{assay_id}")
         st.markdown(f'<div class="timestamp-caption">{icon("cloud_done", size=13)} Los cambios se guardan automáticamente mientras digitas.'
                     + (f' <b>Último guardado: {_hora_guardado}</b>' if _hora_guardado else "") + '</div>', unsafe_allow_html=True)
-        if (assay.get("data") or {}).get("_respaldo") and not read_only:
-            with st.expander("Respaldo de la versión anterior", icon=":material/history:"):
-                st.caption("Cuando un guardado cambia o quita un dato que ya estaba, la versión de antes queda aquí. Si algo se borró por error, restáurala; "
-                           "lo actual queda como respaldo por si cambias de opinión.")
-                if st.button("Restaurar la versión anterior", key=f"restaurar_{assay_id}", icon=":material/restore:"):
-                    _fuente = assay.get("data") or {}
-                    _anterior = dict(_fuente["_respaldo"])
-                    _actual = {k: v for k, v in _fuente.items() if not k.startswith("_") and not (isinstance(v, dict) and "b64" in v)}
-                    _restaurado = {**{k: v for k, v in _fuente.items() if k.startswith("_") and k != "_respaldo"}, **_anterior, "_respaldo": _actual}
-                    try:
-                        db.update_assay_data(assay["id"], data=_restaurado)
-                        if pasa200_gran_sibling:
-                            db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], _restaurado)
-                        assay["data"] = _restaurado
-                        for _k in list(st.session_state.keys()):   # los campos se vuelven a leer de lo restaurado
-                            if isinstance(_k, str) and _k.endswith(f"_{assay_id}") and not _k.startswith("_"):
-                                del st.session_state[_k]
-                        st.toast("Versión anterior restaurada.", icon=":material/check_circle:")
-                        st.rerun()
-                    except Exception as _e:
-                        if "RerunData" in type(_e).__name__ or "Stop" in type(_e).__name__:
-                            raise
-                        st.error("No se pudo restaurar (revisa tu conexión) — vuelve a intentarlo.")
-
         _historial_versiones(True)
         if not supervisor_edita:
             _render_trasladar_datos(assay, muestra, assay_id, actor_edicion)

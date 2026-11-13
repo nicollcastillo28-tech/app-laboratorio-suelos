@@ -324,16 +324,19 @@ def get_assay_fila(assay_id: str, columnas: str = "*") -> dict | None:
     return filas[0] if filas else None
 
 
-def list_assay_versions(assay_id: str, limite: int = 40) -> list[dict]:
-    """Versiones anteriores del ensayo (la más reciente primero). Vacío si la tabla aún no existe en la base."""
-    try:
-        q = get_client().table("assay_versions")
+def list_assay_versions(assay_id: str, limite: int = 2000) -> list[dict]:
+    """Cambios guardados del ensayo, el más reciente primero. Cada fila trae `cambios` ({clave: {"a": antes, "d": después}}, migración
+    0042) o, las de antes, la versión completa anterior en `data`. Vacío si la tabla aún no existe en la base."""
+    columnas = ("id,data,cambios,autor,status,saved_at,digitado_por,digitado_en",   # migración 0042
+                "id,data,status,saved_at,digitado_por,digitado_en",                  # migración 0041
+                "id,data,status,saved_at")
+    for cols in columnas:
         try:
-            return q.select("id,data,status,saved_at,digitado_por,digitado_en").eq("assay_id", assay_id).order("saved_at", desc=True).limit(limite).execute().data or []
-        except Exception:   # todavía sin las columnas de la migración 0041
-            return q.select("id,data,status,saved_at").eq("assay_id", assay_id).order("saved_at", desc=True).limit(limite).execute().data or []
-    except Exception:
-        return []
+            return (get_client().table("assay_versions").select(cols).eq("assay_id", assay_id)
+                    .order("saved_at", desc=True).order("id", desc=True).limit(limite).execute().data or [])
+        except Exception:
+            continue
+    return []
 
 
 def create_assay(muestra_id: str, tipo: str, **defaults) -> dict:
