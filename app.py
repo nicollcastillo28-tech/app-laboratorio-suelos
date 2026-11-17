@@ -7951,6 +7951,8 @@ def render_muestra_detail():
                         # En cuanto el laboratorista entrega el ensayo, el Jefe y el Director Técnico pueden descargar su Excel desde aquí, sin entrar al ensayo.
                     if mostrar_aprobacion and st.session_state.role in ("jefe", "ingeniero") and not (existing.get("data") or {}).get("_no_realizado"):
                         _cfg_dl = EXCEL_INDIVIDUAL_CONFIG.get(tipo_interno) or (EXCEL_LOTE_CONFIG.get(tipo_interno) if tipo_interno else None)
+                        if tipo_interno == "masa-unitaria" and (existing.get("data") or {}).get("mu_metodo") == "Método B":
+                            _cfg_dl = EXCEL_LOTE_CONFIG.get("masa-unitaria-b")   # el Método B tiene su propia plantilla (GDA-FLC-030)
                         if _cfg_dl and (tipo_interno != "masa-unitaria" or not _cfg_dl.get("filtro") or _cfg_dl["filtro"](existing.get("data") or {})):
                             st.download_button(
                                 "Descargar Excel", icon=":material/download:", key=f"dl_ens_{slug}", use_container_width=True,
@@ -13487,6 +13489,26 @@ def generar_excel_alargamiento_aplanamiento(codigo, perf_codigo, muestra, projec
         c["C48"] = observaciones_ensayo.strip()
     plantilla = _plantilla_informe_bytes(TEMPLATE_ALARGAMIENTO_APLANAMIENTO)
     return escribir_entradas(plantilla, _parte_hoja_informe(plantilla, "FORMATO"), c)
+
+
+# Paquetes por perforación (y descarga desde la tarjeta del ensayo en la muestra) de los ensayos que tienen una sola hoja «FORMATO» por muestra
+# y se definen arriba: Peso unitario Método B (su propia plantilla, GDA-FLC-030), Solidez en sulfatos, Terrones de arcilla y Alargamiento y
+# aplanamiento. Se agregan aquí porque sus generadores recién quedan definidos (nombrarlos antes sería un NameError al cargar el módulo).
+_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_PAQUETES_UNA_HOJA = {
+    "masa-unitaria-b": {"hoja": "FORMATO", "generar": generar_excel_masa_unitaria_b, "ext": "xlsx", "mime": _XLSX,
+                        "prefijo": "Peso_unitario_metodo_B", "etiqueta": "Peso unitario (Método B)", "bitacora": "Peso unitario",
+                        "assay_tipo": "masa-unitaria", "filtro": lambda data: data.get("mu_metodo") == "Método B"},
+    "solidez-sulfatos": {"hoja": "FORMATO", "generar": generar_excel_solidez_sulfatos, "ext": "xlsx", "mime": _XLSX,
+                         "prefijo": "Solidez_sulfatos", "etiqueta": "Solidez en sulfatos", "bitacora": "Solidez en sulfatos"},
+    "terrones-arcilla": {"hoja": "FORMATO", "generar": generar_excel_terrones_arcilla, "ext": "xlsx", "mime": _XLSX,
+                         "prefijo": "Terrones_arcilla", "etiqueta": "Terrones de arcilla", "bitacora": "Terrones de arcilla"},
+    "alargamiento-aplanamiento": {"hoja": "FORMATO", "generar": generar_excel_alargamiento_aplanamiento, "ext": "xlsx", "mime": _XLSX,
+                                  "prefijo": "Alargamiento_aplanamiento", "etiqueta": "Alargamiento y aplanamiento",
+                                  "bitacora": "Alargamiento y aplanamiento"},
+}
+EXCEL_LOTE_CONFIG.update(_PAQUETES_UNA_HOJA)
+EXCEL_INDIVIDUAL_CONFIG.update({t: c for t, c in _PAQUETES_UNA_HOJA.items() if t != "masa-unitaria-b"})
 
 
 def render_limite_contraccion_form(data, assay_id):
