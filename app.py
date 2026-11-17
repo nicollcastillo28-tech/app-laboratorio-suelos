@@ -13078,6 +13078,7 @@ def resultados_solidez_sulfatos(data):
         # así que aquí se marca como None (faltante) y ese hueco también se arrastra tal cual a las fracciones
         # siguientes que dependan de ella (<5%), en vez de inventar un número.
         resultado, h_prev = [], 0.0
+        faltantes = []
         for i, (label, fila) in enumerate(filas_frac, start=1):
             pct = base_pct_por_fila(i)
             f_ini, f_fin = to_float(data.get(f"sulf_{fila}_ini")), to_float(data.get(f"sulf_{fila}_fin"))
@@ -13085,15 +13086,17 @@ def resultados_solidez_sulfatos(data):
                 h = None
             elif pct >= 5:
                 h = (f_ini - f_fin) / f_ini * 100 if (f_ini and f_fin is not None) else None
+                if h is None:
+                    faltantes.append(f"{label} ({fmt_num(pct, 1)} % de la muestra)")
             else:
                 h = h_prev
             h_prev = h
             ponderado = h * pct / 100 if (h is not None and pct is not None) else None
             resultado.append((label, pct, h, ponderado))
-        return resultado
+        return resultado, faltantes
 
-    filas_grueso = _grupo(None, SULF_GRUESO_FILAS, lambda i: (l[[25, 27, 29, 31, 32][i - 1]] / l33 * 100) if l33 else None)
-    filas_fino = _grupo(None, SULF_FINO_FILAS, lambda i: (o([38, 37, 36, 35, 34, 33, 32][i - 1]) / o39 * 100) if o39 else None)
+    filas_grueso, faltan_grueso = _grupo(None, SULF_GRUESO_FILAS, lambda i: (l[[25, 27, 29, 31, 32][i - 1]] / l33 * 100) if l33 else None)
+    filas_fino, faltan_fino = _grupo(None, SULF_FINO_FILAS, lambda i: (o([38, 37, 36, 35, 34, 33, 32][i - 1]) / o39 * 100) if o39 else None)
 
     filas = []
     if any(p is not None for _l, p, _h, _pon in filas_grueso):
@@ -13106,7 +13109,8 @@ def resultados_solidez_sulfatos(data):
             total_grueso = sum(pon for _l, _p, _h, pon in filas_grueso if pon is not None)
             filas.append(("% de pérdida ponderada — grueso", fmt_num(total_grueso, 2)))
         elif pct_grueso:
-            filas.append(("% de pérdida ponderada — grueso", "Faltan masas por digitar"))
+            filas.append(("% de pérdida ponderada — grueso", "Falta la masa inicial o la final de: " + "; ".join(faltan_grueso)
+                          + ". Toda fracción con 5 % o más de la muestra se ensaya."))
     if any(p is not None for _l, p, _h, _pon in filas_fino):
         filas.append(("— Agregado fino —", ""))
         for label, pct, h, pon in filas_fino:
@@ -13117,7 +13121,8 @@ def resultados_solidez_sulfatos(data):
             total_fino = sum(pon for _l, _p, _h, pon in filas_fino if pon is not None)
             filas.append(("% de pérdida ponderada — fino", fmt_num(total_fino, 2)))
         elif pct_fino:
-            filas.append(("% de pérdida ponderada — fino", "Faltan masas por digitar"))
+            filas.append(("% de pérdida ponderada — fino", "Falta la masa inicial o la final de: " + "; ".join(faltan_fino)
+                          + ". Toda fracción con 5 % o más de la muestra se ensaya."))
     return filas
 
 
@@ -13211,7 +13216,9 @@ def generar_excel_solidez_sulfatos(codigo, perf_codigo, muestra, project, data, 
     if (observaciones_ensayo or "").strip():
         c["C41"] = observaciones_ensayo.strip()
     plantilla = _plantilla_informe_bytes(TEMPLATE_SOLIDEZ_SULFATOS)
-    return escribir_entradas(plantilla, _parte_hoja_informe(plantilla, "FORMATO"), c)
+    parte = _parte_hoja_informe(plantilla, "FORMATO")
+    # El total del agregado grueso (I26) sumaba I22:I25 y dejaba por fuera la fracción de 3" a 2 1/2" (fila 21); la app sí la cuenta.
+    return cambiar_formulas_si_iguales(escribir_entradas(plantilla, parte, c), parte, {"I26": ("SUM(I22:I25)", "SUM(I21:I25)")})
 
 
 # Gradación unificada (17 tamices, igual idea que Solidez en Sulfatos) — columnas O (% retenido
