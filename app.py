@@ -13058,6 +13058,15 @@ def _sulf_gradacion(data):
     return filas
 
 
+SULF_NOTA_MENOR100 = "El material menor del N°100 no se ensayó: se toma con pérdida cero."
+
+
+def solidez_menor100_sin_ensayar(data):
+    """True si a la fracción «Menor de N°100» (fila 29 de la plantilla) no se le digitó ninguna de sus dos masas: lo muy fino casi nunca se
+    ensaya en sulfatos y el laboratorio lo cuenta como pérdida cero (en la app y en el Excel). Si se digitó solo una, sí falta la otra."""
+    return all(str(data.get(f"sulf_29_{k}") or "").strip() == "" for k in ("ini", "fin"))
+
+
 def resultados_solidez_sulfatos(data):
     """Réplica de las fórmulas de la plantilla GDA-FLC-033 para el % de pérdida ponderada, agregado grueso y
     fino por separado (mismo camino: gradación unificada → agrupar por tamaño → % retenido de cada grupo →
@@ -13084,6 +13093,8 @@ def resultados_solidez_sulfatos(data):
             f_ini, f_fin = to_float(data.get(f"sulf_{fila}_ini")), to_float(data.get(f"sulf_{fila}_fin"))
             if pct is None:
                 h = None
+            elif fila == 29 and solidez_menor100_sin_ensayar(data):
+                h = 0.0   # lo menor del N°100 sin ensayar cuenta como pérdida cero
             elif pct >= 5:
                 h = (f_ini - f_fin) / f_ini * 100 if (f_ini and f_fin is not None) else None
                 if h is None:
@@ -13113,9 +13124,10 @@ def resultados_solidez_sulfatos(data):
                           + ". Toda fracción con 5 % o más de la muestra se ensaya."))
     if any(p is not None for _l, p, _h, _pon in filas_fino):
         filas.append(("— Agregado fino —", ""))
-        for label, pct, h, pon in filas_fino:
+        for (label, pct, h, pon), (_l, fila) in zip(filas_fino, SULF_FINO_FILAS):
             if pct is not None:
-                filas.append((f"{label} — % retenido / pérdida", f"{fmt_num(pct, 1)}% / {fmt_num(h, 1) if h is not None else '—'}%"))
+                cero = " (sin ensayar: se toma como cero)" if fila == 29 and solidez_menor100_sin_ensayar(data) else ""
+                filas.append((f"{label} — % retenido / pérdida", f"{fmt_num(pct, 1)}% / {fmt_num(h, 1) if h is not None else '—'}%{cero}"))
         pct_fino = [p for _l, p, _h, _pon in filas_fino if p is not None]
         if pct_fino and all(pon is not None for _l, p, _h, pon in filas_fino if p is not None):
             total_fino = sum(pon for _l, _p, _h, pon in filas_fino if pon is not None)
@@ -13213,12 +13225,19 @@ def generar_excel_solidez_sulfatos(codigo, perf_codigo, muestra, project, data, 
     c["D38"] = textos.get(solucion, solucion or None)
     c["D39"] = to_float(data.get("sulf_ciclos")) or (5 if data.get("sulf_ciclos") is None else None)
 
-    if (observaciones_ensayo or "").strip():
-        c["C41"] = observaciones_ensayo.strip()
+    obs = (observaciones_ensayo or "").strip()
+    menor100_cero = solidez_menor100_sin_ensayar(data) and any(to_float(data.get(f"sulf_grad_{f}")) for f in range(32, 39))
+    if menor100_cero:
+        obs = f"{obs} {SULF_NOTA_MENOR100}".strip()
+    if obs:
+        c["C41"] = obs
     plantilla = _plantilla_informe_bytes(TEMPLATE_SOLIDEZ_SULFATOS)
     parte = _parte_hoja_informe(plantilla, "FORMATO")
     # El total del agregado grueso (I26) sumaba I22:I25 y dejaba por fuera la fracción de 3" a 2 1/2" (fila 21); la app sí la cuenta.
-    return cambiar_formulas_si_iguales(escribir_entradas(plantilla, parte, c), parte, {"I26": ("SUM(I22:I25)", "SUM(I21:I25)")})
+    cambios = {"I26": ("SUM(I22:I25)", "SUM(I21:I25)")}
+    if menor100_cero:   # lo menor del N°100 sin ensayar: pérdida cero (sin masas la fórmula daba #DIV/0!)
+        cambios["H29"] = ("IF(E29>=5,((F29-G29)/F29*100),H28)", "IF(AND(F29=\"\",G29=\"\"),0,IF(E29>=5,((F29-G29)/F29*100),H28))")
+    return cambiar_formulas_si_iguales(escribir_entradas(plantilla, parte, c), parte, cambios)
 
 
 # Gradación unificada (17 tamices, igual idea que Solidez en Sulfatos) — columnas O (% retenido
