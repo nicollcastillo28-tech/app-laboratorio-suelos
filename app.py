@@ -2282,6 +2282,9 @@ def _load_data(solo_balanzas=False):
         proj = proj_by_id.get(p["project_id"])
         if proj:
             perforaciones.setdefault(proj["codigo_interno"], []).append(p)
+    # En orden alfabético por código (con los números en su orden: T2-SN-P-02 antes que T2-SN-P-10), no en el orden en que se crearon.
+    for lista in perforaciones.values():
+        lista.sort(key=lambda p: clave_numero_muestra(p.get("codigo") or ""))
     st.session_state.perforaciones = perforaciones
 
     muestras_raw = db.list_all_muestras()
@@ -6982,6 +6985,7 @@ def render_bitacora():
                             consecutivo = len([p for p in perforaciones if p["tipo"] == pp["tipo"]]) + 1
                             perf = db.restore_or_create_perforacion(project["id"], pp["tipo"], consecutivo, pp["codigo"])
                             perforaciones.append(perf)
+                            perforaciones.sort(key=lambda p: clave_numero_muestra(p.get("codigo") or ""))   # en su lugar alfabético
                             creadas.append(pp["codigo"])
                         if pp.get("fecha_orden") and str(pp["fecha_orden"]) != perf.get("fecha_ingreso"):
                             try:   # la fecha que trae la orden es la de recepción de esta perforación
