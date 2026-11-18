@@ -1367,8 +1367,18 @@ PROCTOR_PRUEBAS = 4
 PROCTOR_FILAS = [
     ("golpes", "No. de golpes"), ("molde", "Molde No."), ("capas", "No. de capas"),
     ("masa_humedo_molde", "Masa de la muestra húmeda + molde (g)"), ("masa_molde", "Masa molde (g)"),
+    ("altura", "Altura de la muestra (cm)"), ("diametro", "Diámetro de la muestra (cm)"),
     ("volumen_molde", "Volumen del molde (cm³)"),
 ]
+
+
+def proctor_volumen(data, i):
+    """Volumen (cm³) de la prueba i: con altura y diámetro de la muestra digitados, π·D²/4·h; si no, el volumen digitado a mano (como antes).
+    La plantilla GDA-FLC-002 solo tiene la casilla del volumen (fila 24)."""
+    h, d = to_float(data.get(f"proc_{i}_altura")), to_float(data.get(f"proc_{i}_diametro"))
+    if h and d:
+        return math.pi * d ** 2 / 4 * h
+    return to_float(data.get(f"proc_{i}_volumen_molde"))
 PROCTOR_HUMEDAD_FILAS = [
     ("hum_recipiente", "Recipiente No."), ("hum_masa_humedo", "Masa recipiente + muestra húmeda (g)"),
     ("hum_seco_16h", "Masa recipiente + muestra seca (g) (16 horas)"), ("hum_seco_17h", "Masa recipiente + muestra seca (g) (17 horas)"),
@@ -2978,7 +2988,7 @@ def calcular_proctor(data):
     for i in range(1, PROCTOR_PRUEBAS + 1):
         v = lambda c: data.get(f"proc_{i}_{c}")
         mh = None
-        a, b, vol = to_float(v("masa_humedo_molde")), to_float(v("masa_molde")), to_float(v("volumen_molde"))
+        a, b, vol = to_float(v("masa_humedo_molde")), to_float(v("masa_molde")), proctor_volumen(data, i)
         if a is not None and b is not None:
             mh = a - b
         seco = next((to_float(v(f"hum_seco_{h}h")) for h in (19, 18, 17, 16) if to_float(v(f"hum_seco_{h}h")) is not None), None)
@@ -9587,7 +9597,7 @@ def generar_excel_proctor(codigo, perf_codigo, muestra, project, data, observaci
         ws[f"{col}21"] = to_float(v("capas"))
         ws[f"{col}22"] = to_float(v("masa_humedo_molde"))
         ws[f"{col}23"] = to_float(v("masa_molde"))
-        ws[f"{col}24"] = to_float(v("volumen_molde"))
+        ws[f"{col}24"] = proctor_volumen(data, i)   # con altura y diámetro, calculado
         ws[f"{col}28"] = (v("hum_recipiente") or None)
         ws[f"{col}29"] = to_float(v("hum_masa_humedo"))
         # La plantilla trae una sola fila de masa seca: se toma la última lectura (19, 18, 17 o 16 h).
@@ -13741,8 +13751,19 @@ def render_proctor_form(data, assay_id):
                 row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
                 for i in range(1, PROCTOR_PRUEBAS + 1):
                     key = f"proc_{i}_{campo}"
+                    h, d = to_float(data.get(f"proc_{i}_altura")), to_float(data.get(f"proc_{i}_diametro"))
+                    if campo == "volumen_molde" and h and d:
+                        # Con altura y diámetro el volumen se calcula (π·D²/4·h) y queda guardado como el volumen de esa prueba.
+                        vol = math.pi * d ** 2 / 4 * h
+                        data[key] = f"{vol:.2f}"
+                        row[i].markdown(f'<div style="padding:8px 10px;font-weight:700;color:{PRIMARY};text-align:center;" '
+                                        f'title="π × D² / 4 × altura">{fmt_num(vol, 2)}</div>', unsafe_allow_html=True)
+                        continue
                     data[key] = row[i].text_input(f"{label} — prueba {i}", value=data.get(key, ""),
                                                    key=f"{key}_{assay_id}", label_visibility="collapsed")
+            if any(campo == "volumen_molde" for campo, _l in filas):
+                st.caption("Con la altura y el diámetro de la muestra el volumen se calcula solo (π × D² / 4 × altura). Si no los digitas, "
+                           "puedes escribir el volumen directamente.")
 
     _tabla("Compactación", "science", PROCTOR_FILAS)
     _tabla("Humedad", "water_drop", PROCTOR_HUMEDAD_FILAS)
