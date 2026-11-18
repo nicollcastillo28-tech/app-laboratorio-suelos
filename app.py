@@ -1277,6 +1277,35 @@ CBRC_HUM_FILAS = [
     ("seco_18h", "Masa seca + recipiente (g) (18 horas)"), ("seco_19h", "Masa seca + recipiente (g) (19 horas)"),
     ("masa_recipiente", "Masa del recipiente (g)"),
 ]
+def casilla_texto(col, label, key, assay_id, data, **kwargs):
+    """Casilla de texto de un dato del ensayo que se inicia desde la sesión (sin `value=`): así el formulario puede cambiarle el valor antes de
+    dibujarla (p. ej. copiar la primera pesada a las siguientes) sin que Streamlit avise que se fijó por dos lados."""
+    widget = f"{key}_{assay_id}"
+    if widget not in st.session_state:
+        st.session_state[widget] = "" if data.get(key) is None else str(data.get(key))
+    data[key] = col.text_input(label, key=widget, label_visibility="collapsed", **kwargs)
+    return data[key]
+
+
+def copiar_primera_pesada(data, assay_id, claves):
+    """Masa seca a varias horas (16, 17, 18, 19 h…): al digitar la PRIMERA se copia a las siguientes, que se van confirmando al monitorear.
+    Si después se cambia la primera, también cambian las que seguían iguales a ella; una lectura que se cambió a mano ya no se pisa. Hay que
+    llamarla después de leer la primera casilla y ANTES de dibujar las siguientes."""
+    primera = data.get(claves[0])
+    if primera in (None, ""):
+        return
+    marca = f"{claves[0]}_lastsync"
+    anterior = data.get(marca)
+    if anterior == primera:
+        return
+    for clave in claves[1:]:
+        actual = data.get(clave)
+        if actual in (None, "") or actual == anterior:
+            st.session_state[f"{clave}_{assay_id}"] = primera
+            data[clave] = primera
+    data[marca] = primera
+
+
 CBRC_EXP_FILAS = [("exp_inicial", "Lectura inicial expansión (in)"), ("exp_final", "Lectura final expansión (in)")]
 # Filas de la plantilla (columna W/AA/AE) para las 12 profundidades de CBR_PENETRACION_FILAS.
 CBRC_PEN_FILAS_EXCEL = [22, 23, 24, 25, 26, 28, 30, 31, 33, 34, 35, 37]
@@ -11089,12 +11118,8 @@ def render_corte_directo_form(data, assay_id):
         row = st.columns([2, 1, 1])
         row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
         key_ini, key_fin = f"{key_base}_inicial", f"{key_base}_final"
-        data[key_ini] = row[1].text_input(f"{label} (inicial)", value=data.get(key_ini, ""),
-                                            key=f"{key_ini}_{assay_id}", label_visibility="collapsed",
-                                            placeholder=placeholder)
-        data[key_fin] = row[2].text_input(f"{label} (final)", value=data.get(key_fin, ""),
-                                            key=f"{key_fin}_{assay_id}", label_visibility="collapsed",
-                                            placeholder=placeholder)
+        casilla_texto(row[1], f"{label} (inicial)", key_ini, assay_id, data, placeholder=placeholder)
+        casilla_texto(row[2], f"{label} (final)", key_fin, assay_id, data, placeholder=placeholder)
 
     with st.container(border=True):
         st.markdown(card_header_html("science", "Datos del Ensayo"), unsafe_allow_html=True)
@@ -11119,6 +11144,9 @@ def render_corte_directo_form(data, assay_id):
             head[2].markdown('<div class="cell-muted" style="text-align:center;font-weight:700;">Final</div>', unsafe_allow_html=True)
             for campo, label in CORTE_HUMEDAD_CAMPOS:
                 _campo_inicial_final(f"corte_m{i}_{campo}", label)
+                if campo == "hum_seco_17h":   # la primera pesada se copia a las de 18 y 19 horas
+                    for momento in ("inicial", "final"):
+                        copiar_primera_pesada(data, assay_id, [f"corte_m{i}_hum_seco_{h}h_{momento}" for h in (17, 18, 19)])
             _radio(f"corte_m{i}_temp_secado", "Temperatura de secado", CORTE_TEMP_SECADO_OPTIONS)
             st.markdown('<div class="cell-muted" style="font-weight:700;margin-top:8px;">Equipos utilizados (humedad)</div>',
                         unsafe_allow_html=True)
@@ -11527,9 +11555,10 @@ def render_consolidacion_form(data, assay_id):
             row = st.columns([2, 1, 1])
             row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
             for col_i, pref in ((1, "ini"), (2, "fin")):
-                key = f"cons_{pref}_{campo}"
-                data[key] = row[col_i].text_input(f"{label} — {pref}", value=data.get(key, ""), key=f"{key}_{assay_id}",
-                                                   label_visibility="collapsed")
+                casilla_texto(row[col_i], f"{label} — {pref}", f"cons_{pref}_{campo}", assay_id, data)
+            if campo == "seco_17":   # la primera pesada se copia a las de 18 y 19 horas
+                for pref in ("ini", "fin"):
+                    copiar_primera_pesada(data, assay_id, [f"cons_{pref}_seco_{h}" for h in (17, 18, 19)])
         _radio("cons_temp_secado", "Temperatura de secado", CONS_TEMP_SECADO)
         _radio("cons_metodo", "Método utilizado", CONS_METODOS)
     with st.container(border=True):
@@ -13759,8 +13788,10 @@ def render_proctor_form(data, assay_id):
                         row[i].markdown(f'<div style="padding:8px 10px;font-weight:700;color:{PRIMARY};text-align:center;" '
                                         f'title="π × D² / 4 × altura">{fmt_num(vol, 2)}</div>', unsafe_allow_html=True)
                         continue
-                    data[key] = row[i].text_input(f"{label} — prueba {i}", value=data.get(key, ""),
-                                                   key=f"{key}_{assay_id}", label_visibility="collapsed")
+                    casilla_texto(row[i], f"{label} — prueba {i}", key, assay_id, data)
+                if campo == "hum_seco_16h":   # la primera pesada se copia a las de 17, 18 y 19 horas
+                    for i in range(1, PROCTOR_PRUEBAS + 1):
+                        copiar_primera_pesada(data, assay_id, [f"proc_{i}_hum_seco_{h}h" for h in (16, 17, 18, 19)])
             if any(campo == "volumen_molde" for campo, _l in filas):
                 st.caption("Con la altura y el diámetro de la muestra el volumen se calcula solo (π × D² / 4 × altura). Si no los digitas, "
                            "puedes escribir el volumen directamente.")
@@ -13799,9 +13830,10 @@ def render_proctor_form(data, assay_id):
                 row = st.columns([2.2] + [1] * CBRC_MOLDES)
                 row[0].markdown(f'<div style="padding-top:8px;">{label}</div>', unsafe_allow_html=True)
                 for i in range(1, CBRC_MOLDES + 1):
-                    key = key_fn(i, campo)
-                    data[key] = row[i].text_input(f"{label} — molde {i}", value=data.get(key, ""),
-                                                   key=f"{key}_{assay_id}", label_visibility="collapsed")
+                    casilla_texto(row[i], f"{label} — molde {i}", key_fn(i, campo), assay_id, data)
+                if campo == "seco_16h":   # la primera pesada se copia a las de 17, 18 y 19 horas
+                    for i in range(1, CBRC_MOLDES + 1):
+                        copiar_primera_pesada(data, assay_id, [key_fn(i, f"seco_{h}h") for h in (16, 17, 18, 19)])
 
     with st.container(border=True):
         st.markdown(card_header_html("science", "Número de golpes por molde"), unsafe_allow_html=True)

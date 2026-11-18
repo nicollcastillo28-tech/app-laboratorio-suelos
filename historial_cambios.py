@@ -8,7 +8,18 @@ Partiendo de los datos actuales y deshaciendo los cambios hacia atrás se sabe c
 import re
 from datetime import datetime, timezone
 
-_HORA = re.compile(r"^(.*?)_(\d{1,2})h(_.*)?$")
+_HORA_H = re.compile(r"^(.*?)_(\d{1,2})h(_.*)?$")            # …_14h, …_15h_1, …_16h_antes
+_HORA_SECO = re.compile(r"^(.*seco)_(1[4-9])(_.*)?$")          # …seco_17, …seco_18 (Consolidación, Peso unitario: sin la «h»)
+
+
+class _Hora:
+    """Pesada a una hora: prefijo, hora y sufijo de la clave (o None si la clave no es de una pesada por hora)."""
+    @staticmethod
+    def match(clave):
+        return _HORA_H.match(clave) or _HORA_SECO.match(clave)
+
+
+_HORA = _Hora
 
 
 def datos_comparables(data):
@@ -82,11 +93,22 @@ def cambios_de(antes, despues):
         m = _HORA.match(k)
         if not m:
             continue
-        prefijo, hora, sufijo = m.group(1), m.group(2), m.group(3) or ""
-        origen = next((c for c in claves if c != k and not _HORA.match(c) and c.startswith(prefijo) and c.endswith(sufijo)
-                       and mismo_valor(despues.get(c), despues.get(k))), None)
-        if origen:
-            resultado[origen][2].append(int(hora))
+        prefijo, hora, sufijo = m.group(1), int(m.group(2)), m.group(3) or ""
+
+        def _es_origen(c):
+            """El dato que se digitó: el de la misma casilla sin hora (hum_seco_mas_recipiente) o la pesada de una hora ANTERIOR (seco_16h para
+            seco_17h, en CBR, Proctor, Consolidación y Corte), con el mismo valor nuevo."""
+            if c == k or not mismo_valor(despues.get(c), despues.get(k)):
+                return False
+            mc = _HORA.match(c)
+            if mc:
+                return mc.group(1) == prefijo and (mc.group(3) or "") == sufijo and int(mc.group(2)) < hora
+            return c.startswith(prefijo) and c.endswith(sufijo)
+        candidatos = [c for c in claves if _es_origen(c)]
+        sin_hora = [c for c in candidatos if not _HORA.match(c)]
+        origen = sin_hora[0] if sin_hora else min(candidatos, key=lambda c: int(_HORA.match(c).group(2)), default=None)
+        if origen and origen in resultado:
+            resultado[origen][2].append(hora)
             resultado.pop(k)
     return {k: (a, d, sorted(h)) for k, (a, d, h) in resultado.items()}
 
