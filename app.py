@@ -14974,6 +14974,21 @@ def _render_trasladar_datos(assay, muestra, assay_id, actor):
             st.error(f"No se pudo trasladar (revisa tu conexión): {e}")
 
 
+def quitar_marca_no_realizado(assay, muestra, compartido_con_granulometria, actor):
+    """Quita la marca «no se pudo realizar» (_no_realizado y su motivo) de un ensayo que sí tiene datos: con ella puesta la app no ofrece el
+    Excel (ni en el ensayo, ni en la tarjeta de la muestra, ni en el paquete). Parte de lo que hay AHORA en la base. Devuelve los datos nuevos."""
+    fila = db.get_assay_fila(assay["id"], "data") or {}
+    datos = dict(fila.get("data") if isinstance(fila.get("data"), dict) else (assay.get("data") or {}))
+    datos.pop("_no_realizado", None)
+    datos.pop("_motivo_no_realizado", None)
+    db.update_assay_data(assay["id"], data=datos)
+    if compartido_con_granulometria and muestra:
+        db.update_assay_shared_data(muestra["id"], ["granulometria", "pasa200"], datos)
+    assay["data"] = datos
+    add_historial(assay, "Se quitó la marca «no se pudo realizar»", actor, icono="task_alt", tono="success")
+    return datos
+
+
 def render_assay_form(prueba=False):
     assay_id = st.session_state.selected_assay_id
     assay = next((a for a in st.session_state.assays if a["id"] == assay_id), None)
@@ -15151,6 +15166,19 @@ def render_assay_form(prueba=False):
                     f'border-radius:10px;padding:12px 16px;margin-bottom:14px;">'
                     f'{icon("block", size=18)} <b>No se pudo realizar este ensayo.</b> {html.escape(motivo_no_realizado)}</div>',
                     unsafe_allow_html=True)
+        if es_supervisor and not prueba and tiene_valores_digitados(data):
+            # Se marcó «no se pudo realizar» pero sí se hizo (tiene datos): sin quitar la marca no sale el Excel.
+            st.caption("Este ensayo tiene datos digitados. Si sí se realizó, quita la marca para poder descargar su Excel.")
+            if st.button("Quitar la marca «no se pudo realizar»", key=f"quitar_nr_{assay_id}", icon=":material/task_alt:"):
+                try:
+                    quitar_marca_no_realizado(assay, muestra, bool(pasa200_gran_sibling),
+                                              f"{(st.session_state.profile or {}).get('full_name') or 'Jefe de Laboratorio'}")
+                    st.toast("Listo: el ensayo ya no está marcado como no realizado.", icon=":material/check_circle:")
+                    st.rerun()
+                except Exception as _e:
+                    if "RerunData" in type(_e).__name__ or "Stop" in type(_e).__name__:
+                        raise
+                    st.error("No se pudo guardar (revisa tu conexión) — vuelve a intentarlo.")
 
     def _historial_versiones(puede_restaurar):
         """Historial de cambios del ensayo, por fechas: cada «rato de trabajo» (cambios seguidos de la misma persona) con la hora de Colombia,
@@ -15280,6 +15308,9 @@ def render_assay_form(prueba=False):
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("Habilitar edición para el laboratorista", icon=":material/lock_open:", use_container_width=True):
                 db.update_assay_data(assay["id"], status="en-proceso")
+                if (assay.get("data") or {}).get("_no_realizado"):   # se reabre para digitarlo: ya no es «no se pudo realizar»
+                    quitar_marca_no_realizado(assay, muestra, bool(pasa200_gran_sibling),
+                                              f"{(st.session_state.profile or {}).get('full_name') or 'Jefe de Laboratorio'} (Jefe de Laboratorio)")
                 add_historial(assay, "Edición habilitada para el laboratorista",
                               f"{(st.session_state.profile or {}).get('full_name') or 'Jefe de Laboratorio'} (Jefe de Laboratorio)",
                               icono="lock_open", tono="warning")
@@ -15544,6 +15575,8 @@ def render_assay_form(prueba=False):
                 else:
                     st.session_state.pop(intento_incompleto_key, None)
                     data_guardar = _datos_frescos()
+                    data_guardar.pop("_no_realizado", None)          # se envía con datos: sí se realizó (aunque antes se hubiera marcado
+                    data_guardar.pop("_motivo_no_realizado", None)   # «no se pudo realizar»), y así sale su Excel
                     ya_estaba_finalizado = assay["status"] == "finalizado"
                     db.update_assay_data(assay["id"], data=data_guardar, observations=observations, laboratorist=laboratorist, status="finalizado", editado_por=actor_edicion)
                     assay.update(data=data_guardar, observations=observations, laboratorist=laboratorist, status="finalizado")
