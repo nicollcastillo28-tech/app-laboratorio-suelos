@@ -19,7 +19,7 @@ S = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
 class FormatosOficialesTest(unittest.TestCase):
     def test_archivos_identicos_a_los_originales_entregados(self):
         registros = json.loads((ROOT / 'templates/formatos_origen.json').read_text(encoding='utf-8'))
-        self.assertEqual(len(registros), 19)
+        self.assertEqual(len(registros), 20)   # con GDA-FLC-032 (caras fracturadas)
         for registro in registros:
             with self.subTest(formato=registro['destino']):
                 digest = hashlib.sha256((ROOT / 'templates' / registro['destino']).read_bytes()).hexdigest()

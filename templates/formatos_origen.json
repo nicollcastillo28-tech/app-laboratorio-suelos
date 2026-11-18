@@ -96,6 +96,12 @@
     "sha256": "ff270531964ca810520bf68e2046c6200f8b286c9c638e47085265c96eb00519"
   },
   {
+    "codigo": "GDA-FLC-032",
+    "origen": "GDA-FLC-032 PORCENTAJE DE PARTÍCULAS FRACTURADAS EN UN AGREGADO GRUESOGDA-CARAS FRACTURADAS.xlsx",
+    "destino": "GDA-FLC-032_caras_fracturadas.xlsx",
+    "sha256": "f55a8675102545d2feffffe1a7b16dbc2f819a8705c83e90598398499866f4bb"
+  },
+  {
     "codigo": "GDA-FLC-033",
     "origen": "GDA-FLC-033 SOLIDEZ DE LOS AGREGADOS FRENTE A LA ACCIÓN DE SOLUCIONES DE SULFATO DE SODIO O DE MAGNESIO.xlsx",
     "destino": "GDA-FLC-033_solidez_sulfatos.xlsx",

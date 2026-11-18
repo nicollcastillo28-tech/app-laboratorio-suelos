@@ -157,6 +157,7 @@ TEMPLATE_CARGA_PUNTUAL = os.path.join(BASE_DIR, "templates", "GDA-FLC-018_carga_
 TEMPLATE_SOLIDEZ_SULFATOS = os.path.join(BASE_DIR, "templates", "GDA-FLC-033_solidez_sulfatos.xlsx")
 TEMPLATE_TERRONES_ARCILLA = os.path.join(BASE_DIR, "templates", "GDA-FLC-034_terrones_arcilla.xlsx")
 TEMPLATE_ALARGAMIENTO_APLANAMIENTO = os.path.join(BASE_DIR, "templates", "GDA-FLC-026_alargamiento_aplanamiento.xlsx")
+TEMPLATE_CARAS_FRACTURADAS = os.path.join(BASE_DIR, "templates", "GDA-FLC-032_caras_fracturadas.xlsx")
 TEMPLATE_VERIFICACION_BALANZAS = os.path.join(BASE_DIR, "templates", "GDA-FL-029_verificacion_balanzas.xlsx")
 
 ROLE_LABELS = {"jefe": "Jefe de Laboratorio", "laboratorista": "Laboratorista", "ingeniero": "Director Técnico"}
@@ -1095,7 +1096,7 @@ SIEVES = [
     ("s_60", "No. 60", "0.25", "E32"), ("s_100", "No. 100", "0.149", "E33"), ("s_200", "No. 200", "0.075", "E34"),
 ]
 
-ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor", "materia-organica": "Materia orgánica", "limite-contraccion": "Límite de contracción", "consolidacion": "Consolidación", "compresion-inconfinada": "Compresión inconfinada", "compresion-roca": "Compresión en roca", "carga-puntual": "Carga puntual", "solidez-sulfatos": "Solidez en sulfatos", "terrones-arcilla": "Terrones de arcilla", "alargamiento-aplanamiento": "Alargamiento y aplanamiento"}
+ASSAY_LABELS = {"granulometria": "Granulometría", "humedad": "Contenido de humedad", "masa-unitaria": "Peso unitario", "limites": "Límites de Atterberg", "pasa200": "Pasa 200", "cbr": "CBR", "corte-directo": "Corte Directo", "gravedad-especifica": "Gravedad específica", "proctor": "Proctor", "materia-organica": "Materia orgánica", "limite-contraccion": "Límite de contracción", "consolidacion": "Consolidación", "compresion-inconfinada": "Compresión inconfinada", "compresion-roca": "Compresión en roca", "carga-puntual": "Carga puntual", "solidez-sulfatos": "Solidez en sulfatos", "terrones-arcilla": "Terrones de arcilla", "alargamiento-aplanamiento": "Alargamiento y aplanamiento", "caras-fracturadas": "Caras fracturadas"}
 # Título oficial de cada ensayo, tal como está en el encabezado de su plantilla de Excel (los mismos nombres y normas), para mostrarlo en la
 # pantalla del ensayo y que no diga solo "CBR". Los ensayos que cambian de título según lo que se elige adentro (método, norma, tipo de gravedad
 # específica) se resuelven en titulo_oficial_ensayo.
@@ -1118,6 +1119,7 @@ TITULOS_ENSAYO = {
     "solidez-sulfatos": "SOLIDEZ DE LOS AGREGADOS FRENTE A LA ACCIÓN DE SOLUCIONES DE SULFATO DE SODIO O DE MAGNESIO INV. E – 220 – 13",
     "terrones-arcilla": "DETERMINACIÓN DE TERRONES DE ARCILLA Y PARTÍCULAS DELEZNABLES EN LOS AGREGADOS INV E – 211 – 13",
     "alargamiento-aplanamiento": "ÍNDICES DE APLANAMIENTO Y DE ALARGAMIENTO DE LOS AGREGADOS PARA CARRETERAS INV E – 230 – 13",
+    "caras-fracturadas": "PORCENTAJE DE PARTÍCULAS FRACTURADAS EN UN AGREGADO GRUESO INV E – 227 – 13",
 }
 _TITULO_GESP = {
     "fino": "DENSIDAD, DENSIDAD RELATIVA (GRAVEDAD ESPECÍFICA) Y ABSORCIÓN DEL AGREGADO FINO INV E – 222 – 13",
@@ -1165,6 +1167,7 @@ NORMAS_ENSAYO = {
     "solidez-sulfatos": ["INV E-220-13", "ASTM C88"],
     "terrones-arcilla": ["INV E-211-13"],
     "alargamiento-aplanamiento": ["INV E-230-13"],
+    "caras-fracturadas": ["INV E-227-13", "ASTM D5821"],
 }
 STATUS_LABELS = {"sin-iniciar": "Sin iniciar", "en-proceso": "En ejecución", "finalizado": "Finalizado", "no-realizado": "No realizado"}
 STATUS_BADGE = {"sin-iniciar": "badge-danger", "en-proceso": "badge-warning", "finalizado": "badge-success", "no-realizado": "badge-muted"}
@@ -1840,6 +1843,7 @@ SUPPORTED_ASSAY_MAP = {
     "Solidez en sulfatos": "solidez-sulfatos",
     "Terrones de arcilla": "terrones-arcilla",
     "Alargamiento y aplanamiento": "alargamiento-aplanamiento",
+    "Caras fracturadas": "caras-fracturadas",
 }
 
 
@@ -13521,6 +13525,118 @@ def generar_excel_alargamiento_aplanamiento(codigo, perf_codigo, muestra, projec
     return escribir_entradas(plantilla, _parte_hoja_informe(plantilla, "FORMATO"), c)
 
 
+# ════════════════════════════════════════════════════════════════════
+# CARAS FRACTURADAS — porcentaje de partículas fracturadas en un agregado grueso (INV E-227-13), bitácora GDA-FL-022, informe GDA-FLC-032.
+# Una fila por tamiz en el que RETIENE el material (3" a 3/8"): masa retenida, masa de las partículas con una o más caras fracturadas y
+# masa de las que tienen dos o más. % de cada tamiz = masa con caras / masa retenida × 100; % total = masa total con caras / masa total
+# ensayada × 100 (ponderado por masa). La plantilla traía el % de una o más caras invertido (E/F) y los totales como la suma de los
+# porcentajes dividida por 4: en la descarga se corrigen (ver generar_excel_caras_fracturadas).
+# ════════════════════════════════════════════════════════════════════
+CF_TAMICES = [('3"', 19), ('2 1/2"', 20), ('2"', 21), ('1 1/2"', 22), ('1"', 23), ('3/4"', 24), ('1/2"', 25), ('3/8"', 26)]
+EQUIPO_CARAS_FRACTURADAS = ["Balanza GDA-E-012", "Balanza GDA-E-011", "Horno GDA-E-007", "Horno GDA-E-404"]   # los de la bitácora GDA-FL-022
+CF_CODIGO_INFORME = "CF"   # va en M12 («CÓDIGO ENSAYO») y entra en el «Informe ID» de la plantilla
+
+
+def _cf_calculo(data):
+    """Filas por tamiz y totales: {"filas": [{tamiz, ret, una, dos, pct_una, pct_dos}], "masa_total", "pct_una", "pct_dos"}."""
+    filas, tot_ret, tot_una, tot_dos, alguna = [], 0.0, 0.0, 0.0, False
+    for tamiz, fila in CF_TAMICES:
+        ret, una, dos = (to_float(data.get(f"cf_{fila}_{k}")) for k in ("ret", "una", "dos"))
+        filas.append({"tamiz": tamiz, "ret": ret, "una": una, "dos": dos,
+                      "pct_una": (una / ret * 100) if (ret and una is not None) else None,
+                      "pct_dos": (dos / ret * 100) if (ret and dos is not None) else None})
+        if ret:
+            alguna = True
+            tot_ret += ret
+            tot_una += una or 0.0
+            tot_dos += dos or 0.0
+    return {"filas": filas, "masa_total": tot_ret if alguna else None,
+            "pct_una": (tot_una / tot_ret * 100) if (alguna and tot_ret) else None,
+            "pct_dos": (tot_dos / tot_ret * 100) if (alguna and tot_ret) else None}
+
+
+def resultados_caras_fracturadas(data):
+    r = _cf_calculo(data)
+    if r["masa_total"] is None:
+        return []
+    return [("Masa total de la muestra ensayada (g)", fmt_num(r["masa_total"], 1)),
+            ("Partículas con una o más caras fracturadas (%)", fmt_num(r["pct_una"], 1) if r["pct_una"] is not None else "—"),
+            ("Partículas con dos o más caras fracturadas (%)", fmt_num(r["pct_dos"], 1) if r["pct_dos"] is not None else "—")]
+
+
+def render_caras_fracturadas_form(data, assay_id):
+    render_norma_selector("caras-fracturadas", data, "cf")
+    render_equipo(data, "cf", EQUIPO_CARAS_FRACTURADAS)
+    with st.container(border=True):
+        st.markdown(card_header_html("diamond", "Porcentaje de Caras Fracturadas"), unsafe_allow_html=True)
+        st.caption("Una fila por tamiz en el que retiene el material. Deja vacíos los tamices que no tienen material.")
+        anchos = [0.8, 1.1, 1.1, 0.7, 1.1, 0.7]
+        head = st.columns(anchos)
+        for col, texto in zip(head, ("Tamiz en el que retiene", "Masa retenida (g)", "Masa con una o más caras fracturadas (g)", "%",
+                                     "Masa con dos o más caras fracturadas (g)", "%")):
+            col.markdown(f'<div class="cell-muted" style="text-align:center;font-weight:700;">{texto}</div>', unsafe_allow_html=True)
+        for tamiz, fila in CF_TAMICES:
+            row = st.columns(anchos, vertical_alignment="center")
+            row[0].markdown(f'<div style="font-family:JetBrains Mono,monospace;font-size:13px;text-align:center;">{html.escape(tamiz)}</div>',
+                            unsafe_allow_html=True)
+            for col, sufijo, nombre in ((row[1], "ret", "masa retenida (g)"), (row[2], "una", "masa con una o más caras fracturadas (g)"),
+                                        (row[4], "dos", "masa con dos o más caras fracturadas (g)")):
+                key = f"cf_{fila}_{sufijo}"
+                data[key] = col.text_input(f"Tamiz {tamiz}, {nombre}", value=data.get(key, ""), key=f"{key}_{assay_id}",
+                                           label_visibility="collapsed", placeholder="0.0")
+            f = next(x for x in _cf_calculo(data)["filas"] if x["tamiz"] == tamiz)
+            for col, pct in ((row[3], f["pct_una"]), (row[5], f["pct_dos"])):
+                col.markdown(f'<div style="text-align:center;font-weight:700;color:{PRIMARY};">{fmt_num(pct, 1) if pct is not None else "—"}</div>',
+                             unsafe_allow_html=True)
+    with resultados_desplegable():
+        filas = resultados_caras_fracturadas(data)
+        if filas:
+            st.markdown(param_table_html(filas, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        else:
+            st.caption("Se muestran a medida que se digitan las masas de arriba.")
+
+
+@_exportacion_controlada
+def generar_excel_caras_fracturadas(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
+    """Informe GDA-FLC-032 (INV E-227-13): encabezado, masas de cada tamiz y observaciones. Los porcentajes los calcula el Excel; sus fórmulas
+    se corrigen en la descarga (solo si la plantilla todavía trae las de antes): % de una o más caras = F/E (venía E/F), totales = masa con
+    caras / masa ensayada (venían como la suma de los % dividida por 4) y los tamices sin material quedan en blanco en vez de #DIV/0!."""
+    c = {}
+    c["C6"] = project.get("cliente", "") if project else ""
+    c["C7"] = project["nombre"] if project else codigo
+    c["C8"] = project.get("correo_cliente", "") if project else ""
+    c["C9"] = project.get("localizacion", "") if project else ""
+    if project and project.get("muestra_tomada_por"):
+        c["C10"] = project["muestra_tomada_por"]
+    c["H6"] = _fecha_ddmmaaaa(_fecha_recepcion_perf(codigo, perf_codigo, project)) if project else ""
+    c["H7"] = _fecha_ddmmaaaa(fecha_ejecucion_informe(muestra, [data])) if project else ""
+    c["H8"] = _fecha_ddmmaaaa(fecha_emision_hoy()) if project else ""
+    c["I9"] = project.get("numero", "") if project else ""
+    c["J9"] = project.get("anio", "") if project else ""
+    c["M12"] = CF_CODIGO_INFORME
+    perf = get_perforacion(codigo, perf_codigo)
+    c["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""
+    c["D12"] = perf_para_encabezado(perf_codigo, muestra, perf_codigo)
+    c["F12"] = muestra_para_encabezado(perf_codigo, muestra)
+    c["H12"] = to_float(muestra.get("profundidad_de"))
+    c["J12"] = to_float(muestra.get("profundidad_hasta"))
+    c["C13"] = descripcion_para_informe(muestra)
+    for _tamiz, fila in CF_TAMICES:
+        c[f"E{fila}"] = to_float(data.get(f"cf_{fila}_ret"))
+        c[f"F{fila}"] = to_float(data.get(f"cf_{fila}_una"))
+        c[f"H{fila}"] = to_float(data.get(f"cf_{fila}_dos"))
+    if (observaciones_ensayo or "").strip():
+        c["C31"] = observaciones_ensayo.strip()
+    plantilla = _plantilla_informe_bytes(TEMPLATE_CARAS_FRACTURADAS)
+    parte = _parte_hoja_informe(plantilla, "FORMATO")
+    return cambiar_formulas_si_iguales(escribir_entradas(plantilla, parte, c), parte, {
+        "G19": ("E19/F19*100", 'IF(OR(E19="",F19=""),"",F19/E19*100)'),   # fórmula compartida G19:G26: las demás filas la siguen
+        "I19": ("H19/E19*100", 'IF(OR(E19="",H19=""),"",H19/E19*100)'),   # compartida I19:I26
+        "F27": ("SUM(G19:G26)/4", 'IF(SUM(E19:E26)>0,SUM(F19:F26)/SUM(E19:E26)*100,"")'),
+        "F28": ("(SUM(I19:I26)/4)", 'IF(SUM(E19:E26)>0,SUM(H19:H26)/SUM(E19:E26)*100,"")'),
+    })
+
+
 # Paquetes por perforación (y descarga desde la tarjeta del ensayo en la muestra) de los ensayos que tienen una sola hoja «FORMATO» por muestra
 # y se definen arriba: Peso unitario Método B (su propia plantilla, GDA-FLC-030), Solidez en sulfatos, Terrones de arcilla y Alargamiento y
 # aplanamiento. Se agregan aquí porque sus generadores recién quedan definidos (nombrarlos antes sería un NameError al cargar el módulo).
@@ -13536,6 +13652,8 @@ _PAQUETES_UNA_HOJA = {
     "alargamiento-aplanamiento": {"hoja": "FORMATO", "generar": generar_excel_alargamiento_aplanamiento, "ext": "xlsx", "mime": _XLSX,
                                   "prefijo": "Alargamiento_aplanamiento", "etiqueta": "Alargamiento y aplanamiento",
                                   "bitacora": "Alargamiento y aplanamiento"},
+    "caras-fracturadas": {"hoja": "FORMATO", "generar": generar_excel_caras_fracturadas, "ext": "xlsx", "mime": _XLSX,
+                          "prefijo": "Caras_fracturadas", "etiqueta": "Caras fracturadas", "bitacora": "Caras fracturadas"},
 }
 EXCEL_LOTE_CONFIG.update(_PAQUETES_UNA_HOJA)
 EXCEL_INDIVIDUAL_CONFIG.update({t: c for t, c in _PAQUETES_UNA_HOJA.items() if t != "masa-unitaria-b"})
@@ -14198,6 +14316,20 @@ def render_read_only_summary(tipo, data, laboratorista="—", muestra_id=None):
             with resultados_desplegable():
                 st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
         equipos, norma = data.get("aa_equipos", []), data.get("aa_norma", "—")
+    elif tipo == "caras-fracturadas":
+        calculo = _cf_calculo(data)
+        with st.container(border=True):
+            st.markdown(card_header_html("diamond", "Porcentaje de Caras Fracturadas"), unsafe_allow_html=True)
+            st.markdown(param_table_ncol_html(["TAMIZ EN EL QUE RETIENE", "MASA RETENIDA (g)", "UNA O MÁS CARAS (g)", "%", "DOS O MÁS CARAS (g)", "%"],
+                                              [(f["tamiz"], data.get(f"cf_{fila}_ret"), data.get(f"cf_{fila}_una"),
+                                                fmt_num(f["pct_una"], 1) if f["pct_una"] is not None else None, data.get(f"cf_{fila}_dos"),
+                                                fmt_num(f["pct_dos"], 1) if f["pct_dos"] is not None else None)
+                                               for f, (_t, fila) in zip(calculo["filas"], CF_TAMICES)]), unsafe_allow_html=True)
+        resultados = resultados_caras_fracturadas(data)
+        if resultados:
+            with resultados_desplegable():
+                st.markdown(param_table_html(resultados, header_left="RESULTADO", header_right="VALOR"), unsafe_allow_html=True)
+        equipos, norma = data.get("cf_equipos", []), data.get("cf_norma", "—")
     elif tipo == "consolidacion":
         with st.container(border=True):
             st.markdown(card_header_html("science", "Parámetros Registrados"), unsafe_allow_html=True)
@@ -14395,6 +14527,7 @@ _RESULTADOS_SIMPLES = {
     "compresion-inconfinada": "resultados_compresion_inconfinada", "compresion-roca": "resultados_compresion_roca",
     "carga-puntual": "resultados_carga_puntual", "solidez-sulfatos": "resultados_solidez_sulfatos",
     "terrones-arcilla": "resultados_terrones_arcilla", "alargamiento-aplanamiento": "resultados_alargamiento_aplanamiento",
+    "caras-fracturadas": "resultados_caras_fracturadas",
     "consolidacion": "resultados_consolidacion", "limite-contraccion": "resultados_limite_contraccion",
 }
 
@@ -14555,6 +14688,9 @@ def _valores_alertas(tipo, data, muestra):
         return [{"perdida_grueso": _fila_num(f, "% de pérdida ponderada — grueso"), "perdida_fino": _fila_num(f, "% de pérdida ponderada — fino")}]
     if tipo == "terrones-arcilla":
         return [{"ponderado": _fila_num(resultados_terrones_arcilla(data), "% de pérdida ponderada")}]
+    if tipo == "caras-fracturadas":
+        r = _cf_calculo(data)
+        return [{"filas": [(f["ret"], f["una"], f["dos"]) for f in r["filas"]], "pct_una": r["pct_una"], "pct_dos": r["pct_dos"]}]
     if tipo == "alargamiento-aplanamiento":
         return [{"tablas": {clave: {"filas": [(f["ini"], f["par"]) for f in (_aa_calculo(data, clave)["filas"])],
                                     "indice": _aa_calculo(data, clave)["indice"]} for clave in ("alar", "apla")}}]
@@ -15155,6 +15291,8 @@ def render_assay_form(prueba=False):
             render_terrones_arcilla_form(data, assay_id)
         elif assay["tipo"] == "alargamiento-aplanamiento":
             render_alargamiento_aplanamiento_form(data, assay_id)
+        elif assay["tipo"] == "caras-fracturadas":
+            render_caras_fracturadas_form(data, assay_id)
 
         # Si el suelo no tiene límites, las observaciones traen por defecto la razón (se puede cambiar); no se pisa lo que ya esté escrito.
         obs_inicial = assay.get("observations", "")
@@ -15560,6 +15698,17 @@ def render_assay_form(prueba=False):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
             key="dl_alargamiento_aplanamiento")
 
+    if not motivo_no_realizado and not exportacion_en_revision and assay["tipo"] == "caras-fracturadas" and muestra:
+        st.markdown("---")
+        st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
+        st.download_button(
+            "Descargar Excel (informe GDA-FLC-032 de Caras Fracturadas)", icon=":material/download:",
+            on_click=_marcar_emision, args=(codigo, perf_codigo),
+            data=lambda: generar_excel_caras_fracturadas(codigo, perf_codigo, muestra, project, data, assay.get("observations", "")),
+            file_name=f"Caras_fracturadas_{muestra['id_unico']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True,
+            key="dl_caras_fracturadas")
+
     if not motivo_no_realizado and not exportacion_en_revision and assay["tipo"] == "consolidacion" and muestra:
         st.markdown("---")
         st.markdown('<div class="section-title">Exportar</div>', unsafe_allow_html=True)
@@ -15711,6 +15860,7 @@ def _equipos_ejemplo(tipo, data):
         "compresion-roca": {"roca_equipos": EQUIPO_COMPRESION_ROCA}, "carga-puntual": {"cp_equipos": EQUIPO_CARGA_PUNTUAL},
         "solidez-sulfatos": {"sulf_equipos": EQUIPO_SOLIDEZ_SULFATOS}, "materia-organica": {"mo_equipos": EQUIPO_MATERIA_ORGANICA[:2]}, "terrones-arcilla": {"ter_equipos": EQUIPO_TERRONES_ARCILLA},
         "alargamiento-aplanamiento": {"aa_equipos": EQUIPO_ALARGAMIENTO_APLANAMIENTO},
+        "caras-fracturadas": {"cf_equipos": EQUIPO_CARAS_FRACTURADAS},
     }
     return {clave: list(lista[:3]) for clave, lista in por_tipo.get(tipo, {}).items()}
 

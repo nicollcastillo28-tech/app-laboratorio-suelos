@@ -278,13 +278,23 @@ def _alargamiento_aplanamiento():
     return d
 
 
+def _caras_fracturadas():
+    d = {}
+    for fila, (ret, una, dos) in {21: (1520.0, 1430.0, 1310.0), 22: (2010.0, 1880.0, 1720.0), 23: (1240.0, 1150.0, 1040.0),
+                                  24: (860.0, 790.0, 700.0)}.items():
+        d[f"cf_{fila}_ret"] = _n(ret, 1)
+        d[f"cf_{fila}_una"] = _n(una, 1)
+        d[f"cf_{fila}_dos"] = _n(dos, 1)
+    return d
+
+
 _GENERADORES = {
     "granulometria": _granulometria, "humedad": _humedad_natural, "masa-unitaria": _masa_unitaria, "limites": _limites,
     "pasa200": _pasa200, "cbr": _cbr, "corte-directo": _corte_directo, "gravedad-especifica": _gravedad_especifica,
     "proctor": _proctor, "materia-organica": _materia_organica, "limite-contraccion": _limite_contraccion,
     "consolidacion": _consolidacion, "compresion-inconfinada": _compresion_inconfinada, "compresion-roca": _compresion_roca,
     "carga-puntual": _carga_puntual, "solidez-sulfatos": _solidez_sulfatos, "terrones-arcilla": _terrones_arcilla,
-    "alargamiento-aplanamiento": _alargamiento_aplanamiento,
+    "alargamiento-aplanamiento": _alargamiento_aplanamiento, "caras-fracturadas": _caras_fracturadas,
 }
 
 # Condición del ensayo (temperatura y humedad del laboratorio) que se comparte entre los ensayos de una muestra.

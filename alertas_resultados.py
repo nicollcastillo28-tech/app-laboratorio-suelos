@@ -611,7 +611,26 @@ def _alargamiento_aplanamiento(v, material, ctx):
     return out
 
 
+def _caras_fracturadas(v, material, ctx):
+    """Chequeos físicos: en cada tamiz, la masa con dos o más caras no puede pasar de la de una o más caras, ni esta de la masa retenida; los
+    porcentajes totales están entre 0 y 100 %."""
+    out = []
+    for ret, una, dos in v.get("filas") or []:
+        if _num(ret) and _num(una) and una > ret:
+            out.append(_a("alto", f"La masa con una o más caras fracturadas ({_f(una, 1)} g) es mayor que la masa retenida ({_f(ret, 1)} g). "
+                                  "Revisa las pesadas.", "fisica"))
+        if _num(una) and _num(dos) and dos > una:
+            out.append(_a("alto", f"La masa con dos o más caras fracturadas ({_f(dos, 1)} g) es mayor que la de una o más caras ({_f(una, 1)} g): "
+                                  "las de dos o más caras también tienen una o más.", "fisica"))
+    for clave, nombre in (("pct_una", "una o más"), ("pct_dos", "dos o más")):
+        p = v.get(clave)
+        if _num(p) and not (0 <= p <= 100):
+            out.append(_a("alto", f"% de partículas con {nombre} caras fracturadas = {_f(p, 1)} % fuera de 0–100 %.", "fisica"))
+    return out
+
+
 _REGLAS = {
+    "caras-fracturadas": _caras_fracturadas,
     "alargamiento-aplanamiento": _alargamiento_aplanamiento,
     "humedad": _humedad, "limites": _limites, "granulometria": _granulometria, "pasa200": _granulometria,
     "proctor": _proctor, "cbr": _cbr, "corte-directo": _corte_directo, "masa-unitaria": _masa_unitaria,

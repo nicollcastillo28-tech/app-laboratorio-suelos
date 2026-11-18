@@ -102,6 +102,7 @@ ENSAYOS = [
     ("solidez-sulfatos", "Solidez en sulfatos", [{}]),
     ("terrones-arcilla", "Terrones de arcilla", [{}]),
     ("alargamiento-aplanamiento", "Alargamiento y aplanamiento", [{}]),
+    ("caras-fracturadas", "Caras fracturadas", [{}]),
 ]
 TIPOS_CASILLA = {"TextInput", "NumberInput", "Radio", "Selectbox", "Multiselect", "Checkbox", "Toggle", "TextArea", "DateInput", "ButtonGroup",
                  "SelectSlider"}
