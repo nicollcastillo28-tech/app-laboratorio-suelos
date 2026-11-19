@@ -65,7 +65,7 @@ if not getattr(st.download_button, "_gd_con_contexto", False):
     _download_button_con_contexto._gd_con_contexto = True
     st.download_button = _download_button_con_contexto
 from exportacion_formatos import LibroFormatoOriginal, escribir_entradas, FormatoIncompatibleError, partes_hojas, preparar_descarga
-from presentacion_excel import marcar_casillas, ajustar_presentacion, reparar_formulas_clasificacion, reparar_punto_carta_plasticidad, reponer_formulas_faltantes, cambiar_formulas_si_iguales, cambiar_formulas_varias, vaciar_celdas_solo_espacios
+from presentacion_excel import ajustar_presentacion, reparar_formulas_clasificacion, reparar_punto_carta_plasticidad, reponer_formulas_faltantes, cambiar_formulas_si_iguales, cambiar_formulas_varias, vaciar_celdas_solo_espacios
 
 
 def _precalentar_graficos():
@@ -9227,16 +9227,9 @@ def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_dat
     # El punto de la muestra en la Carta de Plasticidad: la plantilla oficial lo tiene apuntando a una celda en 0 (sale en la esquina).
     r_lim = calcular_limites(lim_data) if _limites_tienen_datos(lim_data) else None
     con_punto = r_lim is not None and not (r_lim['nl'] or r_lim['np'])
-    salida = reparar_punto_carta_plasticidad(salida, r_lim['ll'] if con_punto else None, r_lim['ip'] if con_punto else None)
-    # Casillas de la hoja de límites (de izquierda a derecha): Método A multipunto, Método B un solo punto, método manual y aparato de
-    # enrollamiento. El método del Límite Líquido sale de lo digitado; el Límite Plástico se hace a mano (la app no tiene aparato).
-    if lim_data is not None and _limites_tienen_datos(lim_data):
-        hizo_ll = _tiene_datos_ll(lim_data) and not lim_data.get("lim_nl")
-        hizo_lp = hizo_ll and not lim_data.get("lim_np")
-        metodo = lim_data.get("lim_metodo", METODO_HUMEDAD[0])
-        salida = marcar_casillas(salida, _parte_hoja_informe(salida, 'FORMATO'),
-                                 [hizo_ll and metodo == "Método A", hizo_ll and metodo == "Método B", hizo_lp, False])
-    return salida
+    # Las casillas de método de la hoja de límites (Método A multipunto y método manual de enrollamiento) vienen marcadas de fábrica en
+    # la plantilla, como estándar del laboratorio: la descarga no las toca.
+    return reparar_punto_carta_plasticidad(salida, r_lim['ll'] if con_punto else None, r_lim['ip'] if con_punto else None)
 
 
 @_exportacion_controlada
