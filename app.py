@@ -8359,15 +8359,15 @@ def _escribir_limites(ws, data):
                     if num is not None:
                         ws[cell] = num
     if limites_sin_limites(data):
-        # La plantilla ya sabe reportar "N.L. - N.P." cuando el Límite Líquido dice "NO LÍQUIDO" (R42) y "NO PLÁSTICO" cuando
-        # el Límite Plástico está vacío (R41): no se escribe ningún dato.
-        ws["R40"] = "NO LÍQUIDO"
-        ws["R41"] = "NO PLÁSTICO"   # la fórmula original da #¡VALOR! sin datos (ROUNDDOWN de texto)
+        # Sin límites (N.L. o N.P. sin datos): el laboratorio reporta 0 en las tres casillas de resultado (Límite Líquido, Límite Plástico e
+        # Índice de Plasticidad), no texto. R42 es fórmula: con R40 y R41 en 0 da 0 (ver reparar_formulas_clasificacion).
+        ws["R40"] = 0
+        ws["R41"] = 0
         return
     _escribir(LIMITE_LIQUIDO_FILAS)
     if data.get("lim_np"):
-        ws["R41"] = "NO PLÁSTICO"
-        ws["R42"] = "N.P."
+        ws["R41"] = 0   # no plástico: Límite Plástico e Índice de Plasticidad en 0 (el Límite Líquido sí se midió)
+        ws["R42"] = 0
         return
     _escribir(LIMITE_PLASTICO_FILAS)
 
