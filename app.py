@@ -64,7 +64,7 @@ if not getattr(st.download_button, "_gd_con_contexto", False):
         return _download_button_original(*args, **kwargs)
     _download_button_con_contexto._gd_con_contexto = True
     st.download_button = _download_button_con_contexto
-from exportacion_formatos import LibroFormatoOriginal, escribir_entradas, FormatoIncompatibleError, partes_hojas
+from exportacion_formatos import LibroFormatoOriginal, escribir_entradas, FormatoIncompatibleError, partes_hojas, preparar_descarga
 from presentacion_excel import ajustar_presentacion, reparar_formulas_clasificacion, reparar_punto_carta_plasticidad, reponer_formulas_faltantes, cambiar_formulas_si_iguales, cambiar_formulas_varias, vaciar_celdas_solo_espacios
 
 
@@ -8199,6 +8199,7 @@ def _con_firmas(generador):
                 resultado = agregar_firmas(bytes(resultado))
             except Exception:
                 pass
+            resultado = preparar_descarga(bytes(resultado))   # sin protección y con el código de ensayo del Informe ID
         return resultado
     return generar
 
@@ -8216,6 +8217,7 @@ def _exportacion_controlada(generador):
                     resultado = agregar_firmas(bytes(resultado))
                 except Exception:
                     pass
+                resultado = preparar_descarga(bytes(resultado))   # sin protección y con el código de ensayo del Informe ID
             return resultado
         except FormatoIncompatibleError:
             from streamlit.runtime.scriptrunner import get_script_run_ctx
@@ -9637,6 +9639,13 @@ def generar_excel_proctor(codigo, perf_codigo, muestra, project, data, observaci
     if tamiz:
         ws["L25"] = tamiz
     ws["M25"] = to_float(data.get("proc_sobretamano_pct"))
+    # La plantilla pide a mano los coeficientes A, B y C de la curva (F74:F76: γd = A·w² + B·w + C, la línea de tendencia del gráfico) y la
+    # humedad óptima (M42); con ellos calcula la densidad máxima (M37, M40…). Vacíos, esas casillas daban #¡VALOR!. Son los mismos que calcula
+    # la app con los puntos del ensayo (calcular_proctor).
+    curva = calcular_proctor(data)
+    if curva.get("coef") and curva.get("opt_w") is not None:
+        ws["F74"], ws["F75"], ws["F76"] = curva["coef"]
+        ws["M42"] = curva["opt_w"]
 
     # CBR de suelos compactados (lado derecho de la plantilla): moldes en las columnas Q, R, S;
     # penetración en W, AA, AE; expansión en AF, AG, AH. Las celdas de expansión traen valores de
@@ -13048,7 +13057,16 @@ def generar_excel_carga_puntual(codigo, perf_codigo, muestra, project, data, obs
             ref = celda.get("r", "")
             if re.fullmatch(r"[HIJKLM](?:2[1-9]|30)", ref) and celda.find(ns_hoja + "f") is not None:
                 c.pop(ref, None)
-    salida = escribir_entradas(plantilla, _parte_hoja_informe(plantilla, "FORMATO"), c)
+    parte = _parte_hoja_informe(plantilla, "FORMATO")
+    # La fila 26 (espécimen 6) trae fórmulas aunque no tenga datos (las filas 27 a 30 no traen): vacía daba #¡DIV/0! y con eso el I50 promedio
+    # (E33 = AVERAGE(M21:M30)) también. Se dejan en blanco mientras el espécimen no tenga carga.
+    # Además, en las filas 22 a 26 el ensayo DIAMETRAL dividía la carga por el diámetro (P/D) y no por De² (columna I, que ya es D² en el
+    # diametral y 4·W·D/π en los demás): daba Is ~50 veces mayor (el promedio salía 82,6 MPa donde va 2,1). La fila 21 ya hacía P/De².
+    # Son fórmulas compartidas: se cambia la principal de cada grupo (L22 para L22:L26, M21 para M21:M26) y las demás filas la siguen.
+    salida = cambiar_formulas_si_iguales(escribir_entradas(plantilla, parte, c), parte, {
+        "L22": ('IF(N22="DIAMETRAL", C22*1000/D22, C22*1000/I22)', 'IF(C22="","",C22*1000/I22)'),
+        "M21": ("L21*K21", 'IF(L21="","",L21*K21)'),
+    })
     foto = data.get("cp_foto_falla")
     if foto:
         imagen = base64.b64decode(foto["b64"])
@@ -13467,7 +13485,7 @@ AA_TITULOS = {"alar": ("Índice de alargamiento", "Masa de las partículas alarg
 EQUIPO_ALARGAMIENTO_APLANAMIENTO = ["Balanza GDA-E-011", "Balanza GDA-E-010", "Balanza GDA-E-407", "Horno GDA-E-007", "Horno GDA-E-404",
                                      "Serie de tamices GDA-E-000", "Equipo de alargamiento GDA-E-401", "Equipo de aplanamiento GDA-E-402"]
 # Código que va en el "Informe ID" (celda K10 de la plantilla: "DIGITAR CODIGO ENSAYO").
-AA_CODIGO_INFORME = "AA"
+AA_CODIGO_INFORME = "026"   # el código de ensayo es el número del formato (GDA-FLC-026)
 
 
 def _aa_calculo(data, clave):
@@ -13573,7 +13591,7 @@ def generar_excel_alargamiento_aplanamiento(codigo, perf_codigo, muestra, projec
 # ════════════════════════════════════════════════════════════════════
 CF_TAMICES = [('3"', 19), ('2 1/2"', 20), ('2"', 21), ('1 1/2"', 22), ('1"', 23), ('3/4"', 24), ('1/2"', 25), ('3/8"', 26)]
 EQUIPO_CARAS_FRACTURADAS = ["Balanza GDA-E-012", "Balanza GDA-E-011", "Horno GDA-E-007", "Horno GDA-E-404"]   # los de la bitácora GDA-FL-022
-CF_CODIGO_INFORME = "CF"   # va en M12 («CÓDIGO ENSAYO») y entra en el «Informe ID» de la plantilla
+CF_CODIGO_INFORME = "032"   # va en M12 («CÓDIGO ENSAYO»): el número del formato (GDA-FLC-032), entra en el «Informe ID»
 
 
 def _cf_calculo(data):

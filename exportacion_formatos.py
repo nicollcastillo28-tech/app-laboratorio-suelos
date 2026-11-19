@@ -13,7 +13,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 from openpyxl import load_workbook
-from openpyxl.utils.cell import column_index_from_string, coordinate_to_tuple, range_boundaries
+from openpyxl.utils.cell import column_index_from_string, coordinate_to_tuple, get_column_letter, range_boundaries
 from presentacion_excel import PaqueteZip, ajustar_presentacion, ajustar_presentacion_en
 
 S = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
@@ -177,6 +177,147 @@ def escribir_entradas_en(z, parte, valores, *, celdas_formula_editables=()):
         z.escribir('xl/workbook.xml', re.sub(r'<calcPr\b[^>]*/>', recalcular, texto).encode('utf-8'))
     z.escribir(parte, xml.encode('utf-8'))
     ajustar_presentacion_en(z, parte, entradas)
+
+
+# ── Lo que se hace a TODO Excel de resultados antes de descargarlo (ver preparar_descarga) ─────────────────────────────────────────────
+_CODIGO_FORMATO = re.compile(r"GDA\s*-?\s*FLC\s*-?\s*(\d{3}[A-Z]?)", re.I)
+_REF = re.compile(r"(?<![A-Za-z0-9_$!.'])\$?([A-Z]{1,3})\$?(\d{1,5})(?![\d(A-Za-z_!])")
+
+
+def _textos_compartidos(z):
+    if "xl/sharedStrings.xml" not in z.datos:
+        return []
+    xml = z.read("xl/sharedStrings.xml").decode("utf-8")
+    return [html.unescape("".join(re.findall(r"<t\b[^>]*>(.*?)</t>", si, re.S))) for si in re.findall(r"<si>(.*?)</si>", xml, re.S)]
+
+
+def _celdas(xml):
+    """{ref: (fila, columna, atributos, cuerpo, inicio, fin)} de las celdas de una hoja."""
+    salida = {}
+    for m in re.finditer(r'<c\b\s+r="([A-Z]+)(\d+)"([^>]*?)(?:/>|>(.*?)</c>)', xml, re.S):
+        salida[m.group(1) + m.group(2)] = (int(m.group(2)), column_index_from_string(m.group(1)), m.group(3), m.group(4) or "",
+                                           m.start(), m.end())
+    return salida
+
+
+def _texto_celda(atributos, cuerpo, compartidos):
+    t = re.search(r'\bt="([^"]*)"', atributos)
+    t = t.group(1) if t else ""
+    if t == "s":
+        v = re.search(r"<v>(\d+)</v>", cuerpo)
+        return compartidos[int(v.group(1))] if v and int(v.group(1)) < len(compartidos) else ""
+    if t == "inlineStr":
+        return html.unescape("".join(re.findall(r"<t\b[^>]*>(.*?)</t>", cuerpo, re.S)))
+    v = re.search(r"<v>(.*?)</v>", cuerpo, re.S)
+    return html.unescape(v.group(1)) if v else ""
+
+
+def _codigo_de_ensayo_en(z, parte, compartidos):
+    """Pone en la hoja el «código de ensayo» del «Informe ID No.» (los dígitos del código del formato: GDA-FLC-034 -> 034) y deja la fórmula
+    del Informe ID como número de orden + año - código - perforación - muestra. Cada plantilla trae ese código en una celda distinta (K10, M12,
+    B50…) que quedaba vacía (el Informe ID salía «088 26--S-1-M-3»), algunas sin guion entre partes o con celdas de más, y la 008 y la 018 sin
+    lugar para el código. Se toma el código del encabezado del mismo informe (el «CÓDIGO: GDA-FLC-…» más cercano en columnas)."""
+    xml = z.read(parte).decode("utf-8")
+    celdas = _celdas(xml)
+    codigos = [(col, _CODIGO_FORMATO.search(_texto_celda(a, c, compartidos)).group(1).upper())
+               for ref, (fila, col, a, c, _i, _f) in celdas.items() if fila <= 5 and _CODIGO_FORMATO.search(_texto_celda(a, c, compartidos))]
+    if not codigos:
+        return
+    cambios_formula, entradas = {}, {}
+    for ref, (fila, col, atributos, cuerpo, _i, _f) in celdas.items():
+        if not (8 <= fila <= 12):
+            continue
+        mf = re.search(r"<f\b[^>]*>(.*?)</f>", cuerpo, re.S)
+        if not mf or "CONCATENATE" not in mf.group(1).upper():
+            continue
+        formula = html.unescape(mf.group(1))
+        refs = [c + n for c, n in _REF.findall(re.sub(r'"[^"]*"', '""', formula))]
+        if len(refs) < 4:
+            continue
+        numero, anio, muestra = refs[0], refs[1], refs[-1]
+        en_fila_12 = [r for r in refs[2:-1] if re.fullmatch(r"[A-Z]+12", r)]
+        perforacion = en_fila_12[-1] if en_fila_12 else None
+        if not perforacion:
+            continue
+        resto = [r for r in refs[2:-1] if r != perforacion]
+        # La fórmula de algunas plantillas apunta a una celda de la perforación que queda vacía (Proctor: E12, la app la escribe en F12):
+        # se usa la primera celda con dato a su derecha en la fila 12 que no sea un rótulo («MUESTRA No. :»).
+        info_perf = celdas.get(perforacion)
+        if not (info_perf and _texto_celda(info_perf[2], info_perf[3], compartidos).strip()):
+            col_perf = column_index_from_string(re.match(r"[A-Z]+", perforacion).group(0))
+            for desplazamiento in (1, 2):
+                vecina = f"{get_column_letter(col_perf + desplazamiento)}12"
+                info_v = celdas.get(vecina)
+                texto_v = _texto_celda(info_v[2], info_v[3], compartidos).strip() if info_v else ""
+                if texto_v and not texto_v.endswith(":") and vecina != muestra:
+                    perforacion = vecina
+                    break
+        codigo = min(codigos, key=lambda c: abs(c[0] - col))[1]
+        celda_codigo = resto[0] if resto else None
+        if celda_codigo:
+            info = celdas.get(celda_codigo)
+            if info and "<f" in info[3]:
+                celda_codigo = None             # trae una fórmula: el código va escrito en el Informe ID
+            elif not (info and _texto_celda(info[2], info[3], compartidos).strip()):
+                entradas[celda_codigo] = codigo
+        parte_codigo = celda_codigo or f'"{codigo}"'
+        cambios_formula[ref] = f'CONCATENATE({numero}," ",{anio},"-",{parte_codigo},"-",{perforacion},"-",{muestra})'
+    if entradas:
+        try:
+            escribir_entradas_en(z, parte, entradas)
+        except FormatoIncompatibleError:   # celda combinada u otra rareza: el código va escrito en la fórmula
+            for ref_id, f in list(cambios_formula.items()):
+                for celda, cod in entradas.items():
+                    cambios_formula[ref_id] = f.replace(f",{celda},", f',"{cod}",')
+        xml = z.read(parte).decode("utf-8")
+    for ref, nueva in cambios_formula.items():
+        m = re.search(r'(<c\b\s+r="' + ref + r'")([^>]*?)>(.*?)</c>', xml, re.S)
+        if not m:
+            continue
+        apertura_f = re.search(r"<f\b[^>]*>", m.group(3))
+        if not apertura_f or "shared" in apertura_f.group(0):
+            continue
+        atributos = re.sub(r'\s+t="[^"]*"', "", m.group(2))
+        xml = xml[:m.start()] + f'{m.group(1)}{atributos} t="str">{apertura_f.group(0)}{html.escape(nueva, quote=False)}</f></c>' + xml[m.end():]
+    z.escribir(parte, xml.encode("utf-8"))
+
+
+def preparar_descarga(contenido):
+    """Último paso de todo Excel de resultados que se descarga: (1) sin protección (se quitan la de cada hoja y la del libro, para poder
+    corregir algo en Excel sin contraseña) y (2) el código de ensayo en su lugar y el «Informe ID No.» completo (ver _codigo_de_ensayo_en).
+    Nunca impide la descarga: si algo falla se devuelve el archivo como venía."""
+    try:
+        z = PaqueteZip(contenido)
+        partes = partes_hojas(contenido)
+        compartidos = _textos_compartidos(z)
+        for parte in partes.values():
+            if parte not in z.datos:
+                continue
+            xml = z.read(parte)
+            if b"<sheetProtection" in xml:
+                z.escribir(parte, re.sub(rb"<sheetProtection\b[^>]*/>", b"", xml))
+            try:
+                _codigo_de_ensayo_en(z, parte, compartidos)
+            except Exception:
+                pass
+        # La cadena de cálculo (calcChain) se quita siempre: Excel la vuelve a armar al abrir. Al quitar hojas de ejemplo de la plantilla (Proctor,
+        # Compresión en roca…) quedaba apuntando a hojas que ya no están y Excel no podía abrir el archivo, ni siquiera reparándolo.
+        if "xl/calcChain.xml" in z.datos:
+            z.quitar("xl/calcChain.xml")
+            if "[Content_Types].xml" in z.datos:
+                z.escribir("[Content_Types].xml", re.sub(rb'<Override\b(?=[^>]*\bPartName="/xl/calcChain\.xml")[^>]*/>', b"",
+                                                         z.read("[Content_Types].xml")))
+            if "xl/_rels/workbook.xml.rels" in z.datos:
+                z.escribir("xl/_rels/workbook.xml.rels", re.sub(rb'<Relationship\b(?=[^>]*\bType="[^"]*/calcChain")[^>]*/>', b"",
+                                                                z.read("xl/_rels/workbook.xml.rels")))
+        libro = z.read("xl/workbook.xml")
+        libro = re.sub(rb"<workbookProtection\b[^>]*/>", b"", libro)
+        if b"fullCalcOnLoad" not in libro:
+            libro = re.sub(rb"<calcPr\b", b'<calcPr fullCalcOnLoad="1"', libro, count=1)
+        z.escribir("xl/workbook.xml", libro)
+        return z.bytes()
+    except Exception:
+        return contenido
 
 
 class _HojaEntradas:
