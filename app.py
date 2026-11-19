@@ -10759,8 +10759,8 @@ def resultados_masa_unitaria_parafinado(data, muestra_id):
 def resultados_masa_unitaria_b(data):
     """Densidad húmeda y seca del Método B (INV/ASTM D7263-09, plantilla GDA-FLC-030 — una sola lectura, no
     promedio): volumen (cm³) = π·altura(mm)·(diámetro(mm)/2)²/1000, densidad húmeda = masa/volumen, densidad
-    seca = densidad húmeda/(1+w/100), con w calculada de las masas de humedad. El kN/m³ es densidad (g/cm³) × 9,81 (la gravedad real; la
-    plantilla multiplica por 10 y se corrige en la descarga, ver generar_excel_masa_unitaria_b)."""
+    seca = densidad húmeda/(1+w/100), con w calculada de las masas de humedad. El kN/m³ es densidad (g/cm³) × 9,81 (la gravedad real, igual
+    que la plantilla)."""
     altura, diametro, masa = to_float(data.get("mub_altura")), to_float(data.get("mub_diametro")), to_float(data.get("mub_masa"))
     if not altura or not diametro or masa is None:
         return []
@@ -10813,9 +10813,7 @@ def generar_excel_masa_unitaria_b(codigo, perf_codigo, muestra, project, data, o
 
     plantilla = _plantilla_informe_bytes(TEMPLATE_MASA_UNITARIA_B)
     parte = _parte_hoja_informe(plantilla, "FORMATO")
-    # kN/m³ con la gravedad real (×9,81), igual que los resultados de la app: la plantilla multiplica por 10 y tiene la hoja protegida con
-    # contraseña, así que se corrige en la descarga (solo si todavía trae el ×10). G26 es la principal de una fórmula compartida con G27.
-    return cambiar_formulas_si_iguales(escribir_entradas(plantilla, parte, c), parte, {"G26": ("G24*10", "G24*9.81")})
+    return escribir_entradas(plantilla, parte, c)
 
 
 def render_masa_unitaria_form(data, assay_id, muestra_id=None):
