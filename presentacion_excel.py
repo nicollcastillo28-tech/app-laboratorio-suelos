@@ -425,6 +425,50 @@ def cambiar_formulas_en(z, parte, cambios):
     return True
 
 
+def marcar_casillas(contenido, parte, estados):
+    """Marca o desmarca las casillas de verificación (controles de formulario) de la hoja `parte`, en el orden en que están en la hoja (de arriba
+    abajo y de izquierda a derecha): estados = [True, False, …] (None deja esa casilla como está). Cada casilla guarda su estado en dos lugares:
+    su ctrlProp (checked="Checked") y su forma en el dibujo VML (<x:Checked>1</x:Checked>); se cambian los dos."""
+    import posixpath
+    z = PaqueteZip(contenido)
+    hoja = z.read(parte).decode("utf-8")
+    rels_hoja = posixpath.join(posixpath.dirname(parte), "_rels", posixpath.basename(parte) + ".rels")
+    if rels_hoja not in z.datos:
+        return contenido
+    rels = dict(re.findall(r'<Relationship\b[^>]*?\bId="([^"]+)"[^>]*?\bTarget="([^"]+)"', z.read(rels_hoja).decode("utf-8")))
+    rels.update({i: t for t, i in re.findall(r'<Relationship\b[^>]*?\bTarget="([^"]+)"[^>]*?\bId="([^"]+)"', z.read(rels_hoja).decode("utf-8"))})
+    ruta = lambda t: posixpath.normpath(posixpath.join(posixpath.dirname(parte), t)) if not t.startswith("/") else t.lstrip("/")
+    controles = {sid: ruta(rels[rid]) for sid, rid in re.findall(r'<control\b[^>]*?\bshapeId="(\d+)"[^>]*?\br:id="([^"]+)"', hoja) if rid in rels}
+    m_vml = re.search(r'<legacyDrawing\b[^>]*?\br:id="([^"]+)"', hoja)
+    vml_ruta = ruta(rels[m_vml.group(1)]) if m_vml and m_vml.group(1) in rels else None
+    vml = z.read(vml_ruta).decode("utf-8", "replace") if vml_ruta and vml_ruta in z.datos else ""
+    formas = []
+    for m in re.finditer(r'<v:shape\b[^>]*?\bid="_x0000_s(\d+)".*?</v:shape>', vml, re.S):
+        if 'ObjectType="Checkbox"' not in m.group(0) or m.group(1) not in controles:
+            continue
+        anc = re.search(r"<x:Anchor>\s*([^<]*)</x:Anchor>", m.group(0))
+        nums = [int(x) for x in anc.group(1).replace(" ", "").split(",")] if anc else [0, 0, 0, 0]
+        formas.append(((nums[2], nums[0]), m.group(1)))
+    formas.sort()
+    for (_pos, sid), marcar in zip(formas, estados):
+        if marcar is None:
+            continue
+        cp = controles[sid]
+        if cp in z.datos:
+            xml = re.sub(r'\s+checked="[^"]*"', "", z.read(cp).decode("utf-8"))
+            if marcar:
+                xml = re.sub(r"<formControlPr\b", '<formControlPr checked="Checked"', xml, count=1)
+            z.escribir(cp, xml.encode("utf-8"))
+        patron = re.compile(r'(<v:shape\b[^>]*?\bid="_x0000_s' + sid + r'".*?)(</x:ClientData>)', re.S)
+        mm = patron.search(vml)
+        if mm:
+            cuerpo = re.sub(r"\s*<x:Checked>[^<]*</x:Checked>", "", mm.group(1))
+            vml = vml[:mm.start()] + cuerpo + ("<x:Checked>1</x:Checked>" if marcar else "") + mm.group(2) + vml[mm.end():]
+    if vml_ruta:
+        z.escribir(vml_ruta, vml.encode("utf-8"))
+    return z.bytes()
+
+
 def vaciar_celdas_solo_espacios(contenido, parte):
     """Deja vacías (con su mismo formato) las celdas de la hoja `parte` cuyo texto son SOLO espacios. Algunas plantillas traen celdas con 80-90
     espacios (p. ej. I26/I29 en gravedad específica fino, I25/I28 en grueso): ese texto invisible se desborda hacia la derecha y Excel no dibuja
