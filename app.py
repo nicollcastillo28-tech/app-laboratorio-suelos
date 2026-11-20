@@ -65,7 +65,7 @@ if not getattr(st.download_button, "_gd_con_contexto", False):
     _download_button_con_contexto._gd_con_contexto = True
     st.download_button = _download_button_con_contexto
 from exportacion_formatos import LibroFormatoOriginal, escribir_entradas, FormatoIncompatibleError, partes_hojas, preparar_descarga
-from presentacion_excel import ajustar_presentacion, reparar_formulas_clasificacion, reparar_punto_carta_plasticidad, reponer_formulas_faltantes, cambiar_formulas_si_iguales, cambiar_formulas_varias, vaciar_celdas_solo_espacios
+from presentacion_excel import alinear_a_la_izquierda, ajustar_presentacion, reparar_formulas_clasificacion, reparar_punto_carta_plasticidad, reponer_formulas_faltantes, cambiar_formulas_si_iguales, cambiar_formulas_varias, vaciar_celdas_solo_espacios
 
 
 def _precalentar_graficos():
@@ -1454,6 +1454,11 @@ GESP_ARCILLA_CAMPOS = [
     ("gesp_a_temp", "Temperatura del ensayo (°C)"),
     ("gesp_a_pct_retenido", "% material retenido en el tamiz No. 4"),
 ]
+# Método del ensayo INV E-128 (casilla C32 de la plantilla GDA-FLC-006, con la lista T20:T21 de la propia plantilla).
+GESP_METODOS_E128 = ["Método A (muestra húmeda)", "Método B (muestra secada al horno)"]
+GESP_METODOS_E128_EXCEL = {GESP_METODOS_E128[0]: "MÉTODO A ", GESP_METODOS_E128[1]: "MÉTODO B"}
+# % retenido en el tamiz No. 4 a partir del cual la fracción gruesa se tiene en cuenta (el mismo umbral de la plantilla: D32 > 0.1).
+GESP_RETENIDO_REPRESENTATIVO = 0.1
 # En el mismo orden que la bitácora GDA-FL-019.
 GESP_FINOS_CAMPOS = [
     ("gesp_f_picnometro", "Picnómetro No."),
@@ -9473,7 +9478,7 @@ def generar_excel_cbr(codigo, perf_codigo, muestra, project, data, observaciones
 
 
 def _generar_excel_gravedad(template, hoja, celdas, codigo, perf_codigo, muestra, project, data, observaciones_ensayo="",
-                            celda_observaciones=None, celdas_formula_editables=()):
+                            celda_observaciones=None, celdas_formula_editables=(), textos=None):
     """Gravedad específica y absorción del agregado fino (GDA-FLC-027, INV E-222) o grueso
     (GDA-FLC-028, INV E-223). `celdas` mapea cada celda de entrada de la plantilla a su valor;
     las densidades y la absorción las calcula el propio Excel."""
@@ -9482,6 +9487,8 @@ def _generar_excel_gravedad(template, hoja, celdas, codigo, perf_codigo, muestra
     _llenar_encabezado_gravedad(ws, codigo, perf_codigo, muestra, project, data)
     for celda, valor in celdas.items():
         ws[celda] = to_float(valor)
+    for celda, texto in (textos or {}).items():
+        ws[celda] = texto
     if celda_observaciones and (observaciones_ensayo or "").strip():
         ws[celda_observaciones] = observaciones_ensayo.strip()
     bio = BytesIO()
@@ -10026,13 +10033,26 @@ def generar_excel_gravedad_arcilla(codigo, perf_codigo, muestra, project, data, 
     """Formato 006: G21 recibe la masa digitada en la app, según autorización del laboratorio.
     Sólo se sustituye esa fórmula en la descarga; el original y las demás fórmulas se conservan.
     """
+    cond = gesp_condiciones_e128(data, muestra.get("id_unico"))
     celdas = {"G19": data.get("gesp_a_picnometro"), "G20": data.get("gesp_a_masa_aire"),
               "G21": data.get("gesp_a_masa_pic_agua"),
               "G22": data.get("gesp_a_masa_pic_muestra"), "G23": data.get("gesp_a_temp"),
-              "D32": data.get("gesp_a_pct_retenido")}
+              "D32": cond["pct"]}
+    # Condiciones del ensayo: método (C32, con el texto exacto de la lista de la plantilla) y material excluido (E33).
+    textos = {"C32": GESP_METODOS_E128_EXCEL[cond["metodo"]], "E33": cond["excluido"] or None}
+    if not (observaciones_ensayo or "").strip():
+        observaciones_ensayo = gesp_observacion_automatica(data, muestra.get("id_unico"))
     excel = _generar_excel_gravedad(TEMPLATE_GESP_ARCILLA, "FORMATO", celdas, codigo, perf_codigo, muestra, project,
-                                     data, observaciones_ensayo, celda_observaciones="C36", celdas_formula_editables=("G21",))
-    return excel
+                                     data, observaciones_ensayo, celda_observaciones="C36", celdas_formula_editables=("G21",), textos=textos)
+    parte = _parte_hoja_informe(excel, "FORMATO")
+    # La observación (C36) es un renglón sin combinar entre el rótulo «OBSERVACIONES:» y el borde: centrada (como quedan todas las entradas)
+    # se desbordaba hacia los dos lados y el rótulo tapaba el comienzo. A la izquierda corre hacia la derecha (caben unos 150 caracteres).
+    excel = alinear_a_la_izquierda(excel, parte, ["C36"])
+    # G26 (gravedad reportada) pasaba a una gravedad «combinada» con la fracción gruesa en cuanto D32 > 0.1, pero esa fórmula (N39) usa una
+    # gravedad de gruesos con valores de relleno (N41 = 30, N42 = 11), y entre 0 y 0.1 daba FALSO. La grava se excluye del ensayo, así que se
+    # reporta siempre la gravedad de la fracción que pasa el No. 4 corregida a 20 °C (N40), la misma que calcula la app.
+    return cambiar_formulas_si_iguales(excel, parte,
+                                       {"G26": ("IF(D32>0.1,N39,IF(D32=0,N40))", 'IF(N38="","",N40)')})
 
 
 @_exportacion_controlada
@@ -11266,6 +11286,51 @@ def resultados_gravedad(data, modo):
             ("Gravedad específica", fmt_num(gt, 4)),
             ("Factor de corrección K (a 20 °C)", fmt_num(dens_k[1], 5)),
             ("Gravedad específica corregida a 20 °C", fmt_num(gt * dens_k[1], 4))]
+
+
+def gesp_pct_retenido_no4(data, muestra_id=None):
+    """(% retenido en el tamiz No. 4, origen) para la gravedad específica en arcillas y limos: lo digitado en el ensayo o, si no se digitó,
+    el % de grava de la Granulometría de la misma muestra (100 − % que pasa el No. 4). (None, None) si no hay de dónde sacarlo."""
+    digitado = to_float(data.get("gesp_a_pct_retenido"))
+    if digitado is not None:
+        return digitado, "digitado"
+    gran = get_assay(muestra_id, "granulometria") if muestra_id else None
+    curva = _calcular_curva_granulometrica(gran.get("data") or {}) if gran else None
+    if curva and curva.get("pct_grava") is not None:
+        return round(max(curva["pct_grava"], 0.0), 1), "granulometria"
+    return None, None
+
+
+def gesp_condiciones_e128(data, muestra_id=None):
+    """Condiciones del ensayo de la plantilla GDA-FLC-006: método, % retenido en el No. 4 (solo si es representativo; si no, 0) y el
+    material excluido de la muestra ensayada."""
+    metodo = data.get("gesp_a_metodo") if data.get("gesp_a_metodo") in GESP_METODOS_E128 else GESP_METODOS_E128[0]
+    pct, origen = gesp_pct_retenido_no4(data, muestra_id)
+    representativo = pct is not None and pct > GESP_RETENIDO_REPRESENTATIVO
+    if representativo:
+        excluido = f"Material retenido en el tamiz No. 4 ({fmt_num(pct, 1)} %)"
+    else:
+        excluido = "Ninguno" if pct is not None else ""
+    return {"metodo": metodo, "pct": pct if representativo else (0.0 if pct is not None else None), "pct_real": pct,
+            "origen": origen, "representativo": representativo, "excluido": excluido}
+
+
+def gesp_observacion_automatica(data, muestra_id=None):
+    """Observación del informe de gravedad específica en arcillas y limos según la muestra: si se excluyó la grava (cuánta), si la que tiene
+    no es representativa o si toda la muestra pasa el tamiz No. 4. Corta, porque en la plantilla es una sola línea (C36). Va al informe
+    cuando no se escribió otra observación; el método ya va en su casilla (C32)."""
+    if data.get("gesp_sel") != GESP_OPCIONES[3]:
+        return ""
+    cond = gesp_condiciones_e128(data, muestra_id)
+    pct = cond["pct_real"]
+    if pct is None:
+        return ""
+    if cond["representativo"]:
+        return (f"Se excluyó el {fmt_num(pct, 1)} % retenido en el tamiz No. 4 (grava): la gravedad específica es la de la fracción "
+                "que pasa el No. 4.")
+    if pct > 0:
+        return f"El material retenido en el tamiz No. 4 no es representativo ({fmt_num(pct, 1)} %): se ensayó la muestra completa."
+    return "La muestra pasa en su totalidad el tamiz No. 4: se ensayó completa, sin excluir material."
 
 
 def resultados_materia_organica(data):
@@ -13902,7 +13967,7 @@ def render_proctor_form(data, assay_id):
     render_norma_selector("proctor", data, "proc")
 
 
-def render_gravedad_especifica_form(data, assay_id):
+def render_gravedad_especifica_form(data, assay_id, muestra_id=None):
     st.info("Los resultados se calculan aquí con las mismas fórmulas de la plantilla de Excel; el archivo "
             "para descargar está al final del ensayo.")
 
@@ -13940,7 +14005,21 @@ def render_gravedad_especifica_form(data, assay_id):
         _resultados("grueso")
         render_equipo(data, "gesp_gruesos", EQUIPO_GESP_GRUESOS)
     if data["gesp_sel"] == GESP_OPCIONES[3]:
+        with st.container(border=True):
+            st.markdown(card_header_html("tune", "Método del ensayo (INV E-128)"), unsafe_allow_html=True)
+            actual_m = data.get("gesp_a_metodo") if data.get("gesp_a_metodo") in GESP_METODOS_E128 else GESP_METODOS_E128[0]
+            data["gesp_a_metodo"] = st.radio("Método del ensayo", GESP_METODOS_E128, index=GESP_METODOS_E128.index(actual_m), horizontal=True,
+                                             key=f"gesp_a_metodo_{assay_id}", label_visibility="collapsed")
         _campos("Gravedad Específica relativa en arcillas y limos (INV E-128-13)", "science", GESP_ARCILLA_CAMPOS)
+        cond = gesp_condiciones_e128(data, muestra_id)
+        if cond["origen"] == "granulometria":
+            st.caption(f"% retenido en el tamiz No. 4 tomado de la Granulometría de esta muestra: {fmt_num(cond['pct_real'], 1)} %"
+                       + ("" if cond["representativo"] else " (no es representativo: en el informe va 0)")
+                       + ". Si lo digitas arriba, se usa lo digitado.")
+        elif cond["origen"] is None:
+            st.caption("Sin % retenido en el tamiz No. 4: digítalo arriba o digita la Granulometría de esta muestra y se toma de ahí.")
+        if cond["excluido"]:
+            st.caption(f"Material excluido de la muestra ensayada: {cond['excluido']}.")
         _resultados("arcilla")
         render_equipo(data, "gesp_finos", EQUIPO_GESP_FINOS)
     render_norma_selector("gravedad-especifica", data, "gesp")
@@ -15372,7 +15451,7 @@ def render_assay_form(prueba=False):
         elif assay["tipo"] == "corte-directo":
             render_corte_directo_form(data, assay_id)
         elif assay["tipo"] == "gravedad-especifica":
-            render_gravedad_especifica_form(data, assay_id)
+            render_gravedad_especifica_form(data, assay_id, muestra_id)
         elif assay["tipo"] == "proctor":
             render_proctor_form(data, assay_id)
         elif assay["tipo"] == "materia-organica":
@@ -15400,6 +15479,9 @@ def render_assay_form(prueba=False):
         obs_inicial = assay.get("observations", "")
         if assay["tipo"] == "limites" and limites_sin_limites(data) and not (obs_inicial or "").strip():
             obs_inicial = _motivo_sin_limites(muestra)
+        # Gravedad específica en arcillas y limos: observación preparada según la muestra (método, grava excluida o no); se puede cambiar.
+        if assay["tipo"] == "gravedad-especifica" and not (obs_inicial or "").strip():
+            obs_inicial = gesp_observacion_automatica(data, muestra_id)
         with st.expander("Observaciones (opcional)", icon=":material/notes:", expanded=bool(obs_inicial)):
             observations = st.text_area("Observaciones", value=obs_inicial, label_visibility="collapsed",
                                          placeholder="Observaciones generales del ensayo, en caso de que se requiera…")

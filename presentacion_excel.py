@@ -469,6 +469,59 @@ def marcar_casillas(contenido, parte, estados):
     return z.bytes()
 
 
+def alinear_a_la_izquierda(contenido, parte, referencias):
+    """Deja las celdas `referencias` de la hoja `parte` alineadas a la izquierda (y centradas en vertical), con una copia de su estilo. Para
+    un texto largo en una celda de un solo renglón sin combinar (la observación de algunos informes): centrado se desborda hacia los dos
+    lados y lo tapa el rótulo de la izquierda; a la izquierda corre por el renglón hacia la derecha."""
+    z = PaqueteZip(contenido)
+    xml = z.read(parte).decode('utf-8')
+    estilos = z.read('xl/styles.xml').decode('utf-8')
+    bloque = re.search(r'<cellXfs\b[^>]*>(.*?)</cellXfs>', estilos, re.S)
+    xfs = re.findall(r'<xf\b[^>]*?/>|<xf\b[^>]*>.*?</xf>', bloque.group(1), re.S)
+    n_base = len(xfs)
+    nuevos = {}
+
+    def a_la_izquierda(indice):
+        if indice in nuevos:
+            return nuevos[indice]
+        xf = xfs[indice] if indice < len(xfs) else '<xf/>'
+        tag = re.match(r'<xf\b[^>]*>', xf).group(0)
+        tag_nuevo = re.sub(r'\s+applyAlignment="[^"]*"', '', tag).rstrip('>/') + ' applyAlignment="1">'
+        cuerpo = '' if tag.endswith('/>') else xf[len(tag):-5]
+        al = re.search(r'<alignment\b[^>]*?/>', cuerpo)
+        alineacion = re.sub(r'\s+(?:horizontal|vertical|indent|relativeIndent|shrinkToFit)="[^"]*"', '', al.group(0) if al else '<alignment/>')
+        alineacion = alineacion[:-2] + ' horizontal="left" vertical="center"/>'
+        if al:
+            cuerpo = cuerpo[:al.start()] + alineacion + cuerpo[al.end():]
+        else:
+            posicion = re.search(r'<(?:protection|extLst)\b', cuerpo)   # alignment precede protection y extLst en CT_Xf
+            k = posicion.start() if posicion else len(cuerpo)
+            cuerpo = cuerpo[:k] + alineacion + cuerpo[k:]
+        xfs.append(tag_nuevo + cuerpo + '</xf>')
+        nuevos[indice] = len(xfs) - 1
+        return nuevos[indice]
+
+    refs = set(referencias)
+
+    def celda(m):
+        if m.group(1) not in refs:
+            return m.group(0)
+        tag = m.group(0)
+        s = re.search(r'\bs="(\d+)"', tag)
+        nuevo = str(a_la_izquierda(int(s.group(1)) if s else 0))
+        if s:
+            return re.sub(r'\bs="\d+"', f's="{nuevo}"', tag)
+        return tag[:-2] + f' s="{nuevo}"/>' if tag.endswith('/>') else tag[:-1] + f' s="{nuevo}">'
+    xml = re.sub(r'<c\b[^>]*\br="([A-Z]+\d+)"[^>]*>', celda, xml)
+    if len(xfs) == n_base:
+        return contenido
+    apertura = re.sub(r'\bcount="\d+"', f'count="{len(xfs)}"', estilos[bloque.start():bloque.start(1)])
+    estilos = estilos[:bloque.start()] + apertura + ''.join(xfs) + '</cellXfs>' + estilos[bloque.end():]
+    z.escribir(parte, xml.encode('utf-8'))
+    z.escribir('xl/styles.xml', estilos.encode('utf-8'))
+    return z.bytes()
+
+
 def vaciar_celdas_solo_espacios(contenido, parte):
     """Deja vacías (con su mismo formato) las celdas de la hoja `parte` cuyo texto son SOLO espacios. Algunas plantillas traen celdas con 80-90
     espacios (p. ej. I26/I29 en gravedad específica fino, I25/I28 en grueso): ese texto invisible se desborda hacia la derecha y Excel no dibuja

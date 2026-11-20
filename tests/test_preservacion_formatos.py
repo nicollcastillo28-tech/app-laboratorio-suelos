@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 
 from openpyxl import load_workbook
 from exportacion_formatos import escribir_entradas, partes_hojas, FormatoIncompatibleError, LibroFormatoOriginal
+from presentacion_excel import alinear_a_la_izquierda, cambiar_formulas_si_iguales
 
 ROOT = Path(__file__).resolve().parents[1]
 S = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
@@ -75,8 +76,11 @@ class FormatosOficialesTest(unittest.TestCase):
         ruta = ROOT / 'templates/GDA-FLC-006_gravedad_arcilla.xlsx'
         original = ruta.read_bytes()
         arbol = ast.parse((ROOT / 'app.py').read_text(encoding='utf-8'))
-        nombres = {'_generar_excel_gravedad', '_llenar_encabezado_gravedad', 'generar_excel_gravedad_arcilla'}
+        nombres = {'_generar_excel_gravedad', '_llenar_encabezado_gravedad', 'generar_excel_gravedad_arcilla', 'gesp_condiciones_e128',
+                   'gesp_pct_retenido_no4', 'gesp_observacion_automatica', 'fmt_num'}
+        constantes = {'GESP_OPCIONES', 'GESP_METODOS_E128', 'GESP_METODOS_E128_EXCEL', 'GESP_RETENIDO_REPRESENTATIVO'}
         funciones = [n for n in arbol.body if isinstance(n, ast.FunctionDef) and n.name in nombres]
+        funciones += [n for n in arbol.body if isinstance(n, ast.Assign) and any(getattr(t, 'id', None) in constantes for t in n.targets)]
         for funcion in funciones:
             funcion.decorator_list = []
         ns = {'BytesIO': BytesIO, 'TEMPLATE_GESP_ARCILLA': str(ruta),
@@ -87,14 +91,16 @@ class FormatosOficialesTest(unittest.TestCase):
               'get_perforacion': lambda *a: {'tipo': 'Sondeo'}, 'TIPO_PERFORACION_EXCEL': {'Sondeo': 'SONDEO'},
               'descripcion_para_informe': lambda m: 'SUELO DE PRUEBA',
               'perf_para_encabezado': lambda perf_codigo, muestra, por_defecto: por_defecto,
-              'muestra_para_encabezado': lambda perf_codigo, muestra: muestra['numero']}
+              'muestra_para_encabezado': lambda perf_codigo, muestra: muestra['numero'],
+              'get_assay': lambda *a: None, '_parte_hoja_informe': lambda contenido, nombre: partes_hojas(contenido)[nombre],
+              'cambiar_formulas_si_iguales': cambiar_formulas_si_iguales, 'alinear_a_la_izquierda': alinear_a_la_izquierda}
         exec(compile(ast.Module(body=funciones, type_ignores=[]), str(ROOT/'app.py'), 'exec'), ns)
         muestra = {'numero': '13', 'profundidad_de': '2.31', 'profundidad_hasta': '3.47'}
         def formulas(xml):
             return {c.get('r'): ET.tostring(c.find(S+'f')) for c in ET.fromstring(xml).iter(S+'c') if c.find(S+'f') is not None}
         for digitado, esperado in [('691.23', 691.23), ('0', 0), ('', None)]:
             with self.subTest(digitado=digitado):
-                datos = {'gesp_a_picnometro': '2', 'gesp_a_masa_aire': '92.34',
+                datos = {'gesp_sel': 'Arcillas y limos (INV E-128)', 'gesp_a_picnometro': '2', 'gesp_a_masa_aire': '92.34',
                          'gesp_a_masa_pic_agua': digitado, 'gesp_a_masa_pic_muestra': '747.81',
                          'gesp_a_temp': '22.5', 'gesp_a_pct_retenido': '0'}
                 resultado = ns['generar_excel_gravedad_arcilla']('GDA-998-26', 'S7', muestra,
@@ -102,14 +108,18 @@ class FormatosOficialesTest(unittest.TestCase):
                 ws = load_workbook(BytesIO(resultado))['FORMATO']
                 self.assertEqual(ws['G21'].value, esperado)
                 self.assertNotEqual(ws['G21'].data_type, 'f')
-                for celda, valor in {'G19': 2, 'G20': 92.34, 'G22': 747.81, 'G23': 22.5, 'D32': 0}.items():
+                for celda, valor in {'G19': 2, 'G20': 92.34, 'G22': 747.81, 'G23': 22.5, 'D32': 0, 'C32': 'MÉTODO A ', 'E33': 'Ninguno'}.items():
                     self.assertEqual(ws[celda].value, valor)
+                self.assertIn('se ensayó completa', ws['C36'].value)   # observación preparada según la muestra (sin grava)
+                self.assertEqual(ws['C36'].alignment.horizontal, 'left')
+                self.assertEqual(ws['G26'].value, '=IF(N38="","",N40)')   # gravedad de la fracción que pasa el No. 4, sin la «combinada» de relleno
                 with zipfile.ZipFile(BytesIO(original)) as a, zipfile.ZipFile(BytesIO(resultado)) as b:
                     parte = partes_hojas(original)['FORMATO']
                     antes, despues = a.read(parte), b.read(parte)
                     fa, fb = formulas(antes), formulas(despues)
                     self.assertIn('G21', fa)
                     del fa['G21']
+                    fa.pop('G26'), fb.pop('G26')
                     self.assertEqual(fa, fb)
                     sin_datos = lambda xml: re.sub(rb'<conditionalFormatting\b.*?</conditionalFormatting>', b'', re.sub(rb'<sheetData>.*?</sheetData>', b'<sheetData/>', xml, flags=re.S), flags=re.S)
                     self.assertEqual(sin_datos(antes), sin_datos(despues))
