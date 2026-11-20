@@ -41,11 +41,14 @@ class ReglasTest(unittest.TestCase):
 
     def test_golpes_del_limite_liquido(self):
         lim = pruebas_datos.datos_ejemplo("limites")
-        for golpes in ("45", "115", "5", "25.5"):
+        for golpes in ("45", "115", "5", "25.5", "38", "12"):
             with self.subTest(golpes=golpes):
                 self.assertEqual(_claves("limites", dict(lim, lim_ll_golpes_1=golpes)), {"lim_ll_golpes_1"})
         self.assertEqual(_claves("limites", dict(lim, lim_ll_golpes_1="35", lim_ll_golpes_2="25", lim_ll_golpes_3="15")), set())
-        self.assertIn("lim_ll_golpes_1", _claves("limites", dict(lim, lim_metodo="Método B", lim_ll_golpes_1="35")))   # un punto: 20 a 30
+        # Tolerancia de 2 golpes por encima o por debajo: 37 y 13 pasan.
+        self.assertEqual(_claves("limites", dict(lim, lim_ll_golpes_1="37", lim_ll_golpes_2="26", lim_ll_golpes_3="13")), set())
+        self.assertIn("lim_ll_golpes_1", _claves("limites", dict(lim, lim_metodo="Método B", lim_ll_golpes_1="35")))   # un punto: 20 a 30 (18 a 32)
+        self.assertNotIn("lim_ll_golpes_1", _claves("limites", dict(lim, lim_metodo="Método B", lim_ll_golpes_1="32")))
         self.assertEqual(_claves("limites", dict(lim, lim_nl=True, lim_ll_golpes_1="115")), set())   # no líquido: no se revisa
 
     def test_rangos_de_otros_ensayos(self):

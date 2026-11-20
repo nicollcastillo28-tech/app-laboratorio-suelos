@@ -32,7 +32,11 @@ RANGOS = [
 _RANGOS = [(re.compile(p), mn, mx, ent, que) for p, mn, mx, ent, que in RANGOS]
 
 # Golpes del Límite Líquido según el método (INV E-125): multipunto entre 15 y 35 (lo normal, cerca de 35, 25 y 15); un solo punto, 20 a 30.
-GOLPES_LL = {"Método A": (15, 35), "Método B": (20, 30)}
+# Con una tolerancia de 2 golpes por encima o por debajo (el laboratorio a veces queda un golpe o dos por fuera): solo se ataja lo absurdo
+# (45 en vez de 35, 115 en vez de 15).
+TOLERANCIA_GOLPES_LL = 2
+GOLPES_LL = {"Método A": (15 - TOLERANCIA_GOLPES_LL, 35 + TOLERANCIA_GOLPES_LL),
+             "Método B": (20 - TOLERANCIA_GOLPES_LL, 30 + TOLERANCIA_GOLPES_LL)}
 
 _MASA = re.compile(r"(^|_)(masa|seco|humedo|peso)(_|$)|^s_(\d|p|fondo)|_(ret|una|dos|ini|par)$|_hum_masa_rec$|_recipiente_masa$")
 _DIMENSION = re.compile(r"(^|_)(altura|diametro)(_|$)|^(ci|roca)_[dh]_\d+$")
