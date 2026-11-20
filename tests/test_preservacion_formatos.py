@@ -108,7 +108,7 @@ class FormatosOficialesTest(unittest.TestCase):
                 ws = load_workbook(BytesIO(resultado))['FORMATO']
                 self.assertEqual(ws['G21'].value, esperado)
                 self.assertNotEqual(ws['G21'].data_type, 'f')
-                for celda, valor in {'G19': 2, 'G20': 92.34, 'G22': 747.81, 'G23': 22.5, 'D32': 0, 'C32': 'MÉTODO A ', 'E33': 'Ninguno'}.items():
+                for celda, valor in {'G19': 2, 'G20': 92.34, 'G22': 747.81, 'G23': 22.5, 'D32': 0, 'C32': 'MÉTODO A ', 'E33': 'N/A'}.items():
                     self.assertEqual(ws[celda].value, valor)
                 self.assertIn('se ensayó completa', ws['C36'].value)   # observación preparada según la muestra (sin grava)
                 self.assertEqual(ws['C36'].alignment.horizontal, 'left')

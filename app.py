@@ -11310,7 +11310,7 @@ def gesp_condiciones_e128(data, muestra_id=None):
     if representativo:
         excluido = f"Material retenido en el tamiz No. 4 ({fmt_num(pct, 1)} %)"
     else:
-        excluido = "Ninguno" if pct is not None else ""
+        excluido = "N/A" if pct is not None else ""   # no se excluyó material: no aplica
     return {"metodo": metodo, "pct": pct if representativo else (0.0 if pct is not None else None), "pct_real": pct,
             "origen": origen, "representativo": representativo, "excluido": excluido}
 
