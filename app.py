@@ -27,6 +27,7 @@ from openpyxl import load_workbook
 
 import alertas_resultados as alertas_res
 import historial_cambios as hcambios
+import validacion_datos
 import db
 import pruebas_datos
 from firmas_excel import agregar_firmas
@@ -10441,6 +10442,35 @@ def campos_faltantes(tipo, data):
     return faltan
 
 
+def datos_mal_digitados(tipo, data):
+    """Casillas mal digitadas del ensayo (errores de digitación como «11..1» o «11-12», rangos absurdos como 115 golpes, masas que no cuadran):
+    [{clave, etiqueta, valor, motivo}]. Con alguna, el ensayo no se puede enviar a revisión (ver validacion_datos)."""
+    return validacion_datos.valores_mal_digitados(tipo, data, etiqueta_campo)
+
+
+def render_datos_mal_digitados(tipo, data, assay_id=None):
+    """Aviso con las casillas mal digitadas (en vivo, mientras se digita) y, si se da `assay_id`, las resalta en rojo en el formulario.
+    Devuelve la lista (vacía si todo está bien)."""
+    mal = datos_mal_digitados(tipo, data)
+    if not mal:
+        if assay_id:
+            st.session_state.pop(f"_intento_mal_digitado_{assay_id}", None)
+        return mal
+    if assay_id:
+        css = "".join(f".st-key-{x['clave']}_{assay_id} input, .st-key-retenido_{x['clave']}_{assay_id} input "
+                      "{ border: 2px solid #d32f2f !important; background-color: #fdecea !important; }\n" for x in mal)
+        st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+    lineas = "\n".join(f"- **{x['etiqueta']}**: «{x['valor']}» — {x['motivo']}." for x in mal)
+    if assay_id is None:
+        st.warning("⚠️ Este ensayo tiene datos mal digitados (el Excel sale sin el dato o con el resultado mal):\n\n" + lineas)
+    else:
+        intento = st.session_state.get(f"_intento_mal_digitado_{assay_id}")
+        st.error(("⚠️ **No se envió a revisión.** " if intento else "⚠️ ")
+                 + "Hay datos mal digitados (resaltados en rojo). Corrígelos antes de enviar: así como están, el Excel sale sin el dato o "
+                   "con el resultado mal.\n\n" + lineas)
+    return mal
+
+
 def humedad_para_pasa200(muestra_id):
     """(de dónde, {casilla de Pasa 200 «antes del lavado»: valor}) con lo digitado en la humedad de la muestra: la muestra que se seca para la
     humedad es la misma que después se lava para el Pasa 200. Se toma del ensayo de Contenido de humedad y, si la muestra no lo tiene (o está
@@ -15408,6 +15438,7 @@ def render_assay_form(prueba=False):
             st.info("Este proyecto ya fue ejecutado. Estás en modo consulta — no puedes editar estos datos.")
         render_read_only_summary(assay["tipo"], data, assay.get("laboratorist") or "—", muestra_id=muestra_id)
         with slot_alertas:
+            render_datos_mal_digitados(assay["tipo"], data)
             render_avisos_coherencia(assay["tipo"], data, muestra)
             render_alertas_resultados(*alertas_de_ensayo(assay["tipo"], data, muestra))
         with st.container(border=True):
@@ -15654,10 +15685,15 @@ def render_assay_form(prueba=False):
         # Mientras se digita, las alertas («Consultar resultados», incoherencias con los límites) van AQUÍ, justo encima de «Enviar a revisión»:
         # arriba del formulario quedaban fuera de la vista y se podía enviar sin verlas.
         st.markdown("<br>", unsafe_allow_html=True)
+        hay_mal_digitados = bool(render_datos_mal_digitados(assay["tipo"], data, assay_id))
         render_avisos_coherencia(assay["tipo"], data, muestra)
         render_alertas_resultados(*alertas_de_ensayo(assay["tipo"], data, muestra))
         if supervisor_edita:
-            if st.button("Guardar cambios", type="primary", use_container_width=True, icon=":material/save:"):
+            guardar_cambios = st.button("Guardar cambios", type="primary", use_container_width=True, icon=":material/save:")
+            if guardar_cambios and hay_mal_digitados:   # el ensayo queda finalizado: tampoco con datos mal digitados
+                st.session_state[f"_intento_mal_digitado_{assay_id}"] = True
+                st.rerun()
+            if guardar_cambios:
                 data_guardar = _datos_frescos()
                 try:
                     with st.spinner("Guardando…"):
@@ -15692,6 +15728,9 @@ def render_assay_form(prueba=False):
                     st.rerun()
                 elif assay["tipo"] == "limites" and limites_incoherentes(data):
                     st.session_state[f"_intento_incoherente_{assay_id}"] = True
+                    st.rerun()
+                elif hay_mal_digitados:
+                    st.session_state[f"_intento_mal_digitado_{assay_id}"] = True
                     st.rerun()
                 else:
                     st.session_state.pop(intento_incompleto_key, None)
