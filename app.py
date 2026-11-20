@@ -1459,6 +1459,9 @@ GESP_METODOS_E128 = ["Método A (muestra húmeda)", "Método B (muestra secada a
 GESP_METODOS_E128_EXCEL = {GESP_METODOS_E128[0]: "MÉTODO A ", GESP_METODOS_E128[1]: "MÉTODO B"}
 # % retenido en el tamiz No. 4 a partir del cual la fracción gruesa se tiene en cuenta (el mismo umbral de la plantilla: D32 > 0.1).
 GESP_RETENIDO_REPRESENTATIVO = 0.1
+# Masa mínima de ensayo de la INV E-223 (gravedad específica del agregado grueso) para el tamaño máximo nominal más pequeño (12,5 mm o
+# menos): con menos grava que esto retenida en el No. 4 no se puede ensayar la fracción gruesa y se hace la INV E-128 con lo que pasa.
+GESP_MASA_MINIMA_E223_G = 2000
 # En el mismo orden que la bitácora GDA-FL-019.
 GESP_FINOS_CAMPOS = [
     ("gesp_f_picnometro", "Picnómetro No."),
@@ -11301,6 +11304,16 @@ def gesp_pct_retenido_no4(data, muestra_id=None):
     return None, None
 
 
+def gesp_masa_retenida_no4(muestra_id=None):
+    """Masa (g) retenida en el tamiz No. 4 y los mayores, según la Granulometría de la muestra; None si no hay Granulometría con datos."""
+    gran = get_assay(muestra_id, "granulometria") if muestra_id else None
+    datos = (gran or {}).get("data") or {}
+    if not datos or _calcular_curva_granulometrica(datos) is None:
+        return None
+    gruesos = [key for key, *_ in SIEVES[:[k for k, *_ in SIEVES].index("s_4") + 1]]
+    return sum(to_float(datos.get(k)) or 0.0 for k in gruesos)
+
+
 def gesp_condiciones_e128(data, muestra_id=None):
     """Condiciones del ensayo de la plantilla GDA-FLC-006: método, % retenido en el No. 4 (solo si es representativo; si no, 0) y el
     material excluido de la muestra ensayada."""
@@ -11311,8 +11324,11 @@ def gesp_condiciones_e128(data, muestra_id=None):
         excluido = f"Material retenido en el tamiz No. 4 ({fmt_num(pct, 1)} %)"
     else:
         excluido = "N/A" if pct is not None else ""   # no se excluyó material: no aplica
+    masa = gesp_masa_retenida_no4(muestra_id) if representativo else None
     return {"metodo": metodo, "pct": pct if representativo else (0.0 if pct is not None else None), "pct_real": pct,
-            "origen": origen, "representativo": representativo, "excluido": excluido}
+            "origen": origen, "representativo": representativo, "excluido": excluido, "masa_retenida": masa,
+            # Sin Granulometría no se conoce la masa: si se hizo la E-128 con grava representativa, es porque no alcanzaba para la E-223.
+            "insuficiente_e223": representativo and (masa is None or masa < GESP_MASA_MINIMA_E223_G)}
 
 
 def gesp_observacion_automatica(data, muestra_id=None):
@@ -11325,11 +11341,16 @@ def gesp_observacion_automatica(data, muestra_id=None):
     pct = cond["pct_real"]
     if pct is None:
         return ""
+    if cond["insuficiente_e223"]:
+        # Hay grava, pero no la suficiente para ensayarla por la norma de gruesos (INV E-223): se hizo la E-128 con lo que pasa el No. 4.
+        cuanto = f"{fmt_num(pct, 1)} %" + (f", {fmt_num(cond['masa_retenida'], 0)} g" if cond["masa_retenida"] is not None else "")
+        return (f"La grava retenida en el tamiz No. 4 ({cuanto}) no alcanza para la INV E-223: se ensayó por la INV E-128 la fracción "
+                "que pasa el No. 4.")
     if cond["representativo"]:
         return (f"Se excluyó el {fmt_num(pct, 1)} % retenido en el tamiz No. 4 (grava): la gravedad específica es la de la fracción "
                 "que pasa el No. 4.")
     if pct > 0:
-        return f"El material retenido en el tamiz No. 4 no es representativo ({fmt_num(pct, 1)} %): se ensayó la muestra completa."
+        return f"El material retenido en el tamiz No. 4 no es representativo ({fmt_num(pct, 2)} %): se ensayó la muestra completa."
     return "La muestra pasa en su totalidad el tamiz No. 4: se ensayó completa, sin excluir material."
 
 
