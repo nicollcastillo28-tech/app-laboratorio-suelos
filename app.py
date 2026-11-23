@@ -10754,6 +10754,36 @@ def _mub_humedad(data):
     return (humedo - seco) / (seco - rec) * 100
 
 
+# Casillas de humedad del Peso unitario Método B ← casillas del ensayo de Contenido de humedad de la misma muestra.
+MUB_DESDE_HUMEDAD = (("mub_hum_recipiente", "hum_recipiente"), ("mub_hum_humedo", "hum_masa_humedo_mas_recipiente"),
+                     ("mub_hum_seco_17", "hum_seco_17h"), ("mub_hum_seco_18", "hum_seco_18h"),
+                     ("mub_hum_seco_19", "hum_seco_mas_recipiente"), ("mub_hum_masa_rec", "hum_masa_recipiente"))
+
+
+def sincronizar_humedad_mub(data, muestra_id):
+    """Copia al Peso unitario Método B las masas del ensayo de Contenido de humedad de la muestra (la humedad se toma de la misma muestra: no
+    se digita dos veces). Se copian solas cada vez que cambian allá; si se corrigen aquí a mano, la corrección manda hasta que la humedad
+    vuelva a cambiar. Cambia `data` y devuelve {casilla: valor} con lo que copió."""
+    hum = get_assay(muestra_id, "humedad") if muestra_id else None
+    datos_hum = (hum or {}).get("data") or {}
+    copiados = {}
+    for destino, origen in MUB_DESDE_HUMEDAD:
+        valor = str(datos_hum.get(origen) if datos_hum.get(origen) is not None else "").strip()
+        if not valor:
+            continue
+        ultimo = f"{destino}_hum_lastsync"
+        if data.get(ultimo) != valor:
+            data[destino] = valor
+            data[ultimo] = valor
+            copiados[destino] = valor
+    return copiados
+
+
+def humedad_de_la_muestra_tiene_datos(muestra_id):
+    hum = get_assay(muestra_id, "humedad") if muestra_id else None
+    return calcular_humedad_pct((hum or {}).get("data") or {}) is not None
+
+
 def _mu_humedad_manual(data):
     """Humedad (%) a partir de las masas digitadas aquí mismo (recipiente, húmeda, seca a
     17/18/19h) cuando la muestra no tiene un ensayo de Humedad asignado — misma fórmula que
@@ -10862,6 +10892,8 @@ def generar_excel_masa_unitaria_b(codigo, perf_codigo, muestra, project, data, o
     c["D20"] = to_float(data.get("mub_altura"))
     c["E20"] = to_float(data.get("mub_diametro"))
     c["F20"] = to_float(data.get("mub_masa"))
+    data = dict(data)
+    sincronizar_humedad_mub(data, muestra.get("id_unico"))   # con la humedad más reciente de la muestra, aunque no se haya reabierto el ensayo
     c["G28"] = _mub_humedad(data)
 
     plantilla = _plantilla_informe_bytes(TEMPLATE_MASA_UNITARIA_B)
@@ -10942,9 +10974,17 @@ def render_masa_unitaria_form(data, assay_id, muestra_id=None):
             _campo_b("mub_altura", "Altura de la muestra (mm)")
             _campo_b("mub_diametro", "Diámetro de la muestra (mm)")
             _campo_b("mub_masa", "Masa de la muestra (g)")
+        # Las masas de humedad salen del ensayo de Contenido de humedad de la muestra (no se digitan dos veces).
+        for _clave, _valor in sincronizar_humedad_mub(data, muestra_id).items():
+            st.session_state[f"{_clave}_{assay_id}"] = _valor
         with st.container(border=True):
             st.markdown(card_header_html("water_drop", "Datos de Humedad"), unsafe_allow_html=True)
-            st.caption("Con esto se calcula también la densidad seca; sin ella, solo la húmeda.")
+            if humedad_de_la_muestra_tiene_datos(muestra_id):
+                st.caption("Copiados del ensayo de Contenido de humedad de esta muestra: se actualizan solos cuando cambian allá. Si corriges "
+                           "alguno aquí, tu corrección manda hasta que la humedad vuelva a cambiar.")
+            else:
+                st.caption("Con esto se calcula también la densidad seca; sin ella, solo la húmeda. Si la muestra tiene ensayo de Contenido "
+                           "de humedad, sus masas se copian aquí solas.")
             for key, label in MUB_HUMEDAD_FILAS:
                 _campo_b(key, label, placeholder="" if key == "mub_hum_recipiente" else "0.00")
                 if key == "mub_hum_seco_17" and data.get("mub_hum_seco_17"):
