@@ -295,7 +295,12 @@ def preparar_descarga(contenido):
                 continue
             xml = z.read(parte)
             if b"<sheetProtection" in xml:
-                z.escribir(parte, re.sub(rb"<sheetProtection\b[^>]*/>", b"", xml))
+                xml = re.sub(rb"<sheetProtection\b[^>]*/>", b"", xml)
+            # La hoja abre arriba, aunque la plantilla se haya guardado con la vista más abajo (la 013 quedó en la fila 45): se quita la celda
+            # de arriba a la izquierda de la vista (no la de un panel inmovilizado, que va en <pane>).
+            xml = re.sub(rb'(<sheetView\b[^>]*?)\s+topLeftCell="[^"]*"', rb"\1", xml)
+            if xml != z.read(parte):
+                z.escribir(parte, xml)
             try:
                 _codigo_de_ensayo_en(z, parte, compartidos)
             except Exception:
