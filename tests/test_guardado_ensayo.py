@@ -31,7 +31,7 @@ FALLAR_ESCRITURAS = [False]   # simula que la base no responde al guardar
 
 class Q:
     def __init__(s, tabla):
-        s.t, s.cols, s.f, s.orden, s.upd, s.ins = tabla, "*", [], None, None, None
+        s.t, s.cols, s.f, s.orden, s.upd, s.ins, s.rango = tabla, "*", [], [], None, None, None
 
     def select(s, cols="*"):
         s.cols = cols
@@ -50,7 +50,11 @@ class Q:
         return s
 
     def order(s, c, desc=False):
-        s.orden = (c, desc)
+        s.orden.append((c, desc))
+        return s
+
+    def range(s, inicio, fin):
+        s.rango = (inicio, fin)
         return s
 
     def limit(s, n):
@@ -99,8 +103,10 @@ class Q:
                 r.update(copy.deepcopy(s.upd))
                 r["updated_at"] = ahora()
             return types.SimpleNamespace(data=[copy.deepcopy(r) for r in sel])
-        if s.orden:
-            sel = sorted(sel, key=lambda r: r.get(s.orden[0]) or "", reverse=s.orden[1])
+        for c, desc in reversed(s.orden):   # orden estable: la primera columna manda
+            sel = sorted(sel, key=lambda r: r.get(c) or "", reverse=desc)
+        if s.rango:
+            sel = sel[s.rango[0]:s.rango[1] + 1]
         cols = None if s.cols == "*" else [c.strip() for c in s.cols.split(",")]
         return types.SimpleNamespace(data=[{k: copy.deepcopy(v) for k, v in r.items() if cols is None or k in cols} for r in sel])
 

@@ -125,11 +125,30 @@ def restore_session(access_token: str, refresh_token: str) -> dict | None:
 # ════════════════════════════════════════════════════════════════════
 # PROYECTOS
 # ════════════════════════════════════════════════════════════════════
+# Supabase (PostgREST) entrega como máximo 1000 filas por consulta. Las listas completas (todos los ensayos, muestras…) se piden por
+# páginas: con una sola consulta, al pasar de 1000 ensayos los más nuevos quedaban por fuera, la app no los veía y al abrirlos intentaba
+# crearlos otra vez (error de la base por el duplicado).
+_FILAS_POR_PAGINA = 1000
+
+
+def _todas_las_filas(construir) -> list[dict]:
+    """Todas las filas de la consulta que arma `construir()` (una consulta nueva por página, con orden estable)."""
+    filas, inicio = [], 0
+    while True:
+        lote = construir().range(inicio, inicio + _FILAS_POR_PAGINA - 1).execute().data or []
+        filas.extend(lote)
+        if len(lote) < _FILAS_POR_PAGINA:
+            return filas
+        inicio += len(lote)
+
+
 def list_projects(include_archived: bool = False) -> list[dict]:
-    q = get_client().table("projects").select("*")
-    if not include_archived:
-        q = q.eq("archived", False)
-    return q.order("created_at", desc=True).execute().data
+    def construir():
+        q = get_client().table("projects").select("*")
+        if not include_archived:
+            q = q.eq("archived", False)
+        return q.order("created_at", desc=True).order("id")
+    return _todas_las_filas(construir)
 
 
 def get_project(codigo_interno: str) -> dict | None:
@@ -340,8 +359,18 @@ def list_assay_versions(assay_id: str, limite: int = 2000) -> list[dict]:
 
 
 def create_assay(muestra_id: str, tipo: str, **defaults) -> dict:
-    res = get_client().table("assays").insert({"muestra_id": muestra_id, "tipo": tipo, **defaults}).execute()
-    return res.data[0]
+    """Crea el ensayo de un tipo en una muestra. Si ya existe (otra persona lo abrió primero, o la lista de la app no lo tenía), la base
+    rechaza el duplicado (índice único muestra + tipo): se devuelve el que ya está en vez de fallar."""
+    client = get_client()
+    try:
+        res = client.table("assays").insert({"muestra_id": muestra_id, "tipo": tipo, **defaults}).execute()
+        return res.data[0]
+    except Exception:
+        ya = (client.table("assays").select("*").eq("muestra_id", muestra_id).eq("tipo", tipo).eq("archived", False)
+              .execute().data or [])
+        if ya:
+            return ya[0]
+        raise
 
 
 _SIN_EDITADO_POR = False   # la base todavía no tiene la columna assays.editado_por (falta correr la migración 0041)
@@ -539,17 +568,21 @@ def reset_confirmacion(assay_id: str, reset_status: bool = False):
 # en st.session_state en cada rerun — ver _load_data() en app.py)
 # ════════════════════════════════════════════════════════════════════
 def list_all_perforaciones(include_archived: bool = False) -> list[dict]:
-    q = get_client().table("perforaciones").select("*")
-    if not include_archived:
-        q = q.eq("archived", False)
-    return q.order("consecutivo").execute().data
+    def construir():
+        q = get_client().table("perforaciones").select("*")
+        if not include_archived:
+            q = q.eq("archived", False)
+        return q.order("consecutivo").order("id")
+    return _todas_las_filas(construir)
 
 
 def list_all_muestras(include_archived: bool = False) -> list[dict]:
-    q = get_client().table("muestras").select("*")
-    if not include_archived:
-        q = q.eq("archived", False)
-    return q.order("numero").execute().data
+    def construir():
+        q = get_client().table("muestras").select("*")
+        if not include_archived:
+            q = q.eq("archived", False)
+        return q.order("numero").order("id")
+    return _todas_las_filas(construir)
 
 
 # Columnas pesadas de los ensayos (los datos digitados con sus lecturas de máquina y fotos, y el historial con sus copias): traerlas de TODOS los
@@ -576,10 +609,12 @@ def list_all_assays(include_archived: bool = False) -> list[dict]:
     client = get_client()
 
     def _consulta(columnas):
-        q = client.table("assays").select(columnas)
-        if not include_archived:
-            q = q.eq("archived", False)
-        return q.order("created_at").execute().data
+        def construir():
+            q = client.table("assays").select(columnas)
+            if not include_archived:
+                q = q.eq("archived", False)
+            return q.order("created_at").order("id")
+        return _todas_las_filas(construir)
 
     if not _COLUMNAS_LIVIANAS:
         filas = _consulta("*")
