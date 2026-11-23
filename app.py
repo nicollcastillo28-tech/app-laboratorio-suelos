@@ -9539,6 +9539,7 @@ def generar_excel_gravedad_fino(codigo, perf_codigo, muestra, project, data, obs
 def generar_excel_limite_contraccion(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Límite de contracción (GDA-FLC-022, INV E-129). Se llenan encabezado y datos; LC, R, Cv y Cl
     los calcula el Excel."""
+    data = con_humedad_de_la_muestra("limite-contraccion", data, muestra)   # la humedad más reciente de la muestra
     wb = _cargar_plantilla_informe(TEMPLATE_LIMITE_CONTRACCION)
     ws = wb["FORMATO"]
     ws["D6"] = project.get("cliente", "") if project else ""
@@ -10754,20 +10755,51 @@ def _mub_humedad(data):
     return (humedo - seco) / (seco - rec) * 100
 
 
-# Casillas de humedad del Peso unitario Método B ← casillas del ensayo de Contenido de humedad de la misma muestra.
-MUB_DESDE_HUMEDAD = (("mub_hum_recipiente", "hum_recipiente"), ("mub_hum_humedo", "hum_masa_humedo_mas_recipiente"),
-                     ("mub_hum_seco_17", "hum_seco_17h"), ("mub_hum_seco_18", "hum_seco_18h"),
-                     ("mub_hum_seco_19", "hum_seco_mas_recipiente"), ("mub_hum_masa_rec", "hum_masa_recipiente"))
+def _humedad_a_casillas(rec_no, humedo, secas, rec_masa):
+    """(casilla del ensayo, casilla del ensayo de Contenido de humedad): las pesadas secas se llenan con las de 14 y 15 horas de la Humedad y
+    la última con la masa seca definitiva (la que da el % de la Humedad)."""
+    origen_secas = ["hum_seco_14h", "hum_seco_15h", "hum_seco_mas_recipiente"][-len(secas):]
+    return ([(rec_no, "hum_recipiente")] if rec_no else []) + [(humedo, "hum_masa_humedo_mas_recipiente")] \
+        + list(zip(secas, origen_secas)) + [(rec_masa, "hum_masa_recipiente")]
 
 
-def sincronizar_humedad_mub(data, muestra_id):
-    """Copia al Peso unitario Método B las masas del ensayo de Contenido de humedad de la muestra (la humedad se toma de la misma muestra: no
-    se digita dos veces). Se copian solas cada vez que cambian allá; si se corrigen aquí a mano, la corrección manda hasta que la humedad
-    vuelva a cambiar. Cambia `data` y devuelve {casilla: valor} con lo que copió."""
-    hum = get_assay(muestra_id, "humedad") if muestra_id else None
+# Ensayos que llevan la humedad natural de la muestra: sus masas de humedad salen del ensayo de Contenido de humedad de la misma muestra (no
+# se digitan dos veces). No están el CBR (su humedad antes de inmersión es propia), el Proctor (humedades de compactación), el Corte directo
+# (cada probeta lleva la suya) ni la Consolidación final o la Contracción del Límite de contracción (se miden al terminar).
+HUMEDAD_DE_LA_MUESTRA_EN = {
+    "masa-unitaria": _humedad_a_casillas("mub_hum_recipiente", "mub_hum_humedo", ["mub_hum_seco_17", "mub_hum_seco_18", "mub_hum_seco_19"],
+                                         "mub_hum_masa_rec"),
+    "compresion-inconfinada": _humedad_a_casillas("ci_hum_recipiente", "ci_hum_humedo", ["ci_hum_seco_17", "ci_hum_seco_18", "ci_hum_seco_19"],
+                                                  "ci_hum_masa_rec"),
+    "compresion-roca": _humedad_a_casillas("roca_hum_recipiente", "roca_hum_humedo",
+                                           ["roca_hum_seco_17", "roca_hum_seco_18", "roca_hum_seco_19"], "roca_hum_masa_rec"),
+    "carga-puntual": _humedad_a_casillas("cp_hum_recipiente", "cp_hum_humedo", ["cp_hum_seco_14", "cp_hum_seco_15", "cp_hum_seco_16"],
+                                         "cp_hum_masa_rec"),
+    "consolidacion": _humedad_a_casillas("cons_ini_recipiente", "cons_ini_humedo", ["cons_ini_seco_17", "cons_ini_seco_18", "cons_ini_seco_19"],
+                                         "cons_ini_recipiente_masa"),
+    "limite-contraccion": _humedad_a_casillas(None, "lc_natural_hum_humedo", ["lc_natural_hum_seco"], "lc_natural_hum_recipiente"),
+}
+
+
+def _usa_humedad_de_la_muestra(tipo, data):
+    if tipo == "masa-unitaria":
+        return data.get("mu_metodo") == "Método B"    # el Parafinado toma el % de la Humedad (_mu_humedad_parafinado)
+    if tipo in ("compresion-inconfinada", "compresion-roca"):
+        return data.get(f"{'ci' if tipo == 'compresion-inconfinada' else 'roca'}_hum_antes") != "Después del ensayo"
+    return tipo in HUMEDAD_DE_LA_MUESTRA_EN
+
+
+def sincronizar_humedad_de_la_muestra(tipo, data, muestra_id):
+    """Copia al ensayo las masas del ensayo de Contenido de humedad de la muestra. Se copian solas cada vez que cambian allá; si se corrigen
+    aquí a mano, la corrección manda hasta que la humedad vuelva a cambiar. Cambia `data` y devuelve {casilla: valor} con lo que copió."""
+    if not muestra_id:
+        return {}
+    hum = get_assay(muestra_id, "humedad")
     datos_hum = (hum or {}).get("data") or {}
+    if not datos_hum or not _usa_humedad_de_la_muestra(tipo, data):
+        return {}
     copiados = {}
-    for destino, origen in MUB_DESDE_HUMEDAD:
+    for destino, origen in HUMEDAD_DE_LA_MUESTRA_EN[tipo]:
         valor = str(datos_hum.get(origen) if datos_hum.get(origen) is not None else "").strip()
         if not valor:
             continue
@@ -10777,6 +10809,22 @@ def sincronizar_humedad_mub(data, muestra_id):
             data[ultimo] = valor
             copiados[destino] = valor
     return copiados
+
+
+def con_humedad_de_la_muestra(tipo, data, muestra):
+    """Copia de `data` con la humedad más reciente de la muestra, para la descarga (aunque el ensayo no se haya vuelto a abrir)."""
+    data = dict(data or {})
+    sincronizar_humedad_de_la_muestra(tipo, data, (muestra or {}).get("id_unico"))
+    return data
+
+
+def render_humedad_de_la_muestra(tipo, data, assay_id, muestra_id):
+    """En el formulario: copia la humedad de la muestra a sus casillas (antes de dibujarlas) y avisa de dónde sale."""
+    for clave, valor in sincronizar_humedad_de_la_muestra(tipo, data, muestra_id).items():
+        st.session_state[f"{clave}_{assay_id}"] = valor
+    if _usa_humedad_de_la_muestra(tipo, data) and humedad_de_la_muestra_tiene_datos(muestra_id):
+        st.caption(":material/water_drop: Los datos de humedad se copian del ensayo de Contenido de humedad de esta muestra y se actualizan "
+                   "solos cuando cambian allá. Si corriges alguno aquí, tu corrección manda hasta que la humedad vuelva a cambiar.")
 
 
 def humedad_de_la_muestra_tiene_datos(muestra_id):
@@ -10892,8 +10940,7 @@ def generar_excel_masa_unitaria_b(codigo, perf_codigo, muestra, project, data, o
     c["D20"] = to_float(data.get("mub_altura"))
     c["E20"] = to_float(data.get("mub_diametro"))
     c["F20"] = to_float(data.get("mub_masa"))
-    data = dict(data)
-    sincronizar_humedad_mub(data, muestra.get("id_unico"))   # con la humedad más reciente de la muestra, aunque no se haya reabierto el ensayo
+    data = con_humedad_de_la_muestra("masa-unitaria", data, muestra)   # la humedad más reciente, aunque no se haya reabierto el ensayo
     c["G28"] = _mub_humedad(data)
 
     plantilla = _plantilla_informe_bytes(TEMPLATE_MASA_UNITARIA_B)
@@ -10975,7 +11022,7 @@ def render_masa_unitaria_form(data, assay_id, muestra_id=None):
             _campo_b("mub_diametro", "Diámetro de la muestra (mm)")
             _campo_b("mub_masa", "Masa de la muestra (g)")
         # Las masas de humedad salen del ensayo de Contenido de humedad de la muestra (no se digitan dos veces).
-        for _clave, _valor in sincronizar_humedad_mub(data, muestra_id).items():
+        for _clave, _valor in sincronizar_humedad_de_la_muestra("masa-unitaria", data, muestra_id).items():
             st.session_state[f"{_clave}_{assay_id}"] = _valor
         with st.container(border=True):
             st.markdown(card_header_html("water_drop", "Datos de Humedad"), unsafe_allow_html=True)
@@ -11819,6 +11866,7 @@ def render_consolidacion_form(data, assay_id):
 @_exportacion_controlada
 def generar_excel_consolidacion(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Diligencia entradas del formato 009 sin corregir sus fórmulas. Si una columna de la máquina está calculada por el original, la exportación queda pendiente de revisión."""
+    data = con_humedad_de_la_muestra("consolidacion", data, muestra)   # la humedad más reciente de la muestra
     # Solo lectura: openpyxl no carga las celdas (la plantilla abierta entera ocupaba ~190 MB); el generador solo escribe entradas.
     wb = _cargar_plantilla_informe(TEMPLATE_CONSOLIDACION, read_only=True, celdas_formula_editables={"FORMATO": ("AB20",), "GS": ("G21",),
                                                                                      **{h: ("L29", "L38") for h in CONS_HOJAS_CARGA}})
@@ -12413,6 +12461,7 @@ def generar_excel_compresion_inconfinada(codigo, perf_codigo, muestra, project, 
     lecturas de carga/deformación (columnas P, R y U, que en la plantilla reciben los datos de la máquina); esfuerzo, qu y
     Su los calcula el Excel. La plantilla trae formas, grupos (plano de falla, firmas), casillas y un gráfico que openpyxl
     no conserva, por eso los valores se escriben directo en el XML de la hoja."""
+    data = con_humedad_de_la_muestra("compresion-inconfinada", data, muestra)   # la humedad más reciente de la muestra
     c = {}
     c["C6"] = project.get("cliente", "") if project else ""
     c["C7"] = project["nombre"] if project else codigo
@@ -12665,6 +12714,7 @@ def render_compresion_roca_form(data, assay_id):
 @_exportacion_controlada
 def generar_excel_compresion_roca(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Diligencia el formato 043 conservando las hojas, fórmulas, formas, firmas y gráficos originales. Las fotos se agregan al dibujo del informe resuelto por nombre."""
+    data = con_humedad_de_la_muestra("compresion-roca", data, muestra)   # la humedad más reciente de la muestra
     c = {}
     c["C6"] = project.get("cliente", "") if project else ""
     c["C7"] = project["nombre"] if project else codigo
@@ -13152,6 +13202,7 @@ def render_carga_puntual_form(data, assay_id):
 @_exportacion_controlada
 def generar_excel_carga_puntual(codigo, perf_codigo, muestra, project, data, observaciones_ensayo=""):
     """Diligencia C/D/E/G/N del formato 018. Las fórmulas existentes de H:M y del promedio E33 se conservan; se resuelve la hoja por nombre, sin depender de su índice en el archivo."""
+    data = con_humedad_de_la_muestra("carga-puntual", data, muestra)   # la humedad más reciente de la muestra
     c = {}
     c["D6"] = project.get("cliente", "") if project else ""
     c["D7"] = project["nombre"] if project else codigo
@@ -15528,6 +15579,8 @@ def render_assay_form(prueba=False):
             else:
                 st.session_state.pop(f"_intento_incoherente_{assay_id}", None)
 
+        if assay["tipo"] in HUMEDAD_DE_LA_MUESTRA_EN and assay["tipo"] != "masa-unitaria":   # Método B: dentro de su formulario
+            render_humedad_de_la_muestra(assay["tipo"], data, assay_id, muestra_id)
         if assay["tipo"] == "granulometria":
             render_granulometria_form(data, assay_id)
         elif assay["tipo"] == "pasa200":

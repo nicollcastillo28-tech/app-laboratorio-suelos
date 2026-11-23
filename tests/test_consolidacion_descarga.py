@@ -47,6 +47,7 @@ def _namespace():
         "fecha_emision_hoy": lambda: "16/10/2026", "get_perforacion": lambda *a: {"tipo": "Sondeo", "consecutivo": 1},
         "descripcion_para_informe": lambda m: "ARCILLA", "perf_para_encabezado": lambda pc, m, d: "S-1",
         "muestra_para_encabezado": lambda pc, m: "M-3", "TIPO_PERFORACION_EXCEL": {"Sondeo": "SONDEO"},
+        "get_assay": lambda *a: None,   # sin ensayo de Humedad en la muestra
     })
     return ns
 
