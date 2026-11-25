@@ -8145,9 +8145,16 @@ def _apique_y_muestra(perf_codigo, numero):
     muestra '3' del apique 'AP-S-01'. Si el número no es de esa forma devuelve (None, numero)."""
     numero = str(numero).strip()
     m = re.match(r"^(.+)-(\d+[A-Za-z]?)$", numero)
-    if m and perf_codigo and m.group(1).upper() != str(perf_codigo).upper() and (
-            m.group(1).upper().startswith(str(perf_codigo).upper()) or re.match(r"^[A-Za-z]+(-[A-Za-z0-9]+)+$", m.group(1))):
-        # (también cuando la perforación se renombró —por ejemplo «T2»— y sus muestras siguen llamándose AP-S-01-3)
+    if not (m and perf_codigo):
+        return None, numero
+    apique, perf = m.group(1).upper(), str(perf_codigo).strip().upper()
+    # El apique empieza con el código de la perforación y un separador (AP-S-01 en la perforación AP-S; no S-10 en la perforación S-1)…
+    del_grupo = apique != perf and apique.startswith(perf) and (
+        apique[len(perf)] in "-_ ." or (perf[-1].isalpha() and apique[len(perf)].isdigit()))   # APQ1 en la perforación APQ
+    # …o la perforación se renombró (por ejemplo «T2») y sus muestras siguen llamándose AP-S-01-3: solo códigos de apique (AP…). Antes
+    # valía cualquier código con guiones, y una muestra de un sondeo numerada «P-05-1» ponía «P-05» en vez del código de la perforación.
+    renombrada = apique.startswith("AP") and re.match(r"^[A-Z]+(-[A-Z0-9]+)+$", apique) and not perf.endswith(apique)
+    if del_grupo or renombrada:
         return m.group(1), m.group(2)
     return None, numero
 
@@ -8330,7 +8337,7 @@ def _llenar_encabezado_informe(ws, codigo, perf_codigo, muestra, project, observ
     ws["D12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""  # Tipo de perforación (lista desplegable)
     # El número de perforación va en E12 (E12:F12 combinadas) en Humedad (GDA-FLC-014) y en Granulometría/Límites (GDA-FLC-001), versiones de
     # noviembre de 2026; el INFORME ID (K10) lo lee de ahí.
-    ws[perf_numero_cell] = perf_para_encabezado(perf_codigo, muestra, perf["consecutivo"] if perf else "")
+    ws[perf_numero_cell] = perf_para_encabezado(perf_codigo, muestra, perf_codigo)
     ws["H12"] = muestra_para_encabezado(perf_codigo, muestra)
     ws["K12"] = to_float(muestra.get("profundidad_de"))
     ws["M12"] = to_float(muestra.get("profundidad_hasta"))
@@ -9325,7 +9332,7 @@ def _llenar_encabezado_masa_unitaria(ws, codigo, perf_codigo, muestra, project, 
 
     perf = get_perforacion(codigo, perf_codigo)
     ws["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""  # Tipo de perforación (lista desplegable)
-    ws["D12"] = perf_para_encabezado(perf_codigo, muestra, perf["consecutivo"] if perf else "")  # Número de perforación
+    ws["D12"] = perf_para_encabezado(perf_codigo, muestra, perf_codigo)  # Número de perforación
     ws["F12"] = muestra_para_encabezado(perf_codigo, muestra)  # Muestra No.
     ws["I12"] = to_float(muestra.get("profundidad_de"))
     ws["K12"] = to_float(muestra.get("profundidad_hasta"))
@@ -9380,7 +9387,7 @@ def _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observacio
 
     perf = get_perforacion(codigo, perf_codigo)
     ws["C12"] = TIPO_PERFORACION_EXCEL.get(perf["tipo"], "") if perf else ""  # Tipo de perforación (lista desplegable)
-    ws["D12"] = perf_para_encabezado(perf_codigo, muestra, perf["consecutivo"] if perf else "")  # Número de perforación
+    ws["D12"] = perf_para_encabezado(perf_codigo, muestra, perf_codigo)  # Número de perforación
     ws["F12"] = muestra_para_encabezado(perf_codigo, muestra)  # Muestra No. (F12:G12)
     ws["J12"] = to_float(muestra.get("profundidad_de"))   # Profundidad: de … (K12 trae el guion) … hasta
     ws["L12"] = to_float(muestra.get("profundidad_hasta"))
