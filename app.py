@@ -9216,12 +9216,14 @@ def _generar_excel_clasificacion(codigo, perf_codigo, muestra, project, gran_dat
         # Si solo se solicitó Pasa 200 (sin Granulometría), `gran_data` no trae los tamices en
         # absoluto (nunca pasó por el formulario de Granulometría) — ahí se dejan las celdas tal
         # cual trae la plantilla, para no simular una curva granulométrica falsa ("pasa 100%" en
-        # todos los tamices). Pero si el tamiz SÍ se digitó (el ensayo de Granulometría existe y
-        # su formulario ya se abrió), un tamiz que quedó en blanco significa "no quedó nada
-        # retenido ahí" y se escribe como 0, igual que en la vista de solo lectura de la app.
+        # todos los tamices). Pero si hay granulometría (algún tamiz digitado, o los tamices ya pasaron por el formulario), TODO tamiz
+        # sin dato significa "no quedó nada retenido ahí" y se escribe 0, igual que en la vista de solo lectura de la app. Antes se
+        # miraba tamiz por tamiz si la casilla estaba guardada: las que nunca se guardaron (vacías) quedaban sin el 0.
+        claves_tamices = [k for k, *_ in SIEVES] + ["s_fondo"]
+        hay_granulometria = any(k in gran_data for k in claves_tamices)
         for key, _label, _apert, cell in SIEVES:
-            if key not in gran_data:
-                continue
+            if not hay_granulometria:
+                break
             valor = to_float(gran_data.get(key))
             ws[cell] = valor if valor is not None else 0
 
