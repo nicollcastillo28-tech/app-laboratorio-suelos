@@ -9362,12 +9362,8 @@ def generar_excel_masa_unitaria(codigo, perf_codigo, muestra, project, data, obs
 
     bio = BytesIO()
     wb.save(bio)
-    # kN/m³ con la gravedad real (×9,81), igual que los resultados de la app: la plantilla oficial multiplica por 10 y tiene la hoja protegida con
-    # contraseña, así que se corrige en la descarga (solo si la plantilla todavía trae el ×10).
-    from exportacion_formatos import partes_hojas
-    salida = bio.getvalue()
-    return cambiar_formulas_si_iguales(salida, partes_hojas(salida)["FORMATO"],
-                                       {"G26": ("G24*10", "G24*9.81"), "G27": ("G25*10", "G25*9.81")})
+    # El kN/m³ (G26/G27) ya viene con la gravedad real (×9,81) en la plantilla oficial desde la versión de noviembre de 2026.
+    return bio.getvalue()
 
 
 def _llenar_encabezado_cbr(ws, codigo, perf_codigo, muestra, project, observaciones_ensayo="", datas=()):
